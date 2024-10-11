@@ -1,0 +1,115 @@
+prefix: ../../data
+model_prefix: ../../models
+version: mix
+model_type: ssm
+scaler: min_max
+lr_scheduler: cosine_warm_restarts
+wandb: false # whether to log to wandb for testing
+context_len: 323
+min_seq_len: 30
+max_seq_len: 323
+sub_day: true
+seed: 2024
+batch_size: 64
+initial_lr: 0.00001
+learning_rate: 0.0000001
+t_max: 300
+pred_len_sample: true
+pred_len_min: 10
+pred_len: 60
+training_rounds: 100
+validation_rounds: 100
+num_epochs: 100
+real_test_interval: 1
+continue_training: false
+loss: mse
+multipoint: true
+sample_multi_pred: 0.5
+debugging: false
+sin_pos_enc: false
+sin_pos_const: 100
+no_pos_enc: false
+encoding_dropout: 0.0 
+handle_constants_model: false
+
+real_test_datasets:
+  - nn5_daily_without_missing
+  - nn5_weekly
+  - covid_deaths
+  - weather
+  - hospital
+  - fred_md
+  - car_parts_without_missing
+  - traffic
+  - m3_monthly
+  - ercot
+  - m1_monthly
+  - m1_quarterly
+  - cif_2016
+  - exchange_rate
+  - m3_quarterly    
+  - tourism_monthly
+  - tourism_quarterly
+
+#ssm config
+ssm_config:
+  residual: false
+  num_encoder_layers: 2
+  token_embed_len: 1024
+  initial_gelu_flag: true
+  in_proj_norm: false
+  norm: true
+  norm_type: layernorm
+  global_residual: false
+  linear_seq: 15
+  mamba2: true
+  bidirectional: false
+  #set these flags if you want dilated conv in the model
+  enc_conv: true
+  init_dil_conv: true
+  enc_conv_kernel: 5
+  init_conv_kernel: 5
+  init_conv_max_dilation: 3
+  d_state: 128
+  block_expansion: 2
+
+prior_config:
+  prior_mix_frac: 0.7 # 0.7 of data is generated from GP prior
+  curriculum_learning: false # curriculum learning shifting to FPFN prior
+  mixup_prob: 0.0 #0.1 # 10% of time we do mixup, default is 0.0 
+  mixup_series: 4
+  damp_and_spike: true # default is False, where we apply damping and spiking noise to the data
+  damping_noise_ratio: 0.05 #0.1 # default is 0.0, where we apply periodic damping step signals up to 10% of the time series
+  spike_noise_ratio: 0.05 #0.1 # default is 0.0, where we apply periodic step signals up to 10% of the time series
+  spike_signal_ratio: 0.05 #0.1 # default is 0.0, 10% of time we add a time series of spikes only (this can be either periodic or random)
+  spike_batch_ratio: 0.05 #0.1 # default is 0.0, up to 10% of the batch will be only spikes if at random we fulfill the spike signal ratio
+  fp_options:
+    # fraction of time series to keep as linear random walk series
+    linear_random_walk_frac: 0
+    # for testing cases, we only try on sinusoidal data
+    seasonal_only: false
+    scale_noise: [0.6, 0.3] # default is 0.6, 0.3 0.1, (low, moderate, high)
+    trend_exp: false # default is True
+    harmonic_scale_ratio: 0.4 #0.4 # default is 1, where you always scale the higher harmonic components down
+    harmonic_rate: 0.75 # default is 1, higher values causes higher fluctuations due to higher harmonics (high freq components)
+    trend_additional: true # default is False, it makes the scales bigger to be additional and more variance
+    transition_ratio: 0.0 #0.2 # defailt is 0.0, where we don't do the transition between 2 time series
+
+  gp_prior_config:
+    max_kernels: 6
+    likelihood_noise_level: 0.4
+    noise_level: random # can be [random, high, moderate, low], random samples low the most, and high the least
+    use_original_gp: false # usually set it to false for ablating on priors using the current kernel bank here
+    gaussians_periodic: true
+    peak_spike_ratio: 0.1 #0.1 # default is 0.1, where we add peak spikes to the data
+    subfreq_ratio: 0.2 #0.0 to not sample subfrequencies
+    periods_per_freq: 0.5 # default is 0.0 where we use the kernels periodicities provided
+    gaussian_sampling_ratio: 0.2 #0.1 # default is 1, where we always sample with gaussian around the means, if 0 then take exact when periods based on frequency
+    kernel_periods: [4, 5, 7, 21, 24, 30, 60, 120] #
+    max_period_ratio: 1.0
+    kernel_bank:
+      matern_kernel: 1.5
+      linear_kernel: 1
+      periodic_kernel: 5
+      polynomial_kernel: 0
+      spectral_mixture_kernel: 0
