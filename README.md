@@ -24,7 +24,7 @@ To install the necessary dependencies and set up the environment for Mamba4Cast,
 
 1. Clone the repository:
     ```bash
-    git clone [https://github.com/automl/Mamba4Cast](https://github.com/automl/Mamba4Cast)
+    git clone https://github.com/automl/Mamba4Cast
     cd Mamba4Cast
     ```
 
