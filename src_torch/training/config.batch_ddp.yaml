@@ -41,13 +41,13 @@ real_test_datasets:
   - fred_md
   - car_parts_without_missing
   - traffic
-  - m3_monthly
+  #- m3_monthly
   - ercot
   - m1_monthly
   - m1_quarterly
   - cif_2016
   - exchange_rate
-  - m3_quarterly    
+  #- m3_quarterly    
   - tourism_monthly
   - tourism_quarterly
 
