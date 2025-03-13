@@ -7,8 +7,10 @@ import sys
 sys.path.append('../')
 from training.utils import PositionExpansion, CustomScaling, SimpleRMSNorm
 from training.constants import *
-from mamba_ssm import Mamba, Mamba2
+
 import math
+from fla.models.gated_deltanet.modeling_gated_deltanet import GatedDeltaNetBlock, GatedDeltaNetMLP
+from fla.layers.gated_deltanet import GatedDeltaNet
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -94,34 +96,6 @@ class BiMambaEncoderBlock(nn.Module):
         self.enc_conv = enc_conv
         self.name = name
         self.norm = norm
-        self.mamba_layer_forward = Mamba(
-            # This module uses roughly 3 * expand * d_model^2 parameters
-            d_model=embed_dim, # Model dimension d_model
-            d_state=d_state,  # SSM state expansion factor
-            d_conv=4,    # Local convolution width
-            expand=block_expansion,    # Block expansion factor
-        )
-        self.mamba_layer_backward = Mamba(
-            # This module uses roughly 3 * expand * d_model^2 parameters
-            d_model=embed_dim, # Model dimension d_model
-            d_state=d_state,  # SSM state expansion factor
-            d_conv=4,    # Local convolution width
-            expand=block_expansion,    # Block expansion factor
-        )
-        
-        if mamba2:
-            self.mamba_layer_forward = Mamba2(
-            d_model=embed_dim, # Model dimension d_model
-            d_state=d_state,  # SSM state expansion factor
-            d_conv=4,    # Local convolution width
-            expand=block_expansion,    # Block expansion factor
-            )
-            self.mamba_layer_backward = Mamba2(
-            d_model=embed_dim, # Model dimension d_model
-            d_state=d_state,  # SSM state expansion factor
-            d_conv=4,    # Local convolution width
-            expand=block_expansion,    # Block expansion factor
-        )
             
         if self.enc_conv:
             self.stage_2_layer = DilatedConv1dBlock(embed_dim, embed_dim, enc_conv_kernel, 
@@ -166,52 +140,58 @@ class BiMambaEncoderBlock(nn.Module):
     
 
 class SSMEncoderBlock(nn.Module):
-    def __init__(self, embed_dim, norm=True, norm_type='layernorm', residual=False, name='SSMEncoderBlock', mamba2=False,
-                 enc_conv=False, enc_conv_kernel=5, enc_conv_dilation=0, d_state=128, block_expansion=2, **kwargs):
+    def __init__(self, embed_dim, norm=True, norm_type='layernorm', residual=False, name='SSMEncoderBlock', 
+                 gatedDeltaNet=True, enc_conv=False, enc_conv_kernel=5, enc_conv_dilation=0, d_state=128, block_expansion=2, **kwargs):
         super().__init__(**kwargs)
         
         self.enc_conv = enc_conv
         self.name = name
         self.norm = norm
-        self.mamba_layer = Mamba(
-            # This module uses roughly 3 * expand * d_model^2 parameters
-            d_model=embed_dim, # Model dimension d_model
-            d_state=d_state,  # SSM state expansion factor ## originally 16
-            d_conv=4,    # Local convolution width
-            expand=block_expansion,    # Block expansion factor
-        )
 
-        if mamba2:
-            self.mamba_layer = Mamba2(
-                d_model=embed_dim, # Model dimension d_model
-                d_state=d_state,  # SSM state expansion factor ## originally 32
-                d_conv=4,    # Local convolution width
-                expand=block_expansion,    # Block expansion factor
-            )
-            
+        # Convert model to bfloat16 during initialization
+        self.dtype = torch.half
+
+        if gatedDeltaNet:
+            self.encoder_layer = GatedDeltaNet(
+                mode="chunk",   
+                hidden_size=embed_dim,
+                expand_v=2,   
+                head_dim=256,  
+                num_heads=6, 
+                use_gate=True,
+                use_short_conv=True,
+                conv_size=4,
+                norm_first=norm,
+                norm_eps=1e-6,
+            ).half()  # Convert to bfloat16
+            print("Using GatedDeltaNet")
+      
         if self.enc_conv:
             self.stage_2_layer = DilatedConv1dBlock(embed_dim, embed_dim, enc_conv_kernel, 
-                                                         enc_conv_dilation, single_conv=False)
+                                                   enc_conv_dilation, single_conv=False).to(self.dtype)
         else:
-            self.stage_2_layer = nn.Sequential(nn.Linear(embed_dim, embed_dim), nn.GELU())
+            self.stage_2_layer = nn.Sequential(
+                nn.Linear(embed_dim, embed_dim), 
+                nn.GELU()
+            ).to(self.dtype)
 
         if self.norm:
             if norm_type == 'layernorm':
-                self.norm_layer_1 = nn.LayerNorm(embed_dim)
-                self.norm_layer_2 = nn.LayerNorm(embed_dim)
-                self.norm_layer_3 = nn.LayerNorm(embed_dim)
+                self.norm_layer_1 = nn.LayerNorm(embed_dim).to(self.dtype)
+                self.norm_layer_2 = nn.LayerNorm(embed_dim).to(self.dtype)
             elif norm_type == 'rmsnorm':
-                self.norm_layer_1 = SimpleRMSNorm(embed_dim)
-                self.norm_layer_2 = SimpleRMSNorm(embed_dim)
-                self.norm_layer_3 = SimpleRMSNorm(embed_dim)
+                self.norm_layer_1 = SimpleRMSNorm(embed_dim).to(self.dtype)
+                self.norm_layer_2 = SimpleRMSNorm(embed_dim).to(self.dtype)
         self.residual = residual
 
     def forward(self, x):
+        # Ensure input is in bfloat16
+        x = x.to(self.dtype)
         
         if self.norm:
-            x_ssm = self.mamba_layer(self.norm_layer_1(x))
+            x_ssm, _, _ = self.encoder_layer(self.norm_layer_1(x))
         else:
-            x_ssm = self.mamba_layer(x)
+            x_ssm, _, _ = self.encoder_layer(x)
 
         if self.residual:
             x = x + x_ssm
@@ -219,9 +199,9 @@ class SSMEncoderBlock(nn.Module):
             x = x_ssm
 
         if self.norm:
-            x_out = self.stage_2_layer(self.norm_layer_2(x))
+            x_out= self.stage_2_layer(self.norm_layer_2(x))
         else:
-            x_out = self.stage_2_layer(x) 
+            x_out= self.stage_2_layer(x) 
         
         if self.residual:
             x_out = x_out + x
