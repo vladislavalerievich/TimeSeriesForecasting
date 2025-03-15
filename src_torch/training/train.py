@@ -112,7 +112,7 @@ def train_model(config):
     #wandb hyperparam init
     if config["wandb"]:
         run = wandb.init(
-            project="SeriesPFN",
+            project="Time Series Forecasting",
             # Track hyperparameters and run metadata
             config=config,
             name=config['model_save_name']

@@ -16,7 +16,7 @@ batch_size: 1
 
 pad: false
 
-num_workers: 10
+num_workers: 8
 
 pred_style: ensemble
 

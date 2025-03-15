@@ -9,8 +9,8 @@ from training.utils import PositionExpansion, CustomScaling, SimpleRMSNorm
 from training.constants import *
 
 import math
-from fla.models.gated_deltanet.modeling_gated_deltanet import GatedDeltaNetBlock, GatedDeltaNetMLP
-from fla.layers.gated_deltanet import GatedDeltaNet
+from fla.models.delta_net.modeling_delta_net import DeltaNetBlock
+from fla.layers.delta_net import DeltaNet
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -152,19 +152,20 @@ class SSMEncoderBlock(nn.Module):
         self.dtype = torch.half
 
         if gatedDeltaNet:
-            self.encoder_layer = GatedDeltaNet(
+            self.encoder_layer = DeltaNet(
                 mode="chunk",   
                 hidden_size=embed_dim,
-                expand_v=2,   
+                expand_k=1.0,   
+                expand_v=1.0,                
                 head_dim=256,  
-                num_heads=6, 
+                num_heads=4, 
                 use_gate=True,
                 use_short_conv=True,
                 conv_size=4,
                 norm_first=norm,
                 norm_eps=1e-6,
             ).half()  # Convert to bfloat16
-            print("Using GatedDeltaNet")
+            print("Using DeltaNet")
       
         if self.enc_conv:
             self.stage_2_layer = DilatedConv1dBlock(embed_dim, embed_dim, enc_conv_kernel, 
