@@ -25,7 +25,7 @@ REAL_DATASETS = {
     "fred_md": 12,
     "car_parts_without_missing": 12,
     # "traffic": 24, ## autoarima gets stuck
-    "m3_monthly": 18,
+    #"m3_monthly": 18,
     "ercot": 24,
     "m1_monthly": 18,
     "m1_quarterly": 8,
@@ -33,8 +33,8 @@ REAL_DATASETS = {
     "electricity_hourly": 24,
     "m4_daily": 14,
     "exchange_rate": 30,
-    "m3_quarterly": 8,
-    "m3_yearly": 6,
+    #"m3_quarterly": 8,
+    #"m3_yearly": 6,
     "tourism_monthly": 24,
     "tourism_quarterly": 8,
 }

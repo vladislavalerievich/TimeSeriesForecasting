@@ -136,121 +136,115 @@ def train_model(config):
         print("============Training==================")
         epoch_start_time = time.time()
         model.train()
-        running_loss = 0.0
         train_epoch_loss = 0.0
         batch_idx = 0
         for batch_id, batch in enumerate(train_dataloader):
-            data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)           
+            print(f"Batch {batch_id}")
+            data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)         
             avoid_constant_inputs(data['history'], target)
-            
+            print(f"Data keys: {list(data.keys())}, Target shape: {target.shape}")
             pred_len = target.size(1)
             optimizer.zero_grad()
-            if isinstance(model, SSMModelMulti):
-                drop_enc_allow = True
-                if config["sample_multi_pred"] > np.random.rand():
-                    drop_enc_allow = False
-                    # randomly sample 2 numbers between 4 and pred_length (inclusive)
-                    pred_limits = np.random.randint(4, pred_len+1, 2)
-                    start_pred = min(pred_limits)
-                    end_pred = max(pred_limits)
 
-                    if end_pred == start_pred:
-                        if start_pred == pred_len:
-                            start_pred = start_pred - 1
-                        else:
-                            end_pred = end_pred + 1
-                    pred_len = end_pred - start_pred
-                    target = target[:, start_pred:end_pred].contiguous()
-                    data['target_dates'] = data['target_dates'][:, start_pred:end_pred].contiguous()
-                    data['complete_target'] = data['complete_target'][:, start_pred:end_pred].contiguous()
-                    data['task'] = data['task'][:, start_pred:end_pred].contiguous()
-                output = model(data, pred_len, training=True, drop_enc_allow=drop_enc_allow)
-            elif isinstance(model, SSMModelNoPos):
-                output = model(data, pred_len)
-            else:
-                output = model(data, training=True, drop_enc_allow=False)
+            with torch.autocast(device_type='cuda', dtype=torch.half, enabled=True):        
+                if isinstance(model, SSMModelMulti):
+                    drop_enc_allow = True
+                    if config["sample_multi_pred"] > np.random.rand():
+                        drop_enc_allow = False
+                        # randomly sample 2 numbers between 4 and pred_length (inclusive)
+                        pred_limits = np.random.randint(4, pred_len+1, 2)
+                        start_pred = min(pred_limits)
+                        end_pred = max(pred_limits)
 
-            if config['scaler'] == 'min_max':
-                max_scale = output['scale'][0].squeeze(-1)
-                min_scale = output['scale'][1].squeeze(-1)
-                scaled_target = (target - min_scale) / (max_scale - min_scale)
-            else:                
-                scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
-
-            loss = criterion(output['result'], scaled_target.float())
-            loss.backward()
-
-            optimizer.step()
-
-            torch.cuda.empty_cache()
-            
-            if config['scaler'] == 'min_max':
-                inv_scaled_output = (output['result'] * (max_scale - min_scale)) + min_scale
-            else:
-                inv_scaled_output = (output['result'] * output['scale'][1].squeeze(-1)) + output['scale'][0].squeeze(-1)
-
-            # Update metrics
-            train_mape.update(inv_scaled_output, target)
-            train_mse.update(inv_scaled_output, target)
-            train_smape.update(inv_scaled_output, target)
-            running_loss += loss.item()
-            train_epoch_loss += loss.item()
-            
-            if batch_idx == config['training_rounds'] - 1:
-                train_epoch_loss = running_loss / (batch_idx%10 + 1)
-
-            if batch_idx % 10 == 9:  # Log every 10 batches
-                avg_loss = running_loss / 10
-                print(f'Epoch: {epoch+1}, Batch: {batch_idx+1}, Sc. Loss: {avg_loss} From torchmetric: {train_mse.compute()} From criterion: {loss.item()}')
-                if config["wandb"]:    
-                    wandb.log({'train_batch_metrics': {'sc_loss': avg_loss, 'mape': train_mape.compute(), 'smape': train_smape.compute()},
-                          'step':epoch * config['training_rounds'] + batch_idx})
-                running_loss = 0.0
-            
-            batch_idx += 1
-            #end of epoch at max training rounds
-            if batch_idx == config['training_rounds']:
-                break
-
-        # Validation loop (after each epoch)
-        print("============Validation==================")
-        model.eval()
-        total_val_loss = 0.0
-        with torch.no_grad():
-            val_batch_idx = 0
-            for batch_id, batch in enumerate(test_dataloader):
-                data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)
-                avoid_constant_inputs(data['history'], target)
-                pred_len = target.size(1)
-                if isinstance(model, SSMModelMulti) or isinstance(model, SSMModelNoPos):
+                        if end_pred == start_pred:
+                            if start_pred == pred_len:
+                                start_pred = start_pred - 1
+                            else:
+                                end_pred = end_pred + 1
+                        pred_len = end_pred - start_pred
+                        target = target[:, start_pred:end_pred].contiguous()
+                        data['target_dates'] = data['target_dates'][:, start_pred:end_pred].contiguous()
+                        data['complete_target'] = data['complete_target'][:, start_pred:end_pred].contiguous()
+                        data['task'] = data['task'][:, start_pred:end_pred].contiguous()
+                    output = model(data, pred_len, training=True, drop_enc_allow=drop_enc_allow)
+                elif isinstance(model, SSMModelNoPos):
                     output = model(data, pred_len)
                 else:
-                    output = model(data)
-                
+                    output = model(data, training=True, drop_enc_allow=False)
+                print(f"Model output (batch {batch_idx+1}): {output['result'].shape}")
+
                 if config['scaler'] == 'min_max':
                     max_scale = output['scale'][0].squeeze(-1)
                     min_scale = output['scale'][1].squeeze(-1)
                     scaled_target = (target - min_scale) / (max_scale - min_scale)
                 else:                
                     scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
-                
-                val_loss = criterion(output['result'], scaled_target.float()).item()
-                total_val_loss += val_loss
 
-                if batch_id % 10 == 9:
-                    print(f'val loss for batch {batch_id}: {val_loss}')
+                loss = criterion(output['result'], scaled_target.float())
+                loss.backward()
+                print("="*80)
+                for name, param in model.named_parameters():
+                    if param.grad is None:
+                        print(f"{name}: gradient is None")
 
-                if config['scaler'] == 'min_max':
-                    inv_scaled_output = (output['result'] * (max_scale - min_scale)) + min_scale
-                else:
-                    inv_scaled_output = (output['result'] * output['scale'][1].squeeze(-1)) + output['scale'][0].squeeze(-1)
-                # Update validation metrics
-                val_mape.update(inv_scaled_output, target)
-                val_mse.update(inv_scaled_output, target)
-                val_smape.update(inv_scaled_output, target)
+                # Check which gradients contain NaN values
+                for name, param in model.named_parameters():
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        print(f"{name}: gradient contains NaN")
 
-                if val_batch_idx == config['validation_rounds'] - 1:
-                    break
+                # Check if loss is NaN
+                print("Check if loss is NaN ", torch.isnan(loss).any())
+
+                # Check if output contains NaN
+                print("Check if output contains NaN ", torch.isnan(output['result']).any())
+
+                # Check if scaled_target contains NaN
+                print("Check if scaled_target contains NaN ", torch.isnan(scaled_target).any())
+
+                print("="*80)
+                # import pdb; pdb.set_trace()
+         
+        
+        with torch.autocast(device_type='cuda', dtype=torch.half, enabled=True):
+            # Validation loop (after each epoch)
+            print("============Validation==================")
+            model.eval()
+            total_val_loss = 0.0
+            with torch.no_grad():
+                val_batch_idx = 0
+                for batch_id, batch in enumerate(test_dataloader):
+                    data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)
+                    avoid_constant_inputs(data['history'], target)
+                    pred_len = target.size(1)
+                    if isinstance(model, SSMModelMulti) or isinstance(model, SSMModelNoPos):
+                        output = model(data, pred_len)
+                    else:
+                        output = model(data)
+                    
+                    if config['scaler'] == 'min_max':
+                        max_scale = output['scale'][0].squeeze(-1)
+                        min_scale = output['scale'][1].squeeze(-1)
+                        scaled_target = (target - min_scale) / (max_scale - min_scale)
+                    else:                
+                        scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
+                    
+                    val_loss = criterion(output['result'], scaled_target.float()).item()
+                    total_val_loss += val_loss
+
+                    if batch_id % 10 == 9:
+                        print(f'val loss for batch {batch_id}: {val_loss}')
+
+                    if config['scaler'] == 'min_max':
+                        inv_scaled_output = (output['result'] * (max_scale - min_scale)) + min_scale
+                    else:
+                        inv_scaled_output = (output['result'] * output['scale'][1].squeeze(-1)) + output['scale'][0].squeeze(-1)
+                    # Update validation metrics
+                    val_mape.update(inv_scaled_output, target)
+                    val_mse.update(inv_scaled_output, target)
+                    val_smape.update(inv_scaled_output, target)
+
+                    if val_batch_idx == config['validation_rounds'] - 1:
+                        break
 
         # Compute and log validation metrics
         avg_val_loss = total_val_loss / config['validation_rounds']

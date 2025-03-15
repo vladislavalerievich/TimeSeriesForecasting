@@ -17,15 +17,15 @@ t_max: 300
 pred_len_sample: true
 pred_len_min: 10
 pred_len: 60
-training_rounds: 100
-validation_rounds: 100
-num_epochs: 100
+training_rounds: 2
+validation_rounds: 2
+num_epochs: 10
 real_test_interval: 1
 continue_training: false
 loss: mse
 multipoint: true
 sample_multi_pred: 0.5
-debugging: false
+debugging: true
 sin_pos_enc: false
 sin_pos_const: 100
 no_pos_enc: false
@@ -41,13 +41,9 @@ real_test_datasets:
   - fred_md
   - car_parts_without_missing
   - traffic
-  - m3_monthly
   - ercot
-  - m1_monthly
-  - m1_quarterly
   - cif_2016
   - exchange_rate
-  - m3_quarterly    
   - tourism_monthly
   - tourism_quarterly
 
@@ -62,7 +58,8 @@ ssm_config:
   norm_type: layernorm
   global_residual: false
   linear_seq: 15
-  mamba2: true
+  mamba2: false
+  gatedDeltaNet: true
   bidirectional: false
   #set these flags if you want dilated conv in the model
   enc_conv: true

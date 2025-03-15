@@ -190,8 +190,7 @@ class SSMModel(BaseModel):
                                                                            d_state=d_state, block_expansion=block_expansion,
                                                                            enc_conv_dilation=init_conv_max_dilation) for i in range(self.num_encoder_layers)])
         else:
-            self.mamba_encoder_layers = nn.ModuleList([SSMEncoderBlock(token_embed_len,norm, norm_type, residual,
-                                                                       mamba2=mamba2, enc_conv=enc_conv, enc_conv_kernel=enc_conv_kernel,
+            self.mamba_encoder_layers = nn.ModuleList([SSMEncoderBlock(token_embed_len,norm, norm_type, residual, enc_conv=enc_conv, enc_conv_kernel=enc_conv_kernel,
                                                                        d_state=d_state, block_expansion=block_expansion,
                                                                        enc_conv_dilation=init_conv_max_dilation) for i in range(self.num_encoder_layers)])
         self.final_output = nn.Linear(token_embed_len * 2, 1) if global_residual else nn.Linear(token_embed_len, 1)
@@ -231,6 +230,7 @@ class SSMModelMulti(BaseModel):
             global_residual=False,
             linear_seq=2,
             mamba2=False,
+            gatedDeltaNet=True,
             bidirectional=False,
             enc_conv=False,
             enc_conv_kernel=5,
@@ -257,17 +257,11 @@ class SSMModelMulti(BaseModel):
         self.init_gelu = nn.GELU() if initial_gelu_flag else None
         self.norm = norm
         self.in_proj_norm = nn.LayerNorm(token_embed_len) if in_proj_norm else nn.Identity()
-        if bidirectional:
-            self.mamba_encoder_layers = nn.ModuleList([BiMambaEncoderBlock(token_embed_len,norm, norm_type, residual,
-                                                                           mamba2=mamba2, enc_conv=enc_conv, enc_conv_kernel=enc_conv_kernel,
-                                                                           d_state=d_state, block_expansion=block_expansion,
-                                                                           enc_conv_dilation=init_conv_max_dilation) for i in range(self.num_encoder_layers)])
-        else:
-            self.mamba_encoder_layers = nn.ModuleList([SSMEncoderBlock(token_embed_len,norm, norm_type, residual,
-                                                                       mamba2=mamba2, enc_conv=enc_conv, enc_conv_kernel=enc_conv_kernel,
+        self.encoder_layers = nn.ModuleList([SSMEncoderBlock(token_embed_len,norm, norm_type, residual,
+                                                                       gatedDeltaNet=gatedDeltaNet, enc_conv=enc_conv, enc_conv_kernel=enc_conv_kernel,
                                                                        d_state=d_state, block_expansion=block_expansion,
                                                                        enc_conv_dilation=init_conv_max_dilation) for i in range(self.num_encoder_layers)])
-        self.final_output = nn.Linear(token_embed_len * 2, 1) if global_residual else nn.Linear(token_embed_len, 1)
+        self.final_output = nn.Linear(token_embed_len * 2, 1).half() if global_residual else nn.Linear(token_embed_len, 1).half()
         self.final_output.name = 'FinalOutput'
         self.final_activation = nn.Identity()
 
@@ -280,7 +274,7 @@ class SSMModelMulti(BaseModel):
         if self.init_gelu is not None:
             x = self.in_proj_norm(x)
             x = self.init_gelu(x)
-        for encoder_layer in self.mamba_encoder_layers:
+        for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
         if self.global_residual:
             x = self.final_output(torch.concat([x[:, -prediction_length:, :],glob_res], dim=-1))
@@ -343,7 +337,7 @@ class SSMModelNoPos(nn.Module):
         else:
             self.mamba_encoder_layers = nn.ModuleList([SSMEncoderBlock(token_embed_len,norm, norm_type, residual,
                                                                            d_state=d_state, block_expansion=block_expansion,
-                                                                       mamba2=mamba2, conv_d=conv_d) for _ in range(self.num_encoder_layers)])
+                                                                       conv_d=conv_d) for _ in range(self.num_encoder_layers)])
         self.final_output = nn.Linear(token_embed_len * 2, 1) if global_residual else nn.Linear(token_embed_len, 1)
         self.final_output.name = 'FinalOutput'
         self.final_activation = nn.Identity()
