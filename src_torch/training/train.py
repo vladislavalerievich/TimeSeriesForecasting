@@ -31,6 +31,7 @@ from real_data_val_pipeline import validate_on_real_dataset
 from utils import SMAPEMetric, generate_model_save_name, avoid_constant_inputs
 from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmRestarts
 
+check_nan = False
 
 def train_model(config):
     print("config:")
@@ -181,30 +182,81 @@ def train_model(config):
                     scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
 
                 loss = criterion(output['result'], scaled_target.float())
-                loss.backward()
-                print("="*80)
-                for name, param in model.named_parameters():
-                    if param.grad is None:
-                        print(f"{name}: gradient is None")
+                loss.backward()                
+                            
+                # Log gradients
+                if config["wandb"] and (batch_idx % 10 == 0):  # Log every 10 batches
+                    grad_dict = {}
+                    for name, param in model.named_parameters():
+                        if param.grad is not None:
+                            grad_dict[f"gradients/{name}"] = wandb.Histogram(param.grad.cpu().numpy())
+                    wandb.log(grad_dict, commit=False)
 
-                # Check which gradients contain NaN values
-                for name, param in model.named_parameters():
-                    if param.grad is not None and torch.isnan(param.grad).any():
-                        print(f"{name}: gradient contains NaN")
+                
+                optimizer.step()
+                torch.cuda.empty_cache()
 
-                # Check if loss is NaN
-                print("Check if loss is NaN ", torch.isnan(loss).any())
+                if check_nan:    
+                    for name, param in model.named_parameters():
+                        if param.grad is None:
+                            print(f"{name}: gradient is None")
 
-                # Check if output contains NaN
-                print("Check if output contains NaN ", torch.isnan(output['result']).any())
+                    # Check which gradients contain NaN values
+                    for name, param in model.named_parameters():
+                        if param.grad is not None and torch.isnan(param.grad).any():
+                            print(f"{name}: gradient contains NaN")
+ 
+                    # Check if loss is NaN
+                    print("Check if loss is NaN ", torch.isnan(loss).any())
 
-                # Check if scaled_target contains NaN
-                print("Check if scaled_target contains NaN ", torch.isnan(scaled_target).any())
+                    # Check if output contains NaN
+                    print("Check if output contains NaN ", torch.isnan(output['result']).any())
 
-                print("="*80)
-                # import pdb; pdb.set_trace()
-         
-        
+                    # Check if scaled_target contains NaN
+                    print("Check if scaled_target contains NaN ", torch.isnan(scaled_target).any())
+
+                    print("="*80)
+                    # import pdb; pdb.set_trace()
+
+            if config['scaler'] == 'min_max':
+                inv_scaled_output = (output['result'] * (max_scale - min_scale)) + min_scale
+            else:
+                inv_scaled_output = (output['result'] * output['scale'][1].squeeze(-1)) + output['scale'][0].squeeze(-1)
+
+            # Update metrics
+            train_mape.update(inv_scaled_output, target)
+            train_mse.update(inv_scaled_output, target)
+            train_smape.update(inv_scaled_output, target)
+            running_loss += loss.item()  
+            train_epoch_loss += loss.item()          
+            
+            if batch_idx == config['training_rounds'] - 1:
+                train_epoch_loss = running_loss / (batch_idx%10 + 1)
+
+            if batch_idx % 10 == 9:  # Log every 10 batches
+                avg_loss = running_loss / 10
+                print(f'Epoch: {epoch+1}, Batch: {batch_idx+1}, Sc. Loss: {avg_loss} From torchmetric: {train_mse.compute()} From criterion: {loss.item()}')
+                if config["wandb"]:             
+                    wandb.log({
+                        "train/loss": avg_loss,
+                        "train/mape": train_mape.compute(),
+                        "train/mse": train_mse.compute(),
+                        "train/smape": train_smape.compute(),
+                        "epoch": epoch,
+                        'step':epoch * config['training_rounds'] + batch_idx
+                    }) 
+                running_loss = 0.0
+
+            batch_idx += 1
+            #end of epoch at max training rounds
+            if batch_idx == config['training_rounds']:
+                break
+          
+        if config["wandb"]:
+    
+
+            wandb.log({"learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
+            
         with torch.autocast(device_type='cuda', dtype=torch.half, enabled=True):
             # Validation loop (after each epoch)
             print("============Validation==================")

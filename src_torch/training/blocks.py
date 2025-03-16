@@ -160,7 +160,7 @@ class SSMEncoderBlock(nn.Module):
                 expand_k=1.0,   
                 expand_v=1.0,                
                 head_dim=256,  
-                num_heads=4, 
+                num_heads=16, 
                 use_gate=True,
                 use_short_conv=True,
                 allow_neg_eigval=allow_neg_eigval,

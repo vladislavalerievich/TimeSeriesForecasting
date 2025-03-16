@@ -16,3 +16,4 @@ datasets>=2.11.0
 #mamba-ssm==2.2.2
 matplotlib
 seaborn
+wandb
