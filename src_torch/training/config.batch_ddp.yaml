@@ -4,10 +4,10 @@ version: mix
 model_type: ssm
 scaler: min_max
 lr_scheduler: cosine_warm_restarts
-wandb: false # whether to log to wandb for testing
-context_len: 323
+wandb: true # whether to log to wandb for testing
+context_len: 512
 min_seq_len: 30
-max_seq_len: 323
+max_seq_len: 512
 sub_day: true
 seed: 2024
 batch_size: 64
@@ -17,8 +17,8 @@ t_max: 300
 pred_len_sample: true
 pred_len_min: 10
 pred_len: 60
-training_rounds: 100
-validation_rounds: 100
+training_rounds: 30
+validation_rounds: 15
 num_epochs: 100
 real_test_interval: 1
 continue_training: false

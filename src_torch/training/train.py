@@ -112,7 +112,7 @@ def train_model(config):
     #wandb hyperparam init
     if config["wandb"]:
         run = wandb.init(
-            project="SeriesPFN",
+            project="Time Series Forecasting",
             # Track hyperparameters and run metadata
             config=config,
             name=config['model_save_name']
@@ -176,9 +176,15 @@ def train_model(config):
                 scaled_target = (target - min_scale) / (max_scale - min_scale)
             else:                
                 scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
-
+            
             loss = criterion(output['result'], scaled_target.float())
             loss.backward()
+            
+            # Log gradients
+            if config["wandb"]:
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        wandb.log({f"gradients/{name}": wandb.Histogram(param.grad.cpu().numpy()), "epoch": epoch})
 
             optimizer.step()
 
@@ -203,8 +209,14 @@ def train_model(config):
                 avg_loss = running_loss / 10
                 print(f'Epoch: {epoch+1}, Batch: {batch_idx+1}, Sc. Loss: {avg_loss} From torchmetric: {train_mse.compute()} From criterion: {loss.item()}')
                 if config["wandb"]:    
-                    wandb.log({'train_batch_metrics': {'sc_loss': avg_loss, 'mape': train_mape.compute(), 'smape': train_smape.compute()},
-                          'step':epoch * config['training_rounds'] + batch_idx})
+                    wandb.log({
+                        "train/loss": loss.item(),
+                        "train/mape": train_mape.compute(),
+                        "train/mse": train_mse.compute(),
+                        "train/smape": train_smape.compute(),
+                        "step": epoch * config['training_rounds'] + batch_idx
+                    })
+
                 running_loss = 0.0
             
             batch_idx += 1
@@ -255,13 +267,15 @@ def train_model(config):
         # Compute and log validation metrics
         avg_val_loss = total_val_loss / config['validation_rounds']
         print(f'Epoch: {epoch+1}, Sc. Validation Loss: {avg_val_loss} From torchmetric: {val_mse.compute()}')
-        if config["wandb"]:    
-            wandb.log({'epoch_metrics': {
-                    'train': {'sc_loss': train_epoch_loss,'mape': train_mape.compute(),'smape': train_smape.compute()},
-                    'val': {'sc_loss': avg_val_loss,'mape': val_mape.compute(),'smape': val_smape.compute()}
-                    },
-                   'epoch': epoch,
-                   'lr': optimizer.param_groups[0]['lr']})
+        if config["wandb"]:   
+            wandb.log({
+                "val/loss": avg_val_loss,
+                "val/mape": val_mape.compute(),
+                "val/mse": val_mse.compute(),
+                "val/smape": val_smape.compute(),
+                "epoch": epoch
+            }) 
+     
         
         epoch_time = time.time() - epoch_start_time
         print(f'Time taken for epoch: {epoch_time/60} mins {epoch_time%60} secs.')
@@ -275,17 +289,29 @@ def train_model(config):
         val_smape.reset()
 
         if epoch % config['real_test_interval'] == config['real_test_interval'] - 1:
-            res_dict = {'real_dataset_metrics': {'mase':{}, 'mae':{}, 'rmse':{}, 'smape':{}}, 'epoch': epoch}
-            for real_dataset in config['real_test_datasets']:
-                print(f'Evaluating on real dataset: {real_dataset}')
-                real_mase, real_mae, real_rmse, real_smape = validate_on_real_dataset(real_dataset, model, device, config['scaler'], subday=config["sub_day"])
-                print(f"MASE: {real_mase}, MAE: {real_mae}, RMSE: {real_rmse}, SMAPE: {real_smape}")
-                res_dict['real_dataset_metrics']['mase'][real_dataset] = real_mase
-                res_dict['real_dataset_metrics']['mae'][real_dataset] = real_mae
-                res_dict['real_dataset_metrics']['rmse'][real_dataset] = real_rmse
-                res_dict['real_dataset_metrics']['smape'][real_dataset] = real_smape
-                if config["wandb"]:
-                    wandb.log(res_dict)
+
+                print("============Real Dataset Evaluation==================")
+
+    # Initialize wandb Table
+    table_data = []
+    columns = ["Dataset", "MASE", "MAE", "RMSE", "SMAPE"]
+
+    for real_dataset in config['real_test_datasets']:
+        print(f'Evaluating on real dataset: {real_dataset}')
+        
+        # Run validation on the real dataset
+        real_mase, real_mae, real_rmse, real_smape = validate_on_real_dataset(
+            real_dataset, model, device, config['scaler'], subday=config["sub_day"]
+        )
+        
+        print(f"MASE: {real_mase}, MAE: {real_mae}, RMSE: {real_rmse}, SMAPE: {real_smape}")
+
+        # Append results to the table
+        table_data.append([real_dataset, real_mase, real_mae, real_rmse, real_smape])
+
+    if config["wandb"]:
+        wandb.log({"Real Dataset Metrics": wandb.Table(data=table_data, columns=columns), "epoch": epoch})
+        wandb.log({"learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
         
         if config['lr_scheduler'].startswith("cosine"):
             if (scheduler.get_last_lr()[0] == config['learning_rate']) & (config['lr_scheduler'] == "cosine"):

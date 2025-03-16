@@ -61,14 +61,14 @@ def multipoint_predict(model, batch_x, batch_x_mark, batch_y_mark, pred_len, sca
 with open('config.batch_ddp.yaml') as config_file:
     config = yaml.load(config_file, yaml.loader.SafeLoader)
 
-val_dataset = GenerativeDataset(config, cpus_available=2, device='cpu', mode='val', return_target_series=True)
+val_dataset = GenerativeDataset(config, cpus_available=8, device='cpu', mode='val', return_target_series=True)
 val_data_loader = DataLoader(
     dataset=val_dataset,
     batch_size=None,
     shuffle=False,
     collate_fn=val_dataset.collate_fn,
     worker_init_fn=val_dataset.worker_init_fn,
-    num_workers=2,
+    num_workers=8,
     prefetch_factor=2,
     persistent_workers=True,
 )
