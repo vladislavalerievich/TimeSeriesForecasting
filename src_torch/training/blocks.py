@@ -151,6 +151,8 @@ class SSMEncoderBlock(nn.Module):
         # Convert model to bfloat16 during initialization
         self.dtype = torch.half
 
+        allow_neg_eigval = True
+        
         if gatedDeltaNet:
             self.encoder_layer = DeltaNet(
                 mode="chunk",   
@@ -161,11 +163,10 @@ class SSMEncoderBlock(nn.Module):
                 num_heads=4, 
                 use_gate=True,
                 use_short_conv=True,
+                allow_neg_eigval=allow_neg_eigval,
                 conv_size=4,
-                norm_first=norm,
-                norm_eps=1e-6,
             ).half()  # Convert to bfloat16
-            print("Using DeltaNet")
+            print(f"Using DeltaNet with allow_neg_eigval {allow_neg_eigval}")
       
         if self.enc_conv:
             self.stage_2_layer = DilatedConv1dBlock(embed_dim, embed_dim, enc_conv_kernel, 

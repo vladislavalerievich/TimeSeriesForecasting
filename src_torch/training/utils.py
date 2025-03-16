@@ -23,7 +23,7 @@ def position_encoding(periods: int, freqs: int):
     ])
 
 def generate_model_save_name(config):
-    name = 'DeltaNet_'
+    name = 'DeltaNet_with_neg_eigval_'
     if config['model_type'] == 'ssm' and config['ssm_config']['bidirectional']:
         name += 'bi_'
     name += f'{config["version"][:2]}_'
