@@ -141,7 +141,6 @@ def train_model(config):
         train_epoch_loss = 0.0
         batch_idx = 0
         for batch_id, batch in enumerate(train_dataloader):
-            print(f"Batch {batch_id}")
             data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)         
             avoid_constant_inputs(data['history'], target)
             print(f"Data keys: {list(data.keys())}, Target shape: {target.shape}")
@@ -239,6 +238,8 @@ def train_model(config):
                     }) 
                 running_loss = 0.0
 
+            print(f"Train Loss for batch {batch_idx}: {loss.item()}")
+            
             batch_idx += 1
             #end of epoch at max training rounds
             if batch_idx == config['training_rounds']:
