@@ -23,7 +23,7 @@ def position_encoding(periods: int, freqs: int):
     ])
 
 def generate_model_save_name(config):
-    name = 'Mamba_'
+    name = 'latest_Mamba_'
     if config['model_type'] == 'ssm' and config['ssm_config']['bidirectional']:
         name += 'bi_'
     name += f'{config["version"][:2]}_'
