@@ -137,6 +137,7 @@ def train_model(config):
         print("============Training==================")
         epoch_start_time = time.time()
         model.train()
+        running_loss = 0.0
         train_epoch_loss = 0.0
         batch_idx = 0
         for batch_id, batch in enumerate(train_dataloader):
@@ -182,17 +183,8 @@ def train_model(config):
                     scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
 
                 loss = criterion(output['result'], scaled_target.float())
-                loss.backward()                
-                            
-                # Log gradients
-                if config["wandb"] and (batch_idx % 10 == 0):  # Log every 10 batches
-                    grad_dict = {}
-                    for name, param in model.named_parameters():
-                        if param.grad is not None:
-                            grad_dict[f"gradients/{name}"] = wandb.Histogram(param.grad.cpu().numpy())
-                    wandb.log(grad_dict, commit=False)
+                loss.backward()              
 
-                
                 optimizer.step()
                 torch.cuda.empty_cache()
 
