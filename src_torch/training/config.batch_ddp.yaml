@@ -17,8 +17,8 @@ t_max: 300
 pred_len_sample: true
 pred_len_min: 10
 pred_len: 60
-training_rounds: 100
-validation_rounds: 100
+training_rounds: 50
+validation_rounds: 50
 num_epochs: 100
 real_test_interval: 1
 continue_training: false

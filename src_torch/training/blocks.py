@@ -148,9 +148,6 @@ class SSMEncoderBlock(nn.Module):
         self.name = name
         self.norm = norm
 
-        # Convert model to bfloat16 during initialization
-        self.dtype = torch.half
-
         allow_neg_eigval = True
         
         if gatedDeltaNet:
@@ -160,36 +157,33 @@ class SSMEncoderBlock(nn.Module):
                 expand_k=1.0,   
                 expand_v=1.0,                
                 head_dim=256,  
-                num_heads=16, 
+                num_heads=4, 
                 use_gate=True,
                 use_short_conv=True,
                 allow_neg_eigval=allow_neg_eigval,
                 conv_size=4,
-            ).half()  # Convert to bfloat16
+            ) 
             print(f"Using DeltaNet with allow_neg_eigval {allow_neg_eigval}")
       
         if self.enc_conv:
             self.stage_2_layer = DilatedConv1dBlock(embed_dim, embed_dim, enc_conv_kernel, 
-                                                   enc_conv_dilation, single_conv=False).to(self.dtype)
+                                                   enc_conv_dilation, single_conv=False) 
         else:
             self.stage_2_layer = nn.Sequential(
                 nn.Linear(embed_dim, embed_dim), 
                 nn.GELU()
-            ).to(self.dtype)
+            ) 
 
         if self.norm:
             if norm_type == 'layernorm':
-                self.norm_layer_1 = nn.LayerNorm(embed_dim).to(self.dtype)
-                self.norm_layer_2 = nn.LayerNorm(embed_dim).to(self.dtype)
+                self.norm_layer_1 = nn.LayerNorm(embed_dim) 
+                self.norm_layer_2 = nn.LayerNorm(embed_dim) 
             elif norm_type == 'rmsnorm':
-                self.norm_layer_1 = SimpleRMSNorm(embed_dim).to(self.dtype)
-                self.norm_layer_2 = SimpleRMSNorm(embed_dim).to(self.dtype)
+                self.norm_layer_1 = SimpleRMSNorm(embed_dim) 
+                self.norm_layer_2 = SimpleRMSNorm(embed_dim) 
         self.residual = residual
 
-    def forward(self, x):
-        # Ensure input is in bfloat16
-        x = x.to(self.dtype)
-        
+    def forward(self, x):        
         if self.norm:
             x_ssm, _, _ = self.encoder_layer(self.norm_layer_1(x))
         else:

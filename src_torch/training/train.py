@@ -141,13 +141,11 @@ def train_model(config):
         train_epoch_loss = 0.0
         batch_idx = 0
         for batch_id, batch in enumerate(train_dataloader):
-            data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)         
+            data, target = {k: v.to(device) for k, v in batch.items() if k != 'target_values'}, batch['target_values'].to(device)           
             avoid_constant_inputs(data['history'], target)
-            print(f"Data keys: {list(data.keys())}, Target shape: {target.shape}")
             pred_len = target.size(1)
             optimizer.zero_grad()
-
-            with torch.autocast(device_type='cuda', dtype=torch.half, enabled=True):        
+            with torch.autocast(device_type='cuda', enabled=True):         
                 if isinstance(model, SSMModelMulti):
                     drop_enc_allow = True
                     if config["sample_multi_pred"] > np.random.rand():
@@ -172,7 +170,7 @@ def train_model(config):
                     output = model(data, pred_len)
                 else:
                     output = model(data, training=True, drop_enc_allow=False)
-                print(f"Model output (batch {batch_idx+1}): {output['result'].shape}")
+                print(f"Model output (batch {batch_idx}): {output['result'].shape}")
 
                 if config['scaler'] == 'min_max':
                     max_scale = output['scale'][0].squeeze(-1)
@@ -181,33 +179,26 @@ def train_model(config):
                 else:                
                     scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
 
-                loss = criterion(output['result'], scaled_target.float())
-                loss.backward()              
+                if check_nan:
+                    # Check model outputs
+                    print("Check output type: ", output['result'].dtype) 
+                    print("Check model NaN outputs: ", torch.isnan(output['result']).any())
+                    print("Check model INF outputs: ", torch.isinf(output['result']).any())
 
-                optimizer.step()
-                torch.cuda.empty_cache()
+                loss = criterion(output['result'], scaled_target.half())
 
-                if check_nan:    
-                    for name, param in model.named_parameters():
-                        if param.grad is None:
-                            print(f"{name}: gradient is None")
+            # Backward pass should be outside of autocast    
+            loss.backward()              
 
-                    # Check which gradients contain NaN values
-                    for name, param in model.named_parameters():
-                        if param.grad is not None and torch.isnan(param.grad).any():
-                            print(f"{name}: gradient contains NaN")
- 
-                    # Check if loss is NaN
-                    print("Check if loss is NaN ", torch.isnan(loss).any())
+            optimizer.step()
+            torch.cuda.empty_cache()
 
-                    # Check if output contains NaN
-                    print("Check if output contains NaN ", torch.isnan(output['result']).any())
-
-                    # Check if scaled_target contains NaN
-                    print("Check if scaled_target contains NaN ", torch.isnan(scaled_target).any())
-
-                    print("="*80)
-                    # import pdb; pdb.set_trace()
+            if check_nan:
+                print("Check if loss is NaN ", torch.isnan(loss).any()) 
+                
+            print(f"Train Loss for batch {batch_idx}: {loss.item()}")
+            print("="*80)
+            # import pdb; pdb.set_trace()
 
             if config['scaler'] == 'min_max':
                 inv_scaled_output = (output['result'] * (max_scale - min_scale)) + min_scale
@@ -238,16 +229,12 @@ def train_model(config):
                     }) 
                 running_loss = 0.0
 
-            print(f"Train Loss for batch {batch_idx}: {loss.item()}")
-            
             batch_idx += 1
             #end of epoch at max training rounds
             if batch_idx == config['training_rounds']:
                 break
           
-        if config["wandb"]:
-    
-
+        if config["wandb"]:   
             wandb.log({"learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch})
             
         with torch.autocast(device_type='cuda', dtype=torch.half, enabled=True):
@@ -273,7 +260,7 @@ def train_model(config):
                     else:                
                         scaled_target = (target - output['scale'][0].squeeze(-1)) / output['scale'][1].squeeze(-1)
                     
-                    val_loss = criterion(output['result'], scaled_target.float()).item()
+                    val_loss = criterion(output['result'], scaled_target.half()).item()
                     total_val_loss += val_loss
 
                     if batch_id % 10 == 9:
@@ -315,16 +302,17 @@ def train_model(config):
 
         if epoch % config['real_test_interval'] == config['real_test_interval'] - 1:
             res_dict = {'real_dataset_metrics': {'mase':{}, 'mae':{}, 'rmse':{}, 'smape':{}}, 'epoch': epoch}
-            for real_dataset in config['real_test_datasets']:
-                print(f'Evaluating on real dataset: {real_dataset}')
-                real_mase, real_mae, real_rmse, real_smape = validate_on_real_dataset(real_dataset, model, device, config['scaler'], subday=config["sub_day"])
-                print(f"MASE: {real_mase}, MAE: {real_mae}, RMSE: {real_rmse}, SMAPE: {real_smape}")
-                res_dict['real_dataset_metrics']['mase'][real_dataset] = real_mase
-                res_dict['real_dataset_metrics']['mae'][real_dataset] = real_mae
-                res_dict['real_dataset_metrics']['rmse'][real_dataset] = real_rmse
-                res_dict['real_dataset_metrics']['smape'][real_dataset] = real_smape
-                if config["wandb"]:
-                    wandb.log(res_dict)
+            with torch.autocast(device_type='cuda', dtype=torch.half, enabled=True):
+                for real_dataset in config['real_test_datasets']:
+                    print(f'Evaluating on real dataset: {real_dataset}')
+                    real_mase, real_mae, real_rmse, real_smape = validate_on_real_dataset(real_dataset, model, device, config['scaler'], subday=config["sub_day"])
+                    print(f"MASE: {real_mase}, MAE: {real_mae}, RMSE: {real_rmse}, SMAPE: {real_smape}")
+                    res_dict['real_dataset_metrics']['mase'][real_dataset] = real_mase
+                    res_dict['real_dataset_metrics']['mae'][real_dataset] = real_mae
+                    res_dict['real_dataset_metrics']['rmse'][real_dataset] = real_rmse
+                    res_dict['real_dataset_metrics']['smape'][real_dataset] = real_smape
+                    if config["wandb"]:
+                        wandb.log(res_dict)
         
         if config['lr_scheduler'].startswith("cosine"):
             if (scheduler.get_last_lr()[0] == config['learning_rate']) & (config['lr_scheduler'] == "cosine"):
