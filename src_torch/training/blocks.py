@@ -154,7 +154,7 @@ class SSMEncoderBlock(nn.Module):
                 hidden_size=embed_dim,
                 expand_v=2.0,    
                 head_dim=256,  
-                num_heads=4, 
+                num_heads=5, 
                 use_gate=True,
                 use_short_conv=True,
                 conv_size=4,
