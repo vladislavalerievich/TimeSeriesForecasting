@@ -261,7 +261,7 @@ class SSMModelMulti(BaseModel):
                                                                        gatedDeltaNet=gatedDeltaNet, enc_conv=enc_conv, enc_conv_kernel=enc_conv_kernel,
                                                                        d_state=d_state, block_expansion=block_expansion,
                                                                        enc_conv_dilation=init_conv_max_dilation) for i in range(self.num_encoder_layers)])
-        self.final_output = nn.Linear(token_embed_len * 2, 1).half() if global_residual else nn.Linear(token_embed_len, 1).half()
+        self.final_output = nn.Linear(token_embed_len * 2, 1) if global_residual else nn.Linear(token_embed_len, 1)
         self.final_output.name = 'FinalOutput'
         self.final_activation = nn.Identity()
 
