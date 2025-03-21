@@ -31,7 +31,7 @@ from real_data_val_pipeline import validate_on_real_dataset
 from utils import SMAPEMetric, generate_model_save_name, avoid_constant_inputs
 from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmRestarts
 
-check_nan = True
+check_nan = False
 
 def train_model(config):
     print("config:")

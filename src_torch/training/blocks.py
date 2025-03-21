@@ -152,7 +152,7 @@ class SSMEncoderBlock(nn.Module):
             self.encoder_layer = GatedDeltaNet(
                 mode="chunk",   
                 hidden_size=embed_dim,
-                expand_v=1.0,    
+                expand_v=2.0,    
                 head_dim=256,  
                 num_heads=4, 
                 use_gate=True,
