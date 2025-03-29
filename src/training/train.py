@@ -311,37 +311,6 @@ def train_model(config):
         val_mse.reset()
         val_smape.reset()
 
-            res_dict = {
-                "real_dataset_metrics": {
-                    "mase": {},
-                    "mae": {},
-                    "rmse": {},
-                    "smape": {},
-                },
-                "epoch": epoch,
-            }
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                for real_dataset in config["real_test_datasets"]:
-                    print(f"Evaluating on real dataset: {real_dataset}")
-                    real_mase, real_mae, real_rmse, real_smape = (
-                        validate_on_real_dataset(
-                            real_dataset,
-                            model,
-                            device,
-                            config["scaler"],
-                            subday=config["sub_day"],
-                        )
-                    )
-                    print(
-                        f"MASE: {real_mase}, MAE: {real_mae}, RMSE: {real_rmse}, SMAPE: {real_smape}"
-                    )
-                    res_dict["real_dataset_metrics"]["mase"][real_dataset] = real_mase
-                    res_dict["real_dataset_metrics"]["mae"][real_dataset] = real_mae
-                    res_dict["real_dataset_metrics"]["rmse"][real_dataset] = real_rmse
-                    res_dict["real_dataset_metrics"]["smape"][real_dataset] = real_smape
-                    if config["wandb"]:
-                        wandb.log(res_dict)
-
         if config["lr_scheduler"].startswith("cosine"):
             if (scheduler.get_last_lr()[0] == config["learning_rate"]) & (
                 config["lr_scheduler"] == "cosine"
@@ -377,7 +346,7 @@ def train_model(config):
         ),
         "epoch": epoch,
     }
-    torch.save(ckpt, f"{config['model_save_dir']}/{config['model_save_name']}_Final.pth")
+    torch.save(ckpt, f"{config['model_save_dir']}/{config['model_save_name']}.pth")
 
 
 if __name__ == "__main__":
