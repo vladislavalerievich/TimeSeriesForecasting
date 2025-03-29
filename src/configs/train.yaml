@@ -1,0 +1,22 @@
+data_dir: ../../data
+model_save_dir: ../../models
+model_name)prefix: GatedDeltaNet_rtx_2080_
+
+wandb: true # whether to log to wandb for testing
+
+model_type: GatedDeltaNet
+
+lr_scheduler: cosine
+initial_lr: 0.00001
+learning_rate: 0.0000001
+
+scaler: min_max
+context_len: 512
+min_seq_len: 64
+max_seq_len: 512
+seed: 2024
+batch_size: 64
+num_epochs: 100
+validation_interval: 5 
+
+loss: mse
