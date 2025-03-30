@@ -2,9 +2,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.models.blocks import DilatedConv1dBlock, EncoderBlock, SinPositionalEncoding
-from src.utils.constants import DAY, DOW, HOUR, MINUTE, MONTH, NUM_TASKS, YEAR
-from src.utils.utils import ConcatLayer, CustomScaling, PositionExpansion, device
+from src.models.blocks import (
+    ConcatLayer,
+    DilatedConv1dBlock,
+    EncoderBlock,
+    SinPositionalEncoding,
+)
+from src.models.constants import DAY, DOW, HOUR, MINUTE, MONTH, NUM_TASKS, YEAR
+from src.utils.utils import CustomScaling, PositionExpansion, device
 
 
 class BaseModel(nn.Module):
@@ -17,7 +22,7 @@ class BaseModel(nn.Module):
         sub_day=False,
         encoding_dropout=0.0,
         handle_constants_model=False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
         assert encoding_dropout >= 0.0 and encoding_dropout <= 1.0
@@ -214,9 +219,8 @@ class MultiStepModel(BaseModel):
         init_conv_kernel=3,
         init_conv_max_dilation=3,
         block_expansion=2,
-        **kwargs
+        **kwargs,
     ):
-
         super().__init__(**kwargs)
         self.num_encoder_layers = num_encoder_layers
         self.initial_gelu_flag = initial_gelu_flag
@@ -268,7 +272,6 @@ class MultiStepModel(BaseModel):
         self.final_activation = nn.Identity()
 
     def forecast(self, embedded: torch.Tensor, prediction_length: int):
-
         if self.global_residual:
             glob_res = embedded[:, -(self.linear_seq + 1) :, :].reshape(
                 embedded.shape[0], -1

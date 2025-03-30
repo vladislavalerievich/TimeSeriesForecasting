@@ -13,28 +13,19 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def seed_everything(seed: int):
     random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 
 def generate_model_save_name(config):
-    """
-    Generate a model save name based on the configuration.
-    Args:
-        config: Configuration object containing model parameters.
-    Returns:
-        str: Generated model save name.
-    """
     return (
-        f"{config.model.name}_"
-        f"bs{config.train.batch_size}_"
-        f"lr{config.train.learning_rate}_"
-        f"ep{config.train.epochs}_"
-        f"seed{config.train.seed}"
+        f"{config['model_save_name_prefix']}_"
+        f"batch_size_{config['batch_size']}_"
+        f"num_epochs_{config['num_epochs']}_"
     )
 
 
@@ -51,6 +42,14 @@ def position_encoding(periods: int, freqs: int):
             ),
         ]
     )
+
+
+def avoid_constant_inputs(inputs, outputs):
+    idx_const_in = torch.nonzero(
+        torch.all(inputs == inputs[:, 0].unsqueeze(1), dim=1)
+    ).squeeze(1)
+    if idx_const_in.size(0) > 0:
+        inputs[idx_const_in, 0] += np.random.uniform(0.1, 1)
 
 
 class CustomScaling(nn.Module):

@@ -1,10 +1,7 @@
-"""
-Module to train the model
-"""
-
 import argparse
 import os
 import pprint
+import sys
 import time
 
 import numpy as np
@@ -12,11 +9,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchmetrics
-import wandb
 import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from src.data.dataloaders import create_dataloader
+import wandb
+from src.data.dataloaders import train_val_loader
 from src.models.models import MultiStepModel
 from src.utils.utils import (
     SMAPEMetric,
@@ -25,6 +22,8 @@ from src.utils.utils import (
     generate_model_save_name,
     seed_everything,
 )
+
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 
 def train_model(config):
@@ -44,7 +43,9 @@ def train_model(config):
         available_cpus = os.cpu_count()
 
     # Load the model
-    model = MultiStepModel(**config).to(device)
+    model = MultiStepModel(
+        **config["BaseModelConfig"], **config["MultiStepModel"], scaler=config["scaler"]
+    ).to(device)
 
     # Assuming your train_loader and test_loader are already defined
     if config["lr_scheduler"] == "cosine":
@@ -57,13 +58,11 @@ def train_model(config):
 
     initial_epoch = 0
     # Load state dicts if we are resuming training
-    config["model_save_name"] = generate_model_save_name(
-        config["model_save_name_prefix"]
-    )
+    config["model_save_name"] = generate_model_save_name(config)
     if config["continue_training"] and os.path.exists(
         f"{config['model_save_dir']}/{config['model_save_name']}.pth"
     ):
-        print(f'loading previous training states from: {config["model_save_name"]}')
+        print(f"loading previous training states from: {config['model_save_name']}")
         ckpt = torch.load(
             f"{config['model_save_dir']}/{config['model_save_name']}.pth",
             map_location=device,
@@ -78,9 +77,8 @@ def train_model(config):
         print("no previous training states found, starting fresh")
         model = model.to(device)
 
-    train_dataloader, val_dataloader = create_dataloader(
+    train_dataloader, val_dataloader = train_val_loader(
         config=config,
-        initial_epoch=initial_epoch,
         cpus_available=available_cpus,
     )
 
@@ -124,9 +122,10 @@ def train_model(config):
         train_epoch_loss = 0.0
         batch_idx = 0
         for batch_id, batch in enumerate(train_dataloader):
-            data, target = {
-                k: v.to(device) for k, v in batch.items() if k != "target_values"
-            }, batch["target_values"].to(device)
+            data, target = (
+                {k: v.to(device) for k, v in batch.items() if k != "target_values"},
+                batch["target_values"].to(device),
+            )
             avoid_constant_inputs(data["history"], target)
             pred_len = target.size(1)
             optimizer.zero_grad()
@@ -201,7 +200,7 @@ def train_model(config):
             if batch_idx % 10 == 9:  # Log every 10 batches
                 avg_loss = running_loss / 10
                 print(
-                    f"Epoch: {epoch+1}, Batch: {batch_idx+1}, Sc. Loss: {avg_loss} From torchmetric: {train_mse.compute()} From criterion: {loss.item()}"
+                    f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Sc. Loss: {avg_loss} From torchmetric: {train_mse.compute()} From criterion: {loss.item()}"
                 )
                 if config["wandb"]:
                     wandb.log(
@@ -234,11 +233,14 @@ def train_model(config):
             with torch.no_grad():
                 val_batch_idx = 0
                 for batch_id, batch in enumerate(val_dataloader):
-                    data, target = {
-                        k: v.to(device)
-                        for k, v in batch.items()
-                        if k != "target_values"
-                    }, batch["target_values"].to(device)
+                    data, target = (
+                        {
+                            k: v.to(device)
+                            for k, v in batch.items()
+                            if k != "target_values"
+                        },
+                        batch["target_values"].to(device),
+                    )
                     avoid_constant_inputs(data["history"], target)
                     pred_len = target.size(1)
 
@@ -278,7 +280,7 @@ def train_model(config):
         # Compute and log validation metrics
         avg_val_loss = total_val_loss / config["validation_rounds"]
         print(
-            f"Epoch: {epoch+1}, Sc. Validation Loss: {avg_val_loss} From torchmetric: {val_mse.compute()}"
+            f"Epoch: {epoch + 1}, Sc. Validation Loss: {avg_val_loss} From torchmetric: {val_mse.compute()}"
         )
         if config["wandb"]:
             wandb.log(
@@ -301,7 +303,7 @@ def train_model(config):
             )
 
         epoch_time = time.time() - epoch_start_time
-        print(f"Time taken for epoch: {epoch_time/60} mins {epoch_time%60} secs.")
+        print(f"Time taken for epoch: {epoch_time / 60} mins {epoch_time % 60} secs.")
 
         # Reset metrics for the next epoch
         train_mape.reset()

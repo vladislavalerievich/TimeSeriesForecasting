@@ -134,7 +134,7 @@ class EncoderBlock(nn.Module):
         head_dim=256,
         num_heads=4,
         block_expansion=2.0,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
 
