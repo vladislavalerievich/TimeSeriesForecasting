@@ -1,7 +1,6 @@
 import argparse
 import os
 import pprint
-import sys
 import time
 
 import numpy as np
@@ -13,7 +12,7 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
-from src.data.dataloaders import train_val_loader
+from src.data_handling.dataloaders import train_val_loader
 from src.models.models import MultiStepModel
 from src.utils.utils import (
     SMAPEMetric,
@@ -354,7 +353,10 @@ def train_model(config):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-c", "--config", default="./src/configs/train.yaml", help="Path to config file"
+        "-c",
+        "--config",
+        default="./configs/training/train.yaml",
+        help="Path to config file",
     )
     args = parser.parse_args()
 

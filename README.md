@@ -1,5 +1,5 @@
 Run
 
 ```bash
-python -m src.training.train
+python -m src.training.trainer
 ```

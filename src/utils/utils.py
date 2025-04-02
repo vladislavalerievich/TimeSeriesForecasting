@@ -6,7 +6,11 @@ import torch
 import torchmetrics
 from torch import nn
 
-from src.data.scalers import custom_scaler_robust, identity_scaler, min_max_scaler
+from src.data_handling.scalers import (
+    custom_scaler_robust,
+    identity_scaler,
+    min_max_scaler,
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
