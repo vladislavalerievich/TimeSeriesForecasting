@@ -12,8 +12,8 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
-from src.data_handling.dataloaders import train_val_loader
 from src.models.models import MultiStepModel
+from src.synthetic_generation.sine_wave import train_val_loader
 from src.utils.utils import (
     SMAPEMetric,
     avoid_constant_inputs,
