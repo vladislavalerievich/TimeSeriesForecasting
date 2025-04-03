@@ -26,6 +26,10 @@ def generate_sine_batch(batch_size, seq_len, pred_len, sine_config=None):
     """
     Generates a batch of sine wave data with date features.
 
+    Note: 'task' is included as a placeholder for multi-task learning; set to zeros for now.
+    'complete_target' duplicates 'target_dates' and 'target_values' for compatibility with training script.
+    Uses daily frequency ('D')—adjust to 'H' for hourly data if needed.
+
     Args:
         batch_size (int): Number of samples in the batch.
         seq_len (int): Total length of each time series sample (history + target).

@@ -1,10 +1,10 @@
-data_dir: ../../data
-model_save_dir: ../../models
+data_dir: ./data
+model_save_dir: ./models
 model_save_name_prefix: GatedDeltaNet_rtx_2080
 continue_training: false
 seed: 2025
 debugging: false
-wandb: false # whether to log to wandb for testing
+wandb: true # whether to log to wandb for testing
 
 lr_scheduler: cosine
 initial_lr: 0.00001
@@ -15,9 +15,9 @@ scaler: min_max
 batch_size: 64
 num_epochs: 100
 num_training_iterations_per_epoch: 100
-num_validation_iteration_per_epoch: 10
+num_validation_iteration_per_epoch: 100
 training_rounds: 100
-validation_rounds: 10
+validation_rounds: 100
 
 sample_multi_pred: 0.5
 context_len: 512

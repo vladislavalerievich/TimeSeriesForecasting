@@ -1,7 +1,7 @@
 import argparse
 import os
-import pprint
 import time
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
 from src.models.models import MultiStepModel
-from src.synthetic_generation.sine_wave import train_val_loader
+from src.synthetic_generation.sine_wave import generate_sine_batch, train_val_loader
 from src.utils.utils import (
     SMAPEMetric,
     avoid_constant_inputs,
@@ -22,332 +22,374 @@ from src.utils.utils import (
     seed_everything,
 )
 
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-
-def train_model(config):
-    seed_everything(config["seed"])
-
-    print("config:")
-    print(pprint.pformat(config))
-
-    print(
-        f"cuda device usage (before model load): {torch.cuda.memory_allocated() / 2**20}"
-    )
-
-    # loading the datasets as dataloaders
-    if config["debugging"]:
-        available_cpus = 1
-    else:
-        available_cpus = os.cpu_count()
-
-    # Load the model
-    model = MultiStepModel(
-        **config["BaseModelConfig"], **config["MultiStepModel"], scaler=config["scaler"]
-    ).to(device)
-
-    # Assuming your train_loader and test_loader are already defined
-    if config["lr_scheduler"] == "cosine":
-        optimizer = optim.AdamW(model.parameters(), lr=config["initial_lr"])
-        scheduler = CosineAnnealingLR(
-            optimizer, T_max=config["num_epochs"], eta_min=config["learning_rate"]
-        )
-    else:
-        optimizer = optim.AdamW(model.parameters(), lr=config["learning_rate"])
-
-    initial_epoch = 0
-    # Load state dicts if we are resuming training
-    config["model_save_name"] = generate_model_save_name(config)
-    if config["continue_training"] and os.path.exists(
-        f"{config['model_save_dir']}/{config['model_save_name']}.pth"
-    ):
-        print(f"loading previous training states from: {config['model_save_name']}")
-        ckpt = torch.load(
-            f"{config['model_save_dir']}/{config['model_save_name']}.pth",
-            map_location=device,
-        )
-        # load states
-        model.load_state_dict(ckpt["model_state_dict"])
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        if config["lr_scheduler"] == "cosine":
-            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        initial_epoch = ckpt["epoch"]
-    else:
-        print("no previous training states found, starting fresh")
-        model = model.to(device)
-
-    train_dataloader, val_dataloader = train_val_loader(
-        config=config,
-        cpus_available=available_cpus,
-    )
-
-    print(
-        f"cuda device usage (after model load): {torch.cuda.memory_allocated() / 2**20}"
-    )
-    config["model_param_size"] = sum(
-        p.numel() for p in model.parameters() if p.requires_grad
-    )
-    print(f"Model size: {config['model_param_size']}")
-    # wandb hyperparam init
-    if config["wandb"]:
-        run = wandb.init(
-            project="Time Series Forecasting",
-            config=config,
-            name=config["model_save_name"],
+class TrainingPipeline:
+    def __init__(self, config: Dict):
+        self.config = config
+        self.device = device
+        self.model = None
+        self.optimizer = None
+        self.scheduler = None
+        self.criterion = None
+        self.train_loader = None
+        self.val_loader = None
+        self.initial_epoch = 0
+        self.fixed_val_data = generate_sine_batch(
+            batch_size=5,
+            seq_len=160,
+            pred_len=32,
+            sine_config=None,
         )
 
-    if config["loss"] == "mae":
-        criterion = nn.L1Loss().to(device)
-    elif config["loss"] == "mse":
-        criterion = nn.MSELoss().to(device)
-    else:
-        raise ValueError("Loss function not supported")
+        # Initialize metrics
+        self._init_metrics()
+        # Setup training components
+        self._setup()
 
-    # Metric initialization
-    train_mape = torchmetrics.MeanAbsolutePercentageError().to(device)
-    train_mse = torchmetrics.MeanSquaredError().to(device)
-    train_smape = SMAPEMetric().to(device)
+    def _init_metrics(self) -> None:
+        """Initialize training and validation metrics."""
+        self.train_metrics = {
+            "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
+            "mse": torchmetrics.MeanSquaredError().to(self.device),
+            "smape": SMAPEMetric().to(self.device),
+        }
+        self.val_metrics = {
+            "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
+            "mse": torchmetrics.MeanSquaredError().to(self.device),
+            "smape": SMAPEMetric().to(self.device),
+        }
 
-    val_mape = torchmetrics.MeanAbsolutePercentageError().to(device)
-    val_mse = torchmetrics.MeanSquaredError().to(device)
-    val_smape = SMAPEMetric().to(device)
+    def _setup(self) -> None:
+        """Setup model, optimizer, scheduler, and data loaders."""
+        seed_everything(self.config["seed"])
 
-    # Training Loop
-    for epoch in range(initial_epoch, config["num_epochs"]):
-        print("============Training==================")
-        epoch_start_time = time.time()
-        model.train()
-        running_loss = 0.0
-        train_epoch_loss = 0.0
-        batch_idx = 0
-        for batch_id, batch in enumerate(train_dataloader):
-            data, target = (
-                {k: v.to(device) for k, v in batch.items() if k != "target_values"},
-                batch["target_values"].to(device),
+        # Determine CPU usage
+        available_cpus = 1 if self.config["debugging"] else os.cpu_count()
+
+        # Initialize model
+        self.model = MultiStepModel(
+            **self.config["BaseModelConfig"],
+            **self.config["MultiStepModel"],
+            scaler=self.config["scaler"],
+        ).to(self.device)
+
+        # Setup optimizer and scheduler
+        self._setup_optimizer()
+
+        # Load checkpoint if continuing training
+        self.config["model_save_name"] = generate_model_save_name(self.config)
+        self._load_checkpoint()
+
+        # Load data
+        self.train_loader, self.val_loader = train_val_loader(
+            config=self.config, cpus_available=available_cpus
+        )
+
+        # Setup loss function
+        self._setup_loss_function()
+
+        # Initialize wandb if enabled
+        if self.config["wandb"]:
+            self.run = wandb.init(
+                project="Sine Wave Experiments",
+                config=self.config,
+                name=self.config["model_save_name"],
             )
-            avoid_constant_inputs(data["history"], target)
-            pred_len = target.size(1)
-            optimizer.zero_grad()
-            with torch.autocast(device_type="cuda", enabled=True):
-                drop_enc_allow = True
-                if config["sample_multi_pred"] > np.random.rand():
-                    drop_enc_allow = False
-                    # randomly sample 2 numbers between 4 and pred_length (inclusive)
-                    pred_limits = np.random.randint(4, pred_len + 1, 2)
-                    start_pred = min(pred_limits)
-                    end_pred = max(pred_limits)
 
-                    if end_pred == start_pred:
-                        if start_pred == pred_len:
-                            start_pred = start_pred - 1
-                        else:
-                            end_pred = end_pred + 1
-                    pred_len = end_pred - start_pred
-                    target = target[:, start_pred:end_pred].contiguous()
-                    data["target_dates"] = data["target_dates"][
-                        :, start_pred:end_pred
-                    ].contiguous()
-                    data["complete_target"] = data["complete_target"][
-                        :, start_pred:end_pred
-                    ].contiguous()
-                    data["task"] = data["task"][:, start_pred:end_pred].contiguous()
-                output = model(
-                    data, pred_len, training=True, drop_enc_allow=drop_enc_allow
-                )
+    def _setup_optimizer(self) -> None:
+        """Configure optimizer and learning rate scheduler."""
+        if self.config["lr_scheduler"] == "cosine":
+            self.optimizer = optim.AdamW(
+                self.model.parameters(), lr=self.config["initial_lr"]
+            )
+            self.scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.config["num_epochs"],
+                eta_min=self.config["learning_rate"],
+            )
+        else:
+            self.optimizer = optim.AdamW(
+                self.model.parameters(), lr=self.config["learning_rate"]
+            )
 
-                print(f"Model output (batch {batch_idx}): {output['result'].shape}")
+    def _setup_loss_function(self) -> None:
+        """Configure loss function based on config."""
+        if self.config["loss"] == "mae":
+            self.criterion = nn.L1Loss().to(self.device)
+        elif self.config["loss"] == "mse":
+            self.criterion = nn.MSELoss().to(self.device)
+        else:
+            raise ValueError("Loss function not supported")
 
-                if config["scaler"] == "min_max":
-                    max_scale = output["scale"][0].squeeze(-1)
-                    min_scale = output["scale"][1].squeeze(-1)
-                    scaled_target = (target - min_scale) / (max_scale - min_scale)
-                else:
-                    scaled_target = (target - output["scale"][0].squeeze(-1)) / output[
-                        "scale"
-                    ][1].squeeze(-1)
+    def _load_checkpoint(self) -> None:
+        """Load model checkpoint if available and continuing training."""
+        checkpoint_path = (
+            f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth"
+        )
+        if self.config["continue_training"] and os.path.exists(checkpoint_path):
+            print(
+                f"Loading previous training states from: {self.config['model_save_name']}"
+            )
+            ckpt = torch.load(checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(ckpt["model_state_dict"])
+            self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            if self.config["lr_scheduler"] == "cosine":
+                self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+            self.initial_epoch = ckpt["epoch"]
+        else:
+            print("No previous training states found, starting fresh")
 
-                loss = criterion(output["result"], scaled_target.half())
+    def _scale_target(
+        self, target: torch.Tensor, output: Dict
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Scale target values based on configured scaler."""
+        if self.config["scaler"] == "min_max":
+            max_scale = output["scale"][0].squeeze(-1)
+            min_scale = output["scale"][1].squeeze(-1)
+            scaled_target = (target - min_scale) / (max_scale - min_scale)
+            return scaled_target, max_scale, min_scale
+        else:
+            mean = output["scale"][0].squeeze(-1)
+            std = output["scale"][1].squeeze(-1)
+            scaled_target = (target - mean) / std
+            return scaled_target, mean, std
 
-            # Backward pass should be outside of autocast
-            loss.backward()
+    def _inverse_scale(self, output: torch.Tensor, scale_params: Tuple) -> torch.Tensor:
+        """Inverse scale model predictions."""
+        if self.config["scaler"] == "min_max":
+            max_scale, min_scale = scale_params
+            return (output * (max_scale - min_scale)) + min_scale
+        else:
+            mean, std = scale_params
+            return (output * std) + mean
 
-            optimizer.step()
-            torch.cuda.empty_cache()
+    def _train_epoch(self, epoch: int) -> float:
+        """Train for one epoch."""
+        self.model.train()
+        running_loss = 0.0
+        epoch_loss = 0.0
 
-            print(f"Train Loss for batch {batch_idx}: {loss.item()}")
-            print("-" * 80)
-
-            if config["scaler"] == "min_max":
-                inv_scaled_output = (
-                    output["result"] * (max_scale - min_scale)
-                ) + min_scale
-            else:
-                inv_scaled_output = (
-                    output["result"] * output["scale"][1].squeeze(-1)
-                ) + output["scale"][0].squeeze(-1)
-
-            # Update metrics
-            train_mape.update(inv_scaled_output, target)
-            train_mse.update(inv_scaled_output, target)
-            train_smape.update(inv_scaled_output, target)
-            running_loss += loss.item()
-            train_epoch_loss += loss.item()
-
-            if batch_idx == config["training_rounds"] - 1:
-                train_epoch_loss = running_loss / (batch_idx % 10 + 1)
-
-            if batch_idx % 10 == 9:  # Log every 10 batches
-                avg_loss = running_loss / 10
-                print(
-                    f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Sc. Loss: {avg_loss} From torchmetric: {train_mse.compute()} From criterion: {loss.item()}"
-                )
-                if config["wandb"]:
-                    wandb.log(
-                        {
-                            "train/loss": avg_loss,
-                            "train/mape": train_mape.compute(),
-                            "train/mse": train_mse.compute(),
-                            "train/smape": train_smape.compute(),
-                            "epoch": epoch,
-                            "step": epoch * config["training_rounds"] + batch_idx,
-                        }
-                    )
-                running_loss = 0.0
-
-            batch_idx += 1
-            # end of epoch at max training rounds
-            if batch_idx == config["training_rounds"]:
+        for batch_idx, batch in enumerate(self.train_loader):
+            if batch_idx >= self.config["training_rounds"]:
                 break
 
-        if config["wandb"]:
-            wandb.log(
-                {"learning_rate": optimizer.param_groups[0]["lr"], "epoch": epoch}
-            )
+            data, target = self._prepare_batch(batch)
+            pred_len, target, data = self._maybe_sample_prediction(target, data)
 
-        with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-            # Validation loop (after each epoch)
-            print("============Validation==================")
-            model.eval()
-            total_val_loss = 0.0
-            with torch.no_grad():
-                val_batch_idx = 0
-                for batch_id, batch in enumerate(val_dataloader):
-                    data, target = (
-                        {
-                            k: v.to(device)
-                            for k, v in batch.items()
-                            if k != "target_values"
-                        },
-                        batch["target_values"].to(device),
-                    )
-                    avoid_constant_inputs(data["history"], target)
-                    pred_len = target.size(1)
+            self.optimizer.zero_grad()
+            with torch.autocast(device_type="cuda", enabled=True):
+                output = self.model(
+                    data,
+                    pred_len,
+                    training=True,
+                    drop_enc_allow=(
+                        self.config["sample_multi_pred"] <= np.random.rand()
+                    ),
+                )
+                scaled_target, *scale_params = self._scale_target(target, output)
+                loss = self.criterion(output["result"], scaled_target.half())
 
-                    output = model(data, pred_len)
+            loss.backward()
+            self.optimizer.step()
+            torch.cuda.empty_cache()
 
-                    if config["scaler"] == "min_max":
-                        max_scale = output["scale"][0].squeeze(-1)
-                        min_scale = output["scale"][1].squeeze(-1)
-                        scaled_target = (target - min_scale) / (max_scale - min_scale)
-                    else:
-                        scaled_target = (
-                            target - output["scale"][0].squeeze(-1)
-                        ) / output["scale"][1].squeeze(-1)
+            # Update metrics
+            inv_scaled_output = self._inverse_scale(output["result"], scale_params)
+            self._update_metrics(self.train_metrics, inv_scaled_output, target)
 
-                    val_loss = criterion(output["result"], scaled_target.half()).item()
-                    total_val_loss += val_loss
+            running_loss += loss.item()
+            epoch_loss += loss.item()
 
-                    if batch_id % 10 == 9:
-                        print(f"val loss for batch {batch_id}: {val_loss}")
+            if batch_idx % 10 == 9:
+                self._log_training_progress(epoch, batch_idx, running_loss)
+                running_loss = 0.0
 
-                    if config["scaler"] == "min_max":
-                        inv_scaled_output = (
-                            output["result"] * (max_scale - min_scale)
-                        ) + min_scale
-                    else:
-                        inv_scaled_output = (
-                            output["result"] * output["scale"][1].squeeze(-1)
-                        ) + output["scale"][0].squeeze(-1)
-                    # Update validation metrics
-                    val_mape.update(inv_scaled_output, target)
-                    val_mse.update(inv_scaled_output, target)
-                    val_smape.update(inv_scaled_output, target)
+        return epoch_loss / min(batch_idx + 1, self.config["training_rounds"])
 
-                    if val_batch_idx == config["validation_rounds"] - 1:
-                        break
+    def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
+        """Plot fixed validation examples and log to WandB."""
+        fixed_data, fixed_target = self._prepare_batch(self.fixed_val_data)
+        with torch.no_grad():
+            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                fixed_output = self.model(fixed_data, fixed_target.size(1))
+                _, *scale_params = self._scale_target(fixed_target, fixed_output)
+                inv_scaled_fixed_output = self._inverse_scale(
+                    fixed_output["result"], scale_params
+                )
 
-        # Compute and log validation metrics
-        avg_val_loss = total_val_loss / config["validation_rounds"]
-        print(
-            f"Epoch: {epoch + 1}, Sc. Validation Loss: {avg_val_loss} From torchmetric: {val_mse.compute()}"
-        )
-        if config["wandb"]:
+            # Generate plots for each example in the fixed batch
+            for i in range(self.fixed_val_data["history"].shape[0]):
+                history = fixed_data["history"][i].cpu().numpy()
+                true_future = fixed_target[i].cpu().numpy()
+                pred_future = inv_scaled_fixed_output[i].cpu().numpy()
+
+                import matplotlib.pyplot as plt
+
+                plt.figure(figsize=(10, 5))
+                plt.plot(range(len(history)), history, label="History", color="blue")
+                plt.plot(
+                    range(len(history), len(history) + len(true_future)),
+                    true_future,
+                    label="True Future",
+                    color="green",
+                )
+                plt.plot(
+                    range(len(history), len(history) + len(pred_future)),
+                    pred_future,
+                    label="Predicted Future",
+                    color="red",
+                )
+                plt.title(
+                    f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})"
+                )
+                plt.legend()
+                wandb.log({f"val_plot_{i}": wandb.Image(plt)})
+                plt.close()
+
+    def _validate_epoch(self, epoch) -> float:
+        """Validate model for one epoch."""
+        self.model.eval()
+        total_val_loss = 0.0
+
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(self.val_loader):
+                if batch_idx >= self.config["validation_rounds"]:
+                    break
+
+                data, target = self._prepare_batch(batch)
+                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                    output = self.model(data, target.size(1))
+                    scaled_target, *scale_params = self._scale_target(target, output)
+                    val_loss = self.criterion(
+                        output["result"], scaled_target.half()
+                    ).item()
+
+                total_val_loss += val_loss
+                inv_scaled_output = self._inverse_scale(output["result"], scale_params)
+                self._update_metrics(self.val_metrics, inv_scaled_output, target)
+
+        avg_val_loss = total_val_loss / self.config["validation_rounds"]
+        self._plot_fixed_examples(epoch, avg_val_loss)
+        return avg_val_loss
+
+    def _prepare_batch(self, batch: Dict) -> Tuple[Dict, torch.Tensor]:
+        """Prepare batch data for processing."""
+        data = {k: v.to(self.device) for k, v in batch.items() if k != "target_values"}
+        target = batch["target_values"].to(self.device)
+        avoid_constant_inputs(data["history"], target)
+        return data, target
+
+    def _maybe_sample_prediction(
+        self, target: torch.Tensor, data: Dict
+    ) -> Tuple[int, torch.Tensor, Dict]:
+        """Randomly sample prediction length if configured."""
+        pred_len = target.size(1)
+        if self.config["sample_multi_pred"] > np.random.rand():
+            pred_limits = np.random.randint(4, pred_len + 1, 2)
+            start_pred, end_pred = min(pred_limits), max(pred_limits)
+            if end_pred == start_pred:
+                start_pred, end_pred = (
+                    (start_pred - 1, end_pred)
+                    if start_pred == pred_len
+                    else (start_pred, end_pred + 1)
+                )
+            pred_len = end_pred - start_pred
+            target = target[:, start_pred:end_pred].contiguous()
+            for key in ["target_dates", "complete_target", "task"]:
+                data[key] = data[key][:, start_pred:end_pred].contiguous()
+        return pred_len, target, data
+
+    def _update_metrics(
+        self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
+    ) -> None:
+        """Update metric calculations."""
+        for metric in metrics.values():
+            metric.update(predictions, targets)
+
+    def _log_training_progress(
+        self, epoch: int, batch_idx: int, running_loss: float
+    ) -> None:
+        """Log training progress."""
+        avg_loss = running_loss / 10
+        print(f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Sc. Loss: {avg_loss}")
+        if self.config["wandb"]:
             wandb.log(
                 {
-                    "epoch_metrics": {
-                        "train": {
-                            "sc_loss": train_epoch_loss,
-                            "mape": train_mape.compute(),
-                            "smape": train_smape.compute(),
-                        },
-                        "val": {
-                            "sc_loss": avg_val_loss,
-                            "mape": val_mape.compute(),
-                            "smape": val_smape.compute(),
-                        },
-                    },
+                    "train/loss": avg_loss,
+                    "train/mape": self.train_metrics["mape"].compute(),
+                    "train/mse": self.train_metrics["mse"].compute(),
+                    "train/smape": self.train_metrics["smape"].compute(),
                     "epoch": epoch,
-                    "lr": optimizer.param_groups[0]["lr"],
+                    "step": epoch * self.config["training_rounds"] + batch_idx,
                 }
             )
 
-        epoch_time = time.time() - epoch_start_time
-        print(f"Time taken for epoch: {epoch_time / 60} mins {epoch_time % 60} secs.")
+    def _save_checkpoint(self, epoch: int) -> None:
+        """Save model checkpoint."""
+        ckpt = {
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict()
+            if self.config["lr_scheduler"] == "cosine"
+            else None,
+            "epoch": epoch,
+        }
+        torch.save(
+            ckpt,
+            f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth",
+        )
 
-        # Reset metrics for the next epoch
-        train_mape.reset()
-        train_mse.reset()
-        train_smape.reset()
-        val_mape.reset()
-        val_mse.reset()
-        val_smape.reset()
+    def train(self) -> None:
+        """Execute the training pipeline."""
+        for epoch in range(self.initial_epoch, self.config["num_epochs"]):
+            start_time = time.time()
 
-        if config["lr_scheduler"].startswith("cosine"):
-            if (scheduler.get_last_lr()[0] == config["learning_rate"]) & (
-                config["lr_scheduler"] == "cosine"
-            ):
-                print("Learning rate has reached the minimum value. No more steps.")
-            else:
-                scheduler.step()
+            # Training
+            train_loss = self._train_epoch(epoch)
 
-        if epoch % 5 == 4:
-            ckpt = {
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": (
-                    scheduler.state_dict()
-                    if config["lr_scheduler"] == "cosine"
-                    else None
-                ),
-                "epoch": epoch,
-            }
-            torch.save(
-                ckpt, f"{config['model_save_dir']}/{config['model_save_name']}.pth"
-            )
+            # Validation
+            val_loss = self._validate_epoch(epoch)
 
-    if config["wandb"]:
-        wandb.finish()
+            # Logging
+            if self.config["wandb"]:
+                wandb.log(
+                    {
+                        "epoch_metrics": {
+                            "train": {
+                                "sc_loss": train_loss,
+                                "mape": self.train_metrics["mape"].compute(),
+                                "smape": self.train_metrics["smape"].compute(),
+                            },
+                            "val": {
+                                "sc_loss": val_loss,
+                                "mape": self.val_metrics["mape"].compute(),
+                                "smape": self.val_metrics["smape"].compute(),
+                            },
+                        },
+                        "epoch": epoch,
+                        "lr": self.optimizer.param_groups[0]["lr"],
+                    }
+                )
 
-    # Save the final model
-    ckpt = {
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": (
-            scheduler.state_dict() if config["lr_scheduler"] == "cosine" else None
-        ),
-        "epoch": epoch,
-    }
-    torch.save(ckpt, f"{config['model_save_dir']}/{config['model_save_name']}.pth")
+            # Print epoch summary
+            epoch_time = time.time() - start_time
+            print(f"Epoch: {epoch + 1}, Time: {epoch_time / 60:.2f} mins")
+
+            # Reset metrics
+            for metric_dict in [self.train_metrics, self.val_metrics]:
+                for metric in metric_dict.values():
+                    metric.reset()
+
+            # Update scheduler
+            if self.config["lr_scheduler"] == "cosine":
+                self.scheduler.step()
+
+            # Save checkpoint
+            if epoch % 5 == 4 or epoch == self.config["num_epochs"] - 1:
+                self._save_checkpoint(epoch)
+
+        if self.config["wandb"]:
+            wandb.finish()
 
 
 if __name__ == "__main__":
@@ -363,6 +405,11 @@ if __name__ == "__main__":
     with open(args.config) as config_file:
         config = yaml.load(config_file, yaml.loader.SafeLoader)
 
-    # for wandb offline mode (can comment if needed):
     os.environ["WANDB_MODE"] = "online" if config["wandb"] else "offline"
-    train_model(config)
+    pipeline = TrainingPipeline(config)
+    pipeline.train()
+
+    if config["wandb"]:
+        wandb.finish()
+
+    print("Training completed successfully.")
