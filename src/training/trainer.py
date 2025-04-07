@@ -57,6 +57,9 @@ class TrainingPipeline:
             scaler=self.config["scaler"],
         ).to(self.device)
 
+        # Setup optimizer and scheduler
+        self._setup_optimizer()
+
         # Load checkpoint if continuing training
         self.config["model_save_name"] = generate_model_save_name(self.config)
         self._load_checkpoint()
@@ -65,9 +68,6 @@ class TrainingPipeline:
         self.train_loader, self.val_loader = train_val_loader(
             config=self.config, cpus_available=available_cpus
         )
-
-        # Setup optimizer and scheduler
-        self._setup_optimizer()
 
         # Setup loss function
         self._setup_loss_function()
@@ -117,11 +117,15 @@ class TrainingPipeline:
     def _setup_wandb(self):
         # Initialize wandb if enabled
         if self.config["wandb"]:
-            self.run = wandb.init(
-                project="Sine Wave Experiments",
-                config=self.config,
-                name=self.config["model_save_name"],
-            )
+            try:
+                self.run = wandb.init(
+                    project="Sine Wave Experiments",
+                    config=self.config,
+                    name=self.config["model_save_name"],
+                )
+            except Exception as e:
+                print(f"WandB initialization failed: {e}")
+                self.config["wandb"] = False
 
     def _load_checkpoint(self) -> None:
         """Load model checkpoint if available and continuing training."""
@@ -286,7 +290,7 @@ class TrainingPipeline:
             pred_len, target, data = self._maybe_sample_prediction(target, data)
 
             self.optimizer.zero_grad()
-            with torch.autocast(device_type="cuda", enabled=True):
+            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                 output = self.model(
                     data,
                     pred_len,
@@ -339,7 +343,9 @@ class TrainingPipeline:
                 inv_scaled_output = self._inverse_scale(output["result"], scale_params)
                 self._update_metrics(self.val_metrics, inv_scaled_output, target)
 
-        avg_val_loss = total_val_loss / self.config["validation_rounds"]
+        avg_val_loss = total_val_loss / min(
+            batch_idx + 1, self.config["validation_rounds"]
+        )
         self._plot_fixed_examples(epoch, avg_val_loss)
         return avg_val_loss
 
