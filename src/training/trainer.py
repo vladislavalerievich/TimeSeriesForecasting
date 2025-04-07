@@ -36,28 +36,12 @@ class TrainingPipeline:
         self.initial_epoch = 0
         self.fixed_val_data = generate_sine_batch(
             batch_size=5,
-            seq_len=160,
-            pred_len=32,
+            seq_len=256,
+            pred_len=128,
             sine_config=None,
         )
 
-        # Initialize metrics
-        self._init_metrics()
-        # Setup training components
         self._setup()
-
-    def _init_metrics(self) -> None:
-        """Initialize training and validation metrics."""
-        self.train_metrics = {
-            "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
-            "mse": torchmetrics.MeanSquaredError().to(self.device),
-            "smape": SMAPEMetric().to(self.device),
-        }
-        self.val_metrics = {
-            "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
-            "mse": torchmetrics.MeanSquaredError().to(self.device),
-            "smape": SMAPEMetric().to(self.device),
-        }
 
     def _setup(self) -> None:
         """Setup model, optimizer, scheduler, and data loaders."""
@@ -73,9 +57,6 @@ class TrainingPipeline:
             scaler=self.config["scaler"],
         ).to(self.device)
 
-        # Setup optimizer and scheduler
-        self._setup_optimizer()
-
         # Load checkpoint if continuing training
         self.config["model_save_name"] = generate_model_save_name(self.config)
         self._load_checkpoint()
@@ -85,16 +66,15 @@ class TrainingPipeline:
             config=self.config, cpus_available=available_cpus
         )
 
+        # Setup optimizer and scheduler
+        self._setup_optimizer()
+
         # Setup loss function
         self._setup_loss_function()
 
-        # Initialize wandb if enabled
-        if self.config["wandb"]:
-            self.run = wandb.init(
-                project="Sine Wave Experiments",
-                config=self.config,
-                name=self.config["model_save_name"],
-            )
+        self._setup_metrics()
+
+        self._setup_wandb()
 
     def _setup_optimizer(self) -> None:
         """Configure optimizer and learning rate scheduler."""
@@ -121,6 +101,28 @@ class TrainingPipeline:
         else:
             raise ValueError("Loss function not supported")
 
+    def _setup_metrics(self) -> None:
+        """Initialize training and validation metrics."""
+        self.train_metrics = {
+            "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
+            "mse": torchmetrics.MeanSquaredError().to(self.device),
+            "smape": SMAPEMetric().to(self.device),
+        }
+        self.val_metrics = {
+            "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
+            "mse": torchmetrics.MeanSquaredError().to(self.device),
+            "smape": SMAPEMetric().to(self.device),
+        }
+
+    def _setup_wandb(self):
+        # Initialize wandb if enabled
+        if self.config["wandb"]:
+            self.run = wandb.init(
+                project="Sine Wave Experiments",
+                config=self.config,
+                name=self.config["model_save_name"],
+            )
+
     def _load_checkpoint(self) -> None:
         """Load model checkpoint if available and continuing training."""
         checkpoint_path = (
@@ -138,6 +140,21 @@ class TrainingPipeline:
             self.initial_epoch = ckpt["epoch"]
         else:
             print("No previous training states found, starting fresh")
+
+    def _save_checkpoint(self, epoch: int) -> None:
+        """Save model checkpoint."""
+        ckpt = {
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict()
+            if self.config["lr_scheduler"] == "cosine"
+            else None,
+            "epoch": epoch,
+        }
+        torch.save(
+            ckpt,
+            f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth",
+        )
 
     def _scale_target(
         self, target: torch.Tensor, output: Dict
@@ -162,6 +179,98 @@ class TrainingPipeline:
         else:
             mean, std = scale_params
             return (output * std) + mean
+
+    def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
+        """Plot fixed validation examples and log to WandB."""
+        fixed_data, fixed_target = self._prepare_batch(self.fixed_val_data)
+        with torch.no_grad():
+            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                fixed_output = self.model(fixed_data, fixed_target.size(1))
+                _, *scale_params = self._scale_target(fixed_target, fixed_output)
+                inv_scaled_fixed_output = self._inverse_scale(
+                    fixed_output["result"], scale_params
+                )
+
+            # Generate plots for each example in the fixed batch
+            for i in range(self.fixed_val_data["history"].shape[0]):
+                history = fixed_data["history"][i].cpu().numpy()
+                true_future = fixed_target[i].cpu().numpy()
+                pred_future = inv_scaled_fixed_output[i].cpu().numpy()
+
+                import matplotlib.pyplot as plt
+
+                plt.figure(figsize=(10, 5))
+                plt.plot(range(len(history)), history, label="History", color="blue")
+                plt.plot(
+                    range(len(history), len(history) + len(true_future)),
+                    true_future,
+                    label="True Future",
+                    color="green",
+                )
+                plt.plot(
+                    range(len(history), len(history) + len(pred_future)),
+                    pred_future,
+                    label="Predicted Future",
+                    color="red",
+                )
+                plt.title(
+                    f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})"
+                )
+                plt.legend()
+                wandb.log({f"val_plot_{i}": wandb.Image(plt)})
+                plt.close()
+
+    def _prepare_batch(self, batch: Dict) -> Tuple[Dict, torch.Tensor]:
+        """Prepare batch data for processing."""
+        data = {k: v.to(self.device) for k, v in batch.items() if k != "target_values"}
+        target = batch["target_values"].to(self.device)
+        avoid_constant_inputs(data["history"], target)
+        return data, target
+
+    def _update_metrics(
+        self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
+    ) -> None:
+        """Update metric calculations."""
+        for metric in metrics.values():
+            metric.update(predictions, targets)
+
+    def _log_training_progress(
+        self, epoch: int, batch_idx: int, running_loss: float
+    ) -> None:
+        """Log training progress."""
+        avg_loss = running_loss / 10
+        print(f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Sc. Loss: {avg_loss}")
+        if self.config["wandb"]:
+            wandb.log(
+                {
+                    "train/loss": avg_loss,
+                    "train/mape": self.train_metrics["mape"].compute(),
+                    "train/mse": self.train_metrics["mse"].compute(),
+                    "train/smape": self.train_metrics["smape"].compute(),
+                    "epoch": epoch,
+                    "step": epoch * self.config["training_rounds"] + batch_idx,
+                }
+            )
+
+    def _maybe_sample_prediction(
+        self, target: torch.Tensor, data: Dict
+    ) -> Tuple[int, torch.Tensor, Dict]:
+        """Randomly sample prediction length if configured."""
+        pred_len = target.size(1)
+        if self.config["sample_multi_pred"] > np.random.rand():
+            pred_limits = np.random.randint(4, pred_len + 1, 2)
+            start_pred, end_pred = min(pred_limits), max(pred_limits)
+            if end_pred == start_pred:
+                start_pred, end_pred = (
+                    (start_pred - 1, end_pred)
+                    if start_pred == pred_len
+                    else (start_pred, end_pred + 1)
+                )
+            pred_len = end_pred - start_pred
+            target = target[:, start_pred:end_pred].contiguous()
+            for key in ["target_dates", "complete_target", "task"]:
+                data[key] = data[key][:, start_pred:end_pred].contiguous()
+        return pred_len, target, data
 
     def _train_epoch(self, epoch: int) -> float:
         """Train for one epoch."""
@@ -206,46 +315,6 @@ class TrainingPipeline:
 
         return epoch_loss / min(batch_idx + 1, self.config["training_rounds"])
 
-    def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
-        """Plot fixed validation examples and log to WandB."""
-        fixed_data, fixed_target = self._prepare_batch(self.fixed_val_data)
-        with torch.no_grad():
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                fixed_output = self.model(fixed_data, fixed_target.size(1))
-                _, *scale_params = self._scale_target(fixed_target, fixed_output)
-                inv_scaled_fixed_output = self._inverse_scale(
-                    fixed_output["result"], scale_params
-                )
-
-            # Generate plots for each example in the fixed batch
-            for i in range(self.fixed_val_data["history"].shape[0]):
-                history = fixed_data["history"][i].cpu().numpy()
-                true_future = fixed_target[i].cpu().numpy()
-                pred_future = inv_scaled_fixed_output[i].cpu().numpy()
-
-                import matplotlib.pyplot as plt
-
-                plt.figure(figsize=(10, 5))
-                plt.plot(range(len(history)), history, label="History", color="blue")
-                plt.plot(
-                    range(len(history), len(history) + len(true_future)),
-                    true_future,
-                    label="True Future",
-                    color="green",
-                )
-                plt.plot(
-                    range(len(history), len(history) + len(pred_future)),
-                    pred_future,
-                    label="Predicted Future",
-                    color="red",
-                )
-                plt.title(
-                    f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})"
-                )
-                plt.legend()
-                wandb.log({f"val_plot_{i}": wandb.Image(plt)})
-                plt.close()
-
     def _validate_epoch(self, epoch) -> float:
         """Validate model for one epoch."""
         self.model.eval()
@@ -257,8 +326,10 @@ class TrainingPipeline:
                     break
 
                 data, target = self._prepare_batch(batch)
+                pred_len = target.size(1)
+
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data, target.size(1))
+                    output = self.model(data, pred_len)
                     scaled_target, *scale_params = self._scale_target(target, output)
                     val_loss = self.criterion(
                         output["result"], scaled_target.half()
@@ -271,73 +342,6 @@ class TrainingPipeline:
         avg_val_loss = total_val_loss / self.config["validation_rounds"]
         self._plot_fixed_examples(epoch, avg_val_loss)
         return avg_val_loss
-
-    def _prepare_batch(self, batch: Dict) -> Tuple[Dict, torch.Tensor]:
-        """Prepare batch data for processing."""
-        data = {k: v.to(self.device) for k, v in batch.items() if k != "target_values"}
-        target = batch["target_values"].to(self.device)
-        avoid_constant_inputs(data["history"], target)
-        return data, target
-
-    def _maybe_sample_prediction(
-        self, target: torch.Tensor, data: Dict
-    ) -> Tuple[int, torch.Tensor, Dict]:
-        """Randomly sample prediction length if configured."""
-        pred_len = target.size(1)
-        if self.config["sample_multi_pred"] > np.random.rand():
-            pred_limits = np.random.randint(4, pred_len + 1, 2)
-            start_pred, end_pred = min(pred_limits), max(pred_limits)
-            if end_pred == start_pred:
-                start_pred, end_pred = (
-                    (start_pred - 1, end_pred)
-                    if start_pred == pred_len
-                    else (start_pred, end_pred + 1)
-                )
-            pred_len = end_pred - start_pred
-            target = target[:, start_pred:end_pred].contiguous()
-            for key in ["target_dates", "complete_target", "task"]:
-                data[key] = data[key][:, start_pred:end_pred].contiguous()
-        return pred_len, target, data
-
-    def _update_metrics(
-        self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
-    ) -> None:
-        """Update metric calculations."""
-        for metric in metrics.values():
-            metric.update(predictions, targets)
-
-    def _log_training_progress(
-        self, epoch: int, batch_idx: int, running_loss: float
-    ) -> None:
-        """Log training progress."""
-        avg_loss = running_loss / 10
-        print(f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Sc. Loss: {avg_loss}")
-        if self.config["wandb"]:
-            wandb.log(
-                {
-                    "train/loss": avg_loss,
-                    "train/mape": self.train_metrics["mape"].compute(),
-                    "train/mse": self.train_metrics["mse"].compute(),
-                    "train/smape": self.train_metrics["smape"].compute(),
-                    "epoch": epoch,
-                    "step": epoch * self.config["training_rounds"] + batch_idx,
-                }
-            )
-
-    def _save_checkpoint(self, epoch: int) -> None:
-        """Save model checkpoint."""
-        ckpt = {
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict()
-            if self.config["lr_scheduler"] == "cosine"
-            else None,
-            "epoch": epoch,
-        }
-        torch.save(
-            ckpt,
-            f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth",
-        )
 
     def train(self) -> None:
         """Execute the training pipeline."""
