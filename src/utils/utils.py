@@ -30,6 +30,13 @@ def generate_model_save_name(config):
         f"{config['model_save_name_prefix']}_"
         f"batch_size_{config['batch_size']}_"
         f"num_epochs_{config['num_epochs']}_"
+        f"initial_lr{config['initial_lr']}_"
+        f"learning_rate_{config['learning_rate']}_"
+        f"context_len{config['context_len']}_"
+        f"min_seq_len{config['min_seq_len']}_"
+        f"max_seq_len{config['max_seq_len']}_"
+        f"pred_len{config['pred_len']}_"
+        f"pred_len_min{config['pred_len_min']}_"
     )
 
 

@@ -7,9 +7,9 @@ import torch
 from src.synthetic_generation.constants import BASE_END_ORD, BASE_START_ORD
 
 
-def generate_step_batch(batch_size, seq_len, pred_len, step_config=None):
+def generate_step_batch(batch_size, seq_len, pred_len, step_config=None, noise=True):
     """
-    Generates a batch of step function data with date features.
+    Generates a batch of simple step function data with date features
 
     Args:
         batch_size (int): Number of samples in the batch.
@@ -18,6 +18,7 @@ def generate_step_batch(batch_size, seq_len, pred_len, step_config=None):
         step_config (dict, optional): Configuration for step function parameters.
                                       Defaults provide reasonable ranges.
                                       Expected keys: 'num_steps_range', 'height_range'.
+        noise (bool): If True, adds Gaussian noise to the generated values. Defaults to False.
 
     Returns:
         dict: A dictionary containing tensors for the batch, matching the
@@ -55,17 +56,19 @@ def generate_step_batch(batch_size, seq_len, pred_len, step_config=None):
             num_steps + 1,
         )
 
-        # Generate step function values
+        # Generate step function values without noise
         values = np.zeros(seq_len, dtype=np.float32)
         for j, (start, duration, height) in enumerate(
             zip(step_points, step_durations, step_heights)
         ):
             values[start : start + duration] = height
-        # Add small noise to simulate real-world data
-        values += np.random.normal(0, 0.1, seq_len)
+
+        if noise:
+            values += np.random.normal(0, 0.01, seq_len)
+
         batch_values[i, :] = values
 
-        # Generate date features (same as sine_wave.py)
+        # Generate date features
         start_ord = np.random.randint(BASE_START_ORD, BASE_END_ORD + 1)
         try:
             start_date = date.fromordinal(start_ord)
