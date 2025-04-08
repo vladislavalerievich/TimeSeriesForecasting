@@ -153,6 +153,7 @@ class EncoderBlock(nn.Module):
                 conv_size=4,
                 norm_first=norm,
                 norm_eps=1e-6,
+                allow_neg_eigval=True,
             )
 
         elif enc_type == "DeltaNet":

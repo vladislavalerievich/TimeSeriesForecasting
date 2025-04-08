@@ -1,5 +1,6 @@
 import argparse
 import os
+import pprint
 import time
 from typing import Dict, Tuple
 
@@ -13,7 +14,10 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
 from src.models.models import MultiStepModel
-from src.synthetic_generation.sine_wave import generate_sine_batch, train_val_loader
+from src.synthetic_generation.synthetic_generation import (
+    generate_fixed_synthetic_batch,
+    train_val_loader,
+)
 from src.utils.utils import (
     SMAPEMetric,
     avoid_constant_inputs,
@@ -34,13 +38,12 @@ class TrainingPipeline:
         self.train_loader = None
         self.val_loader = None
         self.initial_epoch = 0
-        self.fixed_val_data = generate_sine_batch(
-            batch_size=5,
-            seq_len=256,
-            pred_len=128,
-            sine_config=None,
+        self.fixed_val_data = generate_fixed_synthetic_batch(
+            config, batch_size=config["num_val_samples_to_plot"]
         )
 
+        print("Initializing training pipeline...")
+        print(pprint.pformat(config))
         self._setup()
 
     def _setup(self) -> None:
@@ -243,7 +246,7 @@ class TrainingPipeline:
     ) -> None:
         """Log training progress."""
         avg_loss = running_loss / 10
-        print(f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Sc. Loss: {avg_loss}")
+
         if self.config["wandb"]:
             wandb.log(
                 {
@@ -314,6 +317,9 @@ class TrainingPipeline:
             epoch_loss += loss.item()
 
             if batch_idx % 10 == 9:
+                print(
+                    f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Batch Len:{len(batch)}, Sc. Loss: {running_loss / 10:.4f}"
+                )
                 self._log_training_progress(epoch, batch_idx, running_loss)
                 running_loss = 0.0
 
