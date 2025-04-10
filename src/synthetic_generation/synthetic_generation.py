@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, IterableDataset
 
+from src.data_handling.time_series_data_structure import TimeSeriesData
 from src.synthetic_generation.sine_wave import generate_sine_batch
 from src.synthetic_generation.step import generate_step_batch
 
@@ -25,11 +26,8 @@ class SyntheticDataset(IterableDataset):
         self.pred_len_min = config.get("pred_len_min", self.pred_len_fixed // 2)
         self.pred_len_sample = config.get("pred_len_sample", False)
 
-        # Configurations for generators
         self.sine_config = config.get("sine_wave_config", None)
-        self.step_config = config.get(
-            "step_wave_config", None
-        )  # Allow custom step config
+        self.step_config = config.get("step_wave_config", None)
         self.device = device
 
         if mode == "train":
@@ -52,7 +50,6 @@ class SyntheticDataset(IterableDataset):
         else:
             pred_len = self.pred_len_fixed
 
-        # Fix from previous analysis to respect max_seq_len
         min_hist_len = self.min_seq_len
         max_hist_len = self.max_seq_len - pred_len
         if max_hist_len < min_hist_len:
@@ -62,20 +59,42 @@ class SyntheticDataset(IterableDataset):
 
         # 50% chance of sine wave, 50% chance of step function
         if np.random.rand() < 0.5:
-            batch = generate_sine_batch(
+            return generate_sine_batch(
                 batch_size=self.batch_size,
                 seq_len=seq_len,
                 pred_len=pred_len,
                 sine_config=self.sine_config,
             )
         else:
-            batch = generate_step_batch(
+            return generate_step_batch(
                 batch_size=self.batch_size,
                 seq_len=seq_len,
                 pred_len=pred_len,
                 step_config=self.step_config,
             )
-        return batch
+
+    def generate_fixed_batch(self, batch_size):
+        """Generate a fixed batch with 50% sine and 50% step functions."""
+        assert batch_size % 2 == 0, "Batch size must be even for 50/50 split"
+        half_size = batch_size // 2
+        pred_len = self.pred_len_fixed
+        history_len = self.config["context_len"]
+        seq_len = history_len + pred_len
+
+        sine_data = generate_sine_batch(half_size, seq_len, pred_len, self.sine_config)
+        step_data = generate_step_batch(half_size, seq_len, pred_len, self.step_config)
+
+        return TimeSeriesData(
+            history_ts=torch.cat([sine_data.history_ts, step_data.history_ts], dim=0),
+            history_values=torch.cat(
+                [sine_data.history_values, step_data.history_values], dim=0
+            ),
+            target_ts=torch.cat([sine_data.target_ts, step_data.target_ts], dim=0),
+            target_values=torch.cat(
+                [sine_data.target_values, step_data.target_values], dim=0
+            ),
+            task=torch.cat([sine_data.task, step_data.task], dim=0),
+        )
 
     def __iter__(self):
         for _ in range(self.batches_per_iter):
@@ -89,66 +108,10 @@ class SyntheticDataset(IterableDataset):
         random.seed(seed)
 
     def collate_fn(self, batch):
-        return batch  # Batch is already formatted by generator functions
+        return batch  # Batch is already a TimeSeriesData
 
 
-def generate_mixed_fixed_batch(
-    batch_size, seq_len, pred_len, sine_config=None, step_config=None
-):
-    """
-    Generates a fixed batch with 50% sine wave samples and 50% step function samples.
-
-    Args:
-        batch_size (int): Total number of samples in the batch (should be even for exact 50/50 split).
-        seq_len (int): Total length of each time series sample (history + target).
-        pred_len (int): Length of the target sequence to predict.
-        sine_config (dict, optional): Configuration for sine wave parameters.
-        step_config (dict, optional): Configuration for step function parameters.
-
-    Returns:
-        dict: A dictionary containing tensors for the batch, with keys matching the training script:
-              ('ts', 'history', 'target_dates', 'target_values', 'task', 'complete_target').
-    """
-    # Ensure batch_size is even for a clean 50/50 split; adjust if odd
-    if batch_size % 2 != 0:
-        print(
-            f"Warning: batch_size {batch_size} is odd, adjusting to {batch_size + 1} for even split."
-        )
-        batch_size += 1
-
-    half_batch = batch_size // 2
-
-    # Generate sine wave samples
-    sine_batch = generate_sine_batch(
-        batch_size=half_batch,
-        seq_len=seq_len,
-        pred_len=pred_len,
-        sine_config=sine_config,
-    )
-
-    # Generate step function samples
-    step_batch = generate_step_batch(
-        batch_size=half_batch,
-        seq_len=seq_len,
-        pred_len=pred_len,
-        step_config=step_config,
-    )
-
-    # Combine the two batches
-    mixed_batch = {}
-    for key in sine_batch.keys():
-        # Concatenate along the batch dimension (dim=0)
-        mixed_batch[key] = torch.cat((sine_batch[key], step_batch[key]), dim=0)
-
-    # Optional: Shuffle the batch to mix sine and step samples (if order matters for visualization)
-    shuffle_indices = torch.randperm(batch_size)
-    for key in mixed_batch.keys():
-        mixed_batch[key] = mixed_batch[key][shuffle_indices]
-
-    return mixed_batch
-
-
-def generate_fixed_synthetic_batch(config, batch_size=6):
+def generate_fixed_synthetic_batch(config, batch_size=6) -> TimeSeriesData:
     """
     Generates a fixed batch with 50% sine waves and 50% step functions.
 
@@ -157,17 +120,15 @@ def generate_fixed_synthetic_batch(config, batch_size=6):
         batch_size (int): Desired batch size (must be even for exact 50/50 split).
 
     Returns:
-        dict: Batch with mixed sine and step data.
+        TimeSeriesData: A dataclass instance with mixed sine and step data.
     """
     assert batch_size % 2 == 0, "Batch size must be even for 50/50 split"
     half_size = batch_size // 2
 
-    # Compute seq_len and pred_len from config
-    pred_len = config["pred_len"]  # 128
-    history_len = config["context_len"]  # 512
-    seq_len = history_len + pred_len  # 640
+    pred_len = config["pred_len"]
+    history_len = config["context_len"]
+    seq_len = history_len + pred_len
 
-    # Generate sine batch
     sine_batch = generate_sine_batch(
         batch_size=half_size,
         seq_len=seq_len,
@@ -175,7 +136,6 @@ def generate_fixed_synthetic_batch(config, batch_size=6):
         sine_config=config.get("sine_wave_config", None),
     )
 
-    # Generate step batch
     step_batch = generate_step_batch(
         batch_size=half_size,
         seq_len=seq_len,
@@ -183,10 +143,17 @@ def generate_fixed_synthetic_batch(config, batch_size=6):
         step_config=config.get("step_wave_config", None),
     )
 
-    # Concatenate batches
-    fixed_batch = {}
-    for key in sine_batch:
-        fixed_batch[key] = torch.cat([sine_batch[key], step_batch[key]], dim=0)
+    fixed_batch = TimeSeriesData(
+        history_ts=torch.cat([sine_batch.history_ts, step_batch.history_ts], dim=0),
+        history_values=torch.cat(
+            [sine_batch.history_values, step_batch.history_values], dim=0
+        ),
+        target_ts=torch.cat([sine_batch.target_ts, step_batch.target_ts], dim=0),
+        target_values=torch.cat(
+            [sine_batch.target_values, step_batch.target_values], dim=0
+        ),
+        task=torch.cat([sine_batch.task, step_batch.task], dim=0),
+    )
 
     return fixed_batch
 

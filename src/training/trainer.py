@@ -14,6 +14,7 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
+from src.data_handling.time_series_data_structure import TimeSeriesData
 from src.models.models import MultiStepModel
 from src.synthetic_generation.synthetic_generation import (
     generate_fixed_synthetic_batch,
@@ -171,13 +172,19 @@ class TrainingPipeline:
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Scale target values based on configured scaler."""
         if self.config["scaler"] == "min_max":
-            max_scale = output["scale"][0].squeeze(-1)
-            min_scale = output["scale"][1].squeeze(-1)
+            # Extract scale values and ensure proper dimensions
+            max_scale = output["scale"][0]  # [batch_size, pred_len, 1]
+            min_scale = output["scale"][1]  # [batch_size, pred_len, 1]
+
+            # Scale target using min-max scaling, maintaining dimensions
             scaled_target = (target - min_scale) / (max_scale - min_scale)
             return scaled_target, max_scale, min_scale
         else:
-            mean = output["scale"][0].squeeze(-1)
-            std = output["scale"][1].squeeze(-1)
+            # For other scalers (like standard)
+            mean = output["scale"][0]  # [batch_size, pred_len, 1]
+            std = output["scale"][1]  # [batch_size, pred_len, 1]
+
+            # Scale target using standardization, maintaining dimensions
             scaled_target = (target - mean) / std
             return scaled_target, mean, std
 
@@ -201,30 +208,41 @@ class TrainingPipeline:
                     fixed_output["result"], scale_params
                 )
 
-            # Generate plots for each example in the fixed batch
-            for i in range(self.fixed_val_data["history"].shape[0]):
-                history = fixed_data["history"][i].cpu().numpy()
-                true_future = fixed_target[i].cpu().numpy()
-                pred_future = inv_scaled_fixed_output[i].cpu().numpy()
+            for i in range(fixed_data.history_values.shape[0]):
+                # Create a single-sample TimeSeriesData instance
+                sample_data = TimeSeriesData(
+                    history_ts=fixed_data.history_ts[i : i + 1],
+                    history_values=fixed_data.history_values[i : i + 1],
+                    target_ts=fixed_data.target_ts[i : i + 1],
+                    target_values=fixed_data.target_values[i : i + 1],
+                    task=fixed_data.task[i : i + 1],
+                )
+                pred_future = inv_scaled_fixed_output[i].cpu().numpy().squeeze(-1)
 
                 fig = plot_synthetic_function(
-                    history=history,
-                    true_future=true_future,
+                    data=sample_data,
                     pred_future=pred_future,
                     title=f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})",
-                    output_file=None,  # No file saving
+                    output_file=None,
                 )
-
                 if self.config["wandb"]:
                     wandb.log({f"val_plot_{i}": wandb.Image(fig)})
                 plt.close(fig)  # Clean up after logging
 
-    def _prepare_batch(self, batch: Dict) -> Tuple[Dict, torch.Tensor]:
+    def _prepare_batch(
+        self, batch: TimeSeriesData
+    ) -> Tuple[TimeSeriesData, torch.Tensor]:
         """Prepare batch data for processing."""
-        data = {k: v.to(self.device) for k, v in batch.items() if k != "target_values"}
-        target = batch["target_values"].to(self.device)
-        avoid_constant_inputs(data["history"], target)
-        return data, target
+        prepared_batch = TimeSeriesData(
+            history_ts=batch.history_ts.to(self.device),
+            history_values=batch.history_values.to(self.device),
+            target_ts=batch.target_ts.to(self.device),
+            target_values=batch.target_values.to(self.device),
+            task=batch.task.to(self.device),
+        )
+        target = prepared_batch.target_values
+        avoid_constant_inputs(prepared_batch.history_values, target)
+        return prepared_batch, target
 
     def _update_metrics(
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
@@ -252,8 +270,8 @@ class TrainingPipeline:
             )
 
     def _maybe_sample_prediction(
-        self, target: torch.Tensor, data: Dict
-    ) -> Tuple[int, torch.Tensor, Dict]:
+        self, target: torch.Tensor, data: TimeSeriesData
+    ) -> Tuple[int, torch.Tensor, TimeSeriesData]:
         """Randomly sample prediction length if configured."""
         pred_len = target.size(1)
         if self.config["sample_multi_pred"] > np.random.rand():
@@ -267,8 +285,8 @@ class TrainingPipeline:
                 )
             pred_len = end_pred - start_pred
             target = target[:, start_pred:end_pred].contiguous()
-            for key in ["target_dates", "complete_target", "task"]:
-                data[key] = data[key][:, start_pred:end_pred].contiguous()
+            data.target_ts = data.target_ts[:, start_pred:end_pred].contiguous()
+            data.target_values = data.target_values[:, start_pred:end_pred].contiguous()
         return pred_len, target, data
 
     def _train_epoch(self, epoch: int) -> float:
@@ -310,7 +328,7 @@ class TrainingPipeline:
 
             if batch_idx % 10 == 9:
                 print(
-                    f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Batch Len:{len(batch)}, Sc. Loss: {running_loss / 10:.4f}"
+                    f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Batch Len:{data.history_values.shape[0]}, Sc. Loss: {running_loss / 10:.4f}"
                 )
                 self._log_training_progress(epoch, batch_idx, running_loss)
                 running_loss = 0.0

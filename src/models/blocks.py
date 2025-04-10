@@ -211,7 +211,7 @@ class GatedDeltaNetEncoder(BaseEncoder):
             conv_size=4,
             norm_first=self.norm,
             norm_eps=1e-6,
-            allow_neg_eigval=True,
+            allow_neg_eigval=False,
         )
 
 
