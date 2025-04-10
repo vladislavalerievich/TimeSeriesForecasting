@@ -35,20 +35,26 @@ BaseModelConfig:
   encoding_dropout: 0.0
   handle_constants_model: false
 
-MultiStepModel:
-  enc_type: GatedDeltaNet
+MultiStepModel:  
   residual: false
   num_encoder_layers: 2
-  token_embed_len: 1024
-  initial_gelu_flag: true
-  in_proj_norm: false
+  token_embed_dim: 1024
+  use_gelu: true
+  use_input_projection_norm: false
+  use_global_residual: false
+  linear_sequence_length: 15
+  use_dilated_conv: true
+  dilated_conv_kernel_size: 5
+  dilated_conv_max_dilation: 3
+
+EncoderConfig:
+  encoder_type: GatedDeltaNet
+  num_layers: 2
+  num_heads: 4  
   norm: true
   norm_type: layernorm
-  global_residual: false
-  linear_seq: 15
+  residual: false   
   enc_conv: true
-  init_dil_conv: true
-  enc_conv_kernel: 5
-  init_conv_kernel: 5
-  init_conv_max_dilation: 3
-  block_expansion: 2
+  dilated_conv_kernel_size: 5  
+  dilated_conv_max_dilation: 3
+  block_expansion: 2.0

@@ -119,81 +119,66 @@ class DilatedConv1dBlock(nn.Module):
         return x.transpose(1, 2)
 
 
-class EncoderBlock(nn.Module):
+class ConcatLayer(nn.Module):
+    def __init__(self, dim=1, name=None):
+        super().__init__()
+        self.dim = dim
+        self.name = name
+
+    def forward(self, inputs):
+        return torch.cat(inputs, dim=self.dim)
+
+
+class BaseEncoder(nn.Module):
+    """Base class for encoders with common functionality"""
+
     def __init__(
         self,
-        embed_dim,
+        token_embed_dim=1024,
         norm=True,
         norm_type="layernorm",
         residual=False,
-        name="EncoderBlock",
-        enc_type="GatedDeltaNet",
         enc_conv=False,
-        enc_conv_kernel=5,
-        enc_conv_dilation=0,
-        head_dim=256,
-        num_heads=4,
-        block_expansion=2.0,
+        dilated_conv_kernel_size=5,
+        dilated_conv_max_dilation=0,
         **kwargs,
     ):
-        super().__init__(**kwargs)
-
-        self.name = name
+        super().__init__()
         self.norm = norm
-
-        if enc_type == "GatedDeltaNet":
-            self.encoder_layer = GatedDeltaNet(
-                mode="chunk",
-                hidden_size=embed_dim,
-                expand_v=block_expansion,
-                head_dim=head_dim,
-                num_heads=num_heads,
-                use_gate=True,
-                use_short_conv=True,
-                conv_size=4,
-                norm_first=norm,
-                norm_eps=1e-6,
-                allow_neg_eigval=True,
-            )
-
-        elif enc_type == "DeltaNet":
-            self.encoder_layer = DeltaNet(
-                mode="chunk",
-                hidden_size=embed_dim,
-                expand_k=1.0,
-                expand_v=block_expansion,
-                head_dim=head_dim,
-                num_heads=num_heads,
-                use_gate=True,
-                use_short_conv=True,
-                allow_neg_eigval=True,
-                conv_size=4,
-            )
-
-        self.stage_2_layer = DilatedConv1dBlock(
-            embed_dim,
-            embed_dim,
-            enc_conv_kernel,
-            enc_conv_dilation,
-            single_conv=False,
-        )
+        self.residual = residual
 
         if self.norm:
             if norm_type == "layernorm":
-                self.norm_layer_1 = nn.LayerNorm(embed_dim)
-                self.norm_layer_2 = nn.LayerNorm(embed_dim)
+                self.norm_layer_1 = nn.LayerNorm(token_embed_dim)
+                self.norm_layer_2 = nn.LayerNorm(token_embed_dim)
             elif norm_type == "rmsnorm":
-                self.norm_layer_1 = SimpleRMSNorm(embed_dim)
-                self.norm_layer_2 = SimpleRMSNorm(embed_dim)
+                self.norm_layer_1 = SimpleRMSNorm(token_embed_dim)
+                self.norm_layer_2 = SimpleRMSNorm(token_embed_dim)
 
-        self.residual = residual
+        if enc_conv:
+            self.stage_2_layer = DilatedConv1dBlock(
+                token_embed_dim,
+                token_embed_dim,
+                dilated_conv_kernel_size,
+                dilated_conv_max_dilation,
+                single_conv=False,
+            )
+        else:
+            self.stage_2_layer = nn.Sequential(
+                nn.Linear(token_embed_dim, token_embed_dim), nn.GELU()
+            )
+
+    def setup_encoder_layer(self, **kwargs):
+        raise NotImplementedError("Subclasses must implement setup_encoder_layer")
 
     def forward(self, x):
+        # Apply normalization before encoder if enabled
         if self.norm:
             x_enc, _, _ = self.encoder_layer(self.norm_layer_1(x))
         else:
             x_enc, _, _ = self.encoder_layer(x)
 
+        # Apply residual connection if enabled
         if self.residual:
             x = x + x_enc
         else:
@@ -210,11 +195,51 @@ class EncoderBlock(nn.Module):
         return x_out
 
 
-class ConcatLayer(nn.Module):
-    def __init__(self, dim=1, name=None):
-        super().__init__()
-        self.dim = dim
-        self.name = name
+class GatedDeltaNetEncoder(BaseEncoder):
+    def __init__(
+        self, token_embed_dim, head_dim=256, num_heads=4, block_expansion=2.0, **kwargs
+    ):
+        super().__init__(token_embed_dim=token_embed_dim, **kwargs)
+        self.encoder_layer = GatedDeltaNet(
+            mode="chunk",
+            hidden_size=token_embed_dim,
+            expand_v=block_expansion,
+            head_dim=head_dim,
+            num_heads=num_heads,
+            use_gate=True,
+            use_short_conv=True,
+            conv_size=4,
+            norm_first=self.norm,
+            norm_eps=1e-6,
+            allow_neg_eigval=True,
+        )
 
-    def forward(self, inputs):
-        return torch.cat(inputs, dim=self.dim)
+
+class DeltaNetEncoder(BaseEncoder):
+    def __init__(
+        self, token_embed_dim, head_dim=256, num_heads=4, block_expansion=2.0, **kwargs
+    ):
+        super().__init__(token_embed_dim=token_embed_dim, **kwargs)
+        self.encoder_layer = DeltaNet(
+            mode="chunk",
+            hidden_size=token_embed_dim,
+            expand_k=1.0,
+            expand_v=block_expansion,
+            head_dim=head_dim,
+            num_heads=num_heads,
+            use_gate=True,
+            use_short_conv=True,
+            allow_neg_eigval=True,
+            conv_size=4,
+        )
+
+
+class EncoderFactory:
+    @staticmethod
+    def create_encoder(encoder_type, **encoder_config):
+        if encoder_type == "GatedDeltaNet":
+            return GatedDeltaNetEncoder(**encoder_config)
+        elif encoder_type == "DeltaNet":
+            return DeltaNetEncoder(**encoder_config)
+        else:
+            raise ValueError(f"Unknown encoder type: {encoder_type}")

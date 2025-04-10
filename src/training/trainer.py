@@ -57,9 +57,10 @@ class TrainingPipeline:
 
         # Initialize model
         self.model = MultiStepModel(
-            **self.config["BaseModelConfig"],
-            **self.config["MultiStepModel"],
+            base_model_config=self.config["BaseModelConfig"],
+            encoder_config=self.config["EncoderConfig"],
             scaler=self.config["scaler"],
+            **self.config["MultiStepModel"],
         ).to(self.device)
 
         # Setup optimizer and scheduler

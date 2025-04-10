@@ -5,7 +5,7 @@ import torch.nn as nn
 from src.models.blocks import (
     ConcatLayer,
     DilatedConv1dBlock,
-    EncoderBlock,
+    EncoderFactory,
     SinPositionalEncoding,
 )
 from src.models.constants import DAY, DOW, HOUR, MINUTE, MONTH, NUM_TASKS, YEAR
@@ -203,77 +203,71 @@ class BaseModel(nn.Module):
 class MultiStepModel(BaseModel):
     def __init__(
         self,
-        num_encoder_layers=3,
-        token_embed_len=625,
-        norm=True,
-        norm_type="rmsnorm",
-        initial_gelu_flag=False,
-        residual=True,
-        in_proj_norm=False,
-        global_residual=False,
-        linear_seq=2,
-        enc_type="GatedDeltaNet",
-        enc_conv=False,
-        enc_conv_kernel=5,
-        init_dil_conv=False,
-        init_conv_kernel=3,
-        init_conv_max_dilation=3,
-        block_expansion=2,
+        base_model_config,
+        encoder_config,
+        scaler="custom_robust",
+        num_encoder_layers=2,
+        token_embed_dim=1024,
+        use_gelu=True,
+        use_input_projection_norm=False,
+        use_global_residual=False,
+        linear_sequence_length=2,
+        use_dilated_conv=True,
+        dilated_conv_kernel_size=3,
+        dilated_conv_max_dilation=3,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(scaler=scaler, **base_model_config)
         self.num_encoder_layers = num_encoder_layers
-        self.initial_gelu_flag = initial_gelu_flag
+        self.use_gelu = use_gelu
         token_input_dim = self.embed_size * 2
-        # conditional dilated conv embedding
-        if init_dil_conv:
-            self.in_proj_layer = DilatedConv1dBlock(
+
+        if use_dilated_conv:
+            self.input_projection_layer = DilatedConv1dBlock(
                 token_input_dim,
-                token_embed_len,
-                init_conv_kernel,
-                init_conv_max_dilation,
+                token_embed_dim,
+                dilated_conv_kernel_size,
+                dilated_conv_max_dilation,
                 single_conv=False,
             )
         else:
-            self.in_proj_layer = nn.Linear(token_input_dim, token_embed_len)
+            self.input_projection_layer = nn.Linear(token_input_dim, token_embed_dim)
+
         self.global_residual = (
-            nn.Linear(token_input_dim * (linear_seq + 1), token_embed_len)
-            if global_residual
+            nn.Linear(token_input_dim * (linear_sequence_length + 1), token_embed_dim)
+            if use_global_residual
             else None
         )
-        self.linear_seq = linear_seq
-        self.init_gelu = nn.GELU() if initial_gelu_flag else None
-        self.norm = norm
-        self.in_proj_norm = (
-            nn.LayerNorm(token_embed_len) if in_proj_norm else nn.Identity()
+
+        self.linear_sequence_length = linear_sequence_length
+        self.initial_gelu = nn.GELU() if use_gelu else None
+        self.input_projection_norm = (
+            nn.LayerNorm(token_embed_dim)
+            if use_input_projection_norm
+            else nn.Identity()
         )
+
+        # Create encoder layers using the factory
         self.encoder_layers = nn.ModuleList(
             [
-                EncoderBlock(
-                    token_embed_len,
-                    norm,
-                    norm_type,
-                    residual,
-                    enc_type=enc_type,
-                    enc_conv=enc_conv,
-                    enc_conv_kernel=enc_conv_kernel,
-                    block_expansion=block_expansion,
-                    enc_conv_dilation=init_conv_max_dilation,
+                EncoderFactory.create_encoder(
+                    token_embed_dim=token_embed_dim, **encoder_config
                 )
                 for i in range(self.num_encoder_layers)
             ]
         )
-        self.final_output = (
-            nn.Linear(token_embed_len * 2, 1)
-            if global_residual
-            else nn.Linear(token_embed_len, 1)
+
+        self.final_output_layer = (
+            nn.Linear(token_embed_dim * 2, 1)
+            if use_global_residual
+            else nn.Linear(token_embed_dim, 1)
         )
-        self.final_output.name = "FinalOutput"
+        self.final_output_layer.name = "FinalOutput"
         self.final_activation = nn.Identity()
 
     def forecast(self, embedded: torch.Tensor, prediction_length: int):
         if self.global_residual:
-            glob_res = embedded[:, -(self.linear_seq + 1) :, :].reshape(
+            glob_res = embedded[:, -(self.linear_sequence_length + 1) :, :].reshape(
                 embedded.shape[0], -1
             )
             glob_res = (
@@ -281,18 +275,23 @@ class MultiStepModel(BaseModel):
                 .unsqueeze(1)
                 .repeat(1, prediction_length, 1)
             )
-        x = self.in_proj_layer(embedded)
-        if self.init_gelu is not None:
-            x = self.in_proj_norm(x)
-            x = self.init_gelu(x)
+
+        x = self.input_projection_layer(embedded)
+
+        if self.use_gelu and self.initial_gelu is not None:
+            x = self.input_projection_norm(x)
+            x = self.initial_gelu(x)
+
+        # Pass through encoder layers
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
+
         if self.global_residual:
-            x = self.final_output(
+            x = self.final_output_layer(
                 torch.concat([x[:, -prediction_length:, :], glob_res], dim=-1)
             )
         else:
-            x = self.final_output(x[:, -prediction_length:, :])
+            x = self.final_output_layer(x[:, -prediction_length:, :])
         x = self.final_activation(x)
 
         return x.squeeze(-1)

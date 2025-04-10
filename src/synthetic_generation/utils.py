@@ -2,7 +2,6 @@ import os
 
 import matplotlib.pyplot as plt
 
-from src.synthetic_generation.sine_wave import generate_sine_batch
 from src.synthetic_generation.step import generate_step_batch
 
 
