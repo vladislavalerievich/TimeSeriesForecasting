@@ -170,17 +170,13 @@ class EncoderBlock(nn.Module):
                 conv_size=4,
             )
 
-        if enc_conv:
-            self.stage_2_layer = DilatedConv1dBlock(
-                embed_dim,
-                embed_dim,
-                enc_conv_kernel,
-                enc_conv_dilation,
-                single_conv=False,
-            )
-            self.stage_2_layer = nn.Sequential(
-                nn.Linear(embed_dim, embed_dim), nn.GELU()
-            )
+        self.stage_2_layer = DilatedConv1dBlock(
+            embed_dim,
+            embed_dim,
+            enc_conv_kernel,
+            enc_conv_dilation,
+            single_conv=False,
+        )
 
         if self.norm:
             if norm_type == "layernorm":

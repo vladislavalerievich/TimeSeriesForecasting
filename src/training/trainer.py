@@ -4,6 +4,7 @@ import pprint
 import time
 from typing import Dict, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,6 +19,7 @@ from src.synthetic_generation.synthetic_generation import (
     generate_fixed_synthetic_batch,
     train_val_loader,
 )
+from src.synthetic_generation.utils import plot_synthetic_function
 from src.utils.utils import (
     SMAPEMetric,
     avoid_constant_inputs,
@@ -204,28 +206,17 @@ class TrainingPipeline:
                 true_future = fixed_target[i].cpu().numpy()
                 pred_future = inv_scaled_fixed_output[i].cpu().numpy()
 
-                import matplotlib.pyplot as plt
+                fig = plot_synthetic_function(
+                    history=history,
+                    true_future=true_future,
+                    pred_future=pred_future,
+                    title=f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})",
+                    output_file=None,  # No file saving
+                )
 
-                plt.figure(figsize=(10, 5))
-                plt.plot(range(len(history)), history, label="History", color="blue")
-                plt.plot(
-                    range(len(history), len(history) + len(true_future)),
-                    true_future,
-                    label="True Future",
-                    color="green",
-                )
-                plt.plot(
-                    range(len(history), len(history) + len(pred_future)),
-                    pred_future,
-                    label="Predicted Future",
-                    color="red",
-                )
-                plt.title(
-                    f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})"
-                )
-                plt.legend()
-                wandb.log({f"val_plot_{i}": wandb.Image(plt)})
-                plt.close()
+                if self.config["wandb"]:
+                    wandb.log({f"val_plot_{i}": wandb.Image(fig)})
+                plt.close(fig)  # Clean up after logging
 
     def _prepare_batch(self, batch: Dict) -> Tuple[Dict, torch.Tensor]:
         """Prepare batch data for processing."""
@@ -357,6 +348,8 @@ class TrainingPipeline:
 
     def train(self) -> None:
         """Execute the training pipeline."""
+        print("Starting training...")
+
         for epoch in range(self.initial_epoch, self.config["num_epochs"]):
             start_time = time.time()
 
