@@ -16,11 +16,11 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import wandb
 from src.data_handling.time_series_data_structure import TimeSeriesData
 from src.models.models import MultiStepModel
+from src.synthetic_generation.plot_uts import plot_synthetic_function
 from src.synthetic_generation.synthetic_generation import (
     generate_fixed_synthetic_batch,
     train_val_loader,
 )
-from src.synthetic_generation.utils import plot_synthetic_function
 from src.utils.utils import (
     SMAPEMetric,
     avoid_constant_inputs,

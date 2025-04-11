@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from src.data_handling.time_series_data_structure import TimeSeriesData
 
 
-def plot_synthetic_function(
+def plot_synthetic_uts(
     data=None,
     history=None,
     true_future=None,
@@ -77,32 +77,29 @@ def plot_synthetic_function(
 
 
 if __name__ == "__main__":
-    # from src.synthetic_generation.step import generate_step_batch
-
-    # seq_lens = [128, 256, 512, 640]
-
-    # for sl in seq_lens:
-    #     step_batch = generate_step_batch(batch_size=1, seq_len=sl, pred_len=64)
-    #     fig = plot_synthetic_function(
-    #         data=step_batch,
-    #         title=f"Step Function (seq_len={sl})",
-    #         output_file=f"outputs/plots/debug_step_seq_len_{sl}.png",
-    #     )
-    #     plt.close(fig)
-
-    # print("Debug plots saved.")
-
     from src.synthetic_generation.sine_wave import generate_sine_batch
+    from src.synthetic_generation.step import generate_step_batch
 
     seq_lens = [128, 256, 512, 640]
 
     for sl in seq_lens:
-        step_batch = generate_sine_batch(batch_size=1, seq_len=sl, pred_len=64)
-        fig = plot_synthetic_function(
+        step_batch = generate_step_batch(batch_size=1, seq_len=sl, pred_len=64)
+        fig = plot_synthetic_uts(
             data=step_batch,
             title=f"Step Function (seq_len={sl})",
+            output_file=f"outputs/plots/debug_step_seq_len_{sl}.png",
+        )
+        plt.close(fig)
+
+    print("Debug Step Function plots saved.")
+
+    for sl in seq_lens:
+        step_batch = generate_sine_batch(batch_size=1, seq_len=sl, pred_len=64)
+        fig = plot_synthetic_uts(
+            data=step_batch,
+            title=f"Sine Function (seq_len={sl})",
             output_file=f"outputs/plots/debug_sine_seq_len_{sl}.png",
         )
         plt.close(fig)
 
-    print("Debug plots saved.")
+    print("Debug Sine Function plots saved.")
