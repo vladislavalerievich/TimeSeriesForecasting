@@ -16,9 +16,13 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import wandb
 from src.data_handling.time_series_data_structure import TimeSeriesData
 from src.models.models import MultiStepModel
-from src.synthetic_generation.plot_uts import plot_synthetic_function
-from src.synthetic_generation.synthetic_generation import (
-    generate_fixed_synthetic_batch,
+from src.synthetic_generation.plot_uts import (
+    plot_synthetic_function,  # Todo update the function
+)
+from src.synthetic_generation.synthetic_generation_mts import (
+    generate_fixed_multivariate_batch as generate_fixed_synthetic_batch,
+)
+from src.synthetic_generation.synthetic_generation_mts import (
     train_val_loader,
 )
 from src.utils.utils import (
