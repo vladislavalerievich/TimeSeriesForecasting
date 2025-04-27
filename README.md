@@ -4,5 +4,5 @@ Run
 
 ```bash
 python -m src.training.trainer
-python -m  src.synthetic_generation.utils
+python -m  src.synthetic_generation.plot_mts
 ```
