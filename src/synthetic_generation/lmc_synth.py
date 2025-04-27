@@ -12,6 +12,8 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
+from src.synthetic_generation.constants import DEFAULT_START_DATE
+
 
 class LMCSynthGenerator:
     """Generate synthetic multivariate time series data using Latent Multi-Channel Synthesis."""
@@ -230,7 +232,7 @@ class LMCSynthGenerator:
             ts = np.dot(weights, latent_functions)
 
             # Generate timestamps
-            start_time = np.datetime64("2000-01-01 00:00")
+            start_time = np.datetime64(DEFAULT_START_DATE)
             timestamps = start_time + np.arange(self.length) * np.timedelta64(
                 1, periodicity
             )

@@ -14,6 +14,7 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
+from src.synthetic_generation.constants import DEFAULT_START_DATE
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
 
 LENGTH = 1024
@@ -197,7 +198,7 @@ def generate_time_series(
             print("Error caught:", err)
             continue
 
-        return {"start": np.datetime64("2000-01-01 00:00", "s"), "target": ts}
+        return {"start": np.datetime64(DEFAULT_START_DATE, "s"), "target": ts}
 
 
 # Define test cases as a list of dictionaries

@@ -77,7 +77,7 @@ class StaticFeaturesDataContainer:
         if not feature_tensors:
             return None
 
-        batch_size, num_channels = feature_tensors[0].shape
+        batch_size = feature_tensors[0].shape[0]
         reshaped_features = [f.unsqueeze(-1) for f in feature_tensors]
         concatenated = torch.cat(reshaped_features, dim=2)  # [B, C, num_features]
 
