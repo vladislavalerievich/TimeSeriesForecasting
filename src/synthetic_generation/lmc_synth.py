@@ -1,8 +1,7 @@
 import functools
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
-import torch
 from sklearn.gaussian_process.kernels import (
     RBF,
     ConstantKernel,
@@ -15,7 +14,7 @@ from sklearn.gaussian_process.kernels import (
 
 
 class LMCSynthGenerator:
-    """Generate synthetic multivariate time synthetic time series data using Latent Multi-Channel Synthesis."""
+    """Generate synthetic multivariate time series data using Latent Multi-Channel Synthesis."""
 
     def __init__(
         self,
@@ -26,7 +25,7 @@ class LMCSynthGenerator:
         dirichlet_max: float = 2.0,
         scale: float = 1.0,
         weibull_shape: float = 2.0,
-        weibull_scale: float = 1.0,
+        weibull_scale: float = 1,
     ):
         """
         Initialize the LMC Synthetic Data Generator.
@@ -120,7 +119,7 @@ class LMCSynthGenerator:
     def _sample_from_gp_prior_efficient(
         kernel: Kernel,
         X: np.ndarray,
-        random_seed: Optional[int] = None,
+        random_seed: Optional[int] = 42,
         method: str = "eigh",
     ) -> np.ndarray:
         """
@@ -154,7 +153,9 @@ class LMCSynthGenerator:
 
         return ts
 
-    def generate_time_series(self, random_seed: Optional[int] = None) -> Dict:
+    def generate_time_series(
+        self, random_seed: Optional[int] = 42, periodicity: str = "s"
+    ) -> Dict:
         """
         Generate a single multivariate synthetic time series.
 
@@ -162,67 +163,82 @@ class LMCSynthGenerator:
         ----------
         random_seed : int, optional
             Random seed for reproducibility (default: None).
+        periodicity : str, optional
+            Time step periodicity for timestamps. Options: 's' (seconds), 'm' (minutes),
+            'h' (hours), 'D' (days), 'W' (weeks), 'M' (months), 'Q' (quarters), 'Y' (years)
+            (default: 's').
 
         Returns
         -------
         dict
             Dictionary containing:
-            - 'start': Starting timestamp (np.datetime64)
-            - 'target': Generated time series (np.ndarray of shape (num_channels, length))
+            - 'timestamps': Array of timestamps (np.ndarray of np.datetime64)
+            - 'values': Generated time series (np.ndarray of shape (num_channels, length))
         """
-        if random_seed is not None:
-            np.random.seed(random_seed)
+        np.random.seed(random_seed)
 
-        while True:
-            X = np.linspace(0, 1, self.length)
-
-            # Sample number of latent functions from Weibull distribution
-            latent_num = np.rint(
-                np.random.weibull(self.weibull_shape, size=self.weibull_scale)
-                * self.scale
-                + 1
+        # Validate periodicity
+        valid_periods = ["s", "m", "h", "D", "W", "M", "Q", "Y"]
+        if periodicity not in valid_periods:
+            raise ValueError(
+                f"Periodicity must be one of {valid_periods}, got {periodicity}"
             )
-            latent_num = np.clip(
-                latent_num, max(2, self.num_channels // 20), self.num_channels
+
+        X = np.linspace(0, 1, self.length)
+
+        # Sample number of latent functions from Weibull distribution
+        latent_num = np.rint(
+            np.random.weibull(self.weibull_shape, self.weibull_scale) * self.scale + 1
+        )
+        latent_num = np.clip(
+            latent_num, max(2, self.num_channels // 20), self.num_channels
+        )
+        latent_num = int(latent_num[0])
+
+        # Sample number of kernels for each latent function
+        kernel_numbers = np.random.randint(1, self.max_kernels + 1, size=latent_num)
+
+        # Sample kernels for each latent function
+        latent_kernels = [
+            functools.reduce(
+                self._random_binary_map,
+                np.random.choice(self.kernel_bank, num_kernels, replace=True),
             )
-            latent_num = int(latent_num[0])
+            for num_kernels in kernel_numbers
+        ]
 
-            # Sample number of kernels for each latent function
-            kernel_numbers = np.random.randint(1, self.max_kernels + 1, size=latent_num)
+        try:
+            # Sample latent functions
+            latent_functions = np.array(
+                [
+                    self._sample_from_gp_prior_efficient(
+                        kernel=kernel, X=X, random_seed=random_seed
+                    )
+                    for kernel in latent_kernels
+                ]
+            )
 
-            # Sample kernels for each latent function
-            latent_kernels = [
-                functools.reduce(
-                    self._random_binary_map,
-                    np.random.choice(self.kernel_bank, num_kernels, replace=True),
-                )
-                for num_kernels in kernel_numbers
-            ]
+            # Sample Dirichlet parameter
+            dirichlet = np.random.uniform(self.dirichlet_min, self.dirichlet_max)
 
-            try:
-                # Sample latent functions
-                latent_functions = np.array(
-                    [
-                        self._sample_from_gp_prior_efficient(
-                            kernel=kernel, X=X, random_seed=random_seed
-                        )
-                        for kernel in latent_kernels
-                    ]
-                )
+            # Sample weights for combining latent functions
+            weights = np.random.dirichlet(
+                dirichlet * np.ones(latent_num), size=self.num_channels
+            )
 
-                # Sample Dirichlet parameter
-                dirichlet = np.random.uniform(self.dirichlet_min, self.dirichlet_max)
+            # Combine latent functions with weights
+            ts = np.dot(weights, latent_functions)
 
-                # Sample weights for combining latent functions
-                weights = np.random.dirichlet(
-                    dirichlet * np.ones(latent_num), size=self.num_channels
-                )
+            # Generate timestamps
+            start_time = np.datetime64("2000-01-01 00:00")
+            timestamps = start_time + np.arange(self.length) * np.timedelta64(
+                1, periodicity
+            )
 
-                # Combine latent functions with weights
-                ts = np.dot(weights, latent_functions)
+            return {"timestamps": timestamps, "values": ts}
 
-                return {"start": np.datetime64("2000-01-01 00:00", "s"), "target": ts}
-
-            except np.linalg.LinAlgError as err:
-                print("Error caught:", err)
-                continue
+        except np.linalg.LinAlgError:
+            print(
+                "LinAlgError: Kernel matrix is not positive definite. "
+                "This can happen if the kernel parameters are not suitable."
+            )
