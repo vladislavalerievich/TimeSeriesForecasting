@@ -109,7 +109,7 @@ class TimeSeriesDataContainer:
         target_time_features: Tensor of time-derived features for the prediction timestamps window.
             These are *known* future features.
             Shape: [batch_size, pred_len, num_time_features]
-        static_features: Tensor of features that are constant over time for each series
+        static_features: Optional tensor of features that are constant over time for each series
             in the batch. Examples: Base Sampling Frequency,  Statistical Properties (Mean, Std Dev), etc.
             Shape: [batch_size, num_static_features, num_static_features_per_channel]
         history_mask: Optional boolean/float tensor indicating valid (1/True) vs padded (0/False)
@@ -125,8 +125,8 @@ class TimeSeriesDataContainer:
     target_values: torch.Tensor
     target_channels_indices: torch.Tensor
 
-    history_time_features: Optional[torch.Tensor] = None
-    target_time_features: Optional[torch.Tensor] = None
+    history_time_features: Optional[torch.Tensor]
+    target_time_features: Optional[torch.Tensor]
 
     static_features: Optional[StaticFeaturesDataContainer] = None
 
