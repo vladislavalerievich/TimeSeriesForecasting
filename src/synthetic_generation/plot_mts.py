@@ -346,22 +346,26 @@ def plot_multiple_channels(
 
 # Example usage demonstration
 if __name__ == "__main__":
-    from src.synthetic_generation.lmc_synth import TimeSeriesGenerator
+    from src.synthetic_generation.lmc_synth_old import TimeSeriesGenerator
 
     # Create a generator and generate a batch of data
     generator = TimeSeriesGenerator(
         batch_size=2,
-        history_len=200,
-        target_len=50,
-        num_channels=20,
-        num_ts_features=4,
-        variable_lengths=True,
+        history_len=96,
+        target_len=96,
+        num_channels=4,
+        num_ts_features=8,
+        variable_lengths=False,
         seed=42,
     )
 
     # Generate a batch of data
     ts_data = generator.generate_batch()
 
+    print("Data history values shape:", ts_data.history_values.shape)
+    print("Data history ts shape:", ts_data.history_ts.shape)
+    print("Data target values shape:", ts_data.target_values.shape)
+    print("Data target ts shape:", ts_data.target_ts.shape)
     # Plot the first sample with default settings
     fig1 = plot_synthetic_mts(
         ts_data=ts_data,

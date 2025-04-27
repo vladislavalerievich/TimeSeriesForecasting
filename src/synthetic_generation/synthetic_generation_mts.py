@@ -1,3 +1,4 @@
+import multiprocessing
 import random
 
 import numpy as np
@@ -5,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset
 
 from src.data_handling.time_series_data_structure import TimeSeriesData
-from src.synthetic_generation.lmc_synth import TimeSeriesGenerator
+from src.synthetic_generation.lmc_synth_old import TimeSeriesGenerator
 
 
 class MVTimeSeriesDataset(IterableDataset):
@@ -179,11 +180,24 @@ def generate_fixed_multivariate_batch(config, batch_size=6) -> TimeSeriesData:
     return fixed_batch
 
 
-def train_val_loader(config, cpus_available, initial_epoch=0, device="cpu"):
+def train_val_loader(config, initial_epoch=0, device="cpu"):
     """
-    Creates training and validation DataLoaders with multivariate time series data.
+    Creates training and validation DataLoaders with multivariate time series data,
+    automatically determining and limiting the number of worker processes.
     """
     print("--- Using MVTimeSeriesDataset (Multivariate Time Series) ---")
+    import os
+
+    # Auto-detect available CPU cores
+    max_available_cpus = multiprocessing.cpu_count()
+    os_cpu_count = os.cpu_count()
+    # Safe default: cap to 2 or fewer if system has fewer
+    cpus_available = min(config.get("cpus_available", 1), max_available_cpus)
+    print(
+        f"Detected from multiprocessing {max_available_cpus} CPU cores. Using {cpus_available} DataLoader workers."
+    )
+    print("os_cpu_count = ", os_cpu_count)
+
     train_dataset = MVTimeSeriesDataset(
         config,
         mode="train",
@@ -202,28 +216,19 @@ def train_val_loader(config, cpus_available, initial_epoch=0, device="cpu"):
     collate_function = train_dataset.collate_fn
     worker_init = train_dataset.worker_init_fn
 
-    train_data_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=None,
-        shuffle=False,
-        collate_fn=collate_function,
-        worker_init_fn=worker_init,
-        num_workers=cpus_available if cpus_available > 0 else 0,
-        prefetch_factor=15 if cpus_available > 1 else None,
-        persistent_workers=cpus_available > 0,
-        pin_memory=(device != "cpu"),
-    )
+    # Shared loader settings
+    loader_kwargs = {
+        "batch_size": None,
+        "shuffle": False,
+        "collate_fn": collate_function,
+        "worker_init_fn": worker_init,
+        "num_workers": cpus_available,
+        "prefetch_factor": 15 if cpus_available > 1 else None,
+        "persistent_workers": cpus_available > 0,
+        "pin_memory": (device != "cpu"),
+    }
 
-    val_data_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=None,
-        shuffle=False,
-        collate_fn=collate_function,
-        worker_init_fn=worker_init,
-        num_workers=cpus_available if cpus_available > 0 else 0,
-        prefetch_factor=15 if cpus_available > 1 else None,
-        persistent_workers=cpus_available > 0,
-        pin_memory=(device != "cpu"),
-    )
+    train_data_loader = DataLoader(dataset=train_dataset, **loader_kwargs)
+    val_data_loader = DataLoader(dataset=val_dataset, **loader_kwargs)
 
     return train_data_loader, val_data_loader
