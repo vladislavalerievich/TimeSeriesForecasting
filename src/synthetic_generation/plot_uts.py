@@ -2,7 +2,7 @@ import os
 
 import matplotlib.pyplot as plt
 
-from src.data_handling.time_series_data_structure import TimeSeriesData
+from src.data_handling.data_containers import TimeSeriesData
 
 
 def plot_synthetic_uts(

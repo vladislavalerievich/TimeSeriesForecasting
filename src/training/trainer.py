@@ -14,7 +14,7 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
-from src.data_handling.time_series_data_structure import TimeSeriesData
+from src.data_handling.data_containers import TimeSeriesData
 from src.models.models import MultiStepModel
 from src.synthetic_generation.plot_uts import (
     plot_synthetic_function,  # Todo update the function

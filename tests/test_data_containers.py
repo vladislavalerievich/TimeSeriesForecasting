@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from src.data_handling.time_series_data_structure import (
+from src.data_handling.data_containers import (
     StaticFeaturesDataContainer,
     TimeSeriesDataContainer,
 )

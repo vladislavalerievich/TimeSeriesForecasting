@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.data_handling.time_series_data_structure import TimeSeriesData
+from src.data_handling.data_containers import TimeSeriesData
 from src.synthetic_generation.constants import BASE_END_ORD, BASE_START_ORD
 
 
