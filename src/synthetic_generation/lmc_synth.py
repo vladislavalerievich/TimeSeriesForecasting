@@ -185,62 +185,61 @@ class LMCSynthGenerator:
             raise ValueError(
                 f"Periodicity must be one of {valid_periods}, got {periodicity}"
             )
+        while True:
+            X = np.linspace(0, 1, self.length)
 
-        X = np.linspace(0, 1, self.length)
-
-        # Sample number of latent functions from Weibull distribution
-        latent_num = np.rint(
-            np.random.weibull(self.weibull_shape, self.weibull_scale) * self.scale + 1
-        )
-        latent_num = np.clip(
-            latent_num, max(2, self.num_channels // 20), self.num_channels
-        )
-        latent_num = int(latent_num[0])
-
-        # Sample number of kernels for each latent function
-        kernel_numbers = np.random.randint(1, self.max_kernels + 1, size=latent_num)
-
-        # Sample kernels for each latent function
-        latent_kernels = [
-            functools.reduce(
-                self._random_binary_map,
-                np.random.choice(self.kernel_bank, num_kernels, replace=True),
+            # Sample number of latent functions from Weibull distribution
+            latent_num = np.rint(
+                np.random.weibull(self.weibull_shape, self.weibull_scale) * self.scale
+                + 1
             )
-            for num_kernels in kernel_numbers
-        ]
-
-        try:
-            # Sample latent functions
-            latent_functions = np.array(
-                [
-                    self._sample_from_gp_prior_efficient(
-                        kernel=kernel, X=X, random_seed=random_seed
-                    )
-                    for kernel in latent_kernels
-                ]
+            latent_num = np.clip(
+                latent_num, max(2, self.num_channels // 20), self.num_channels
             )
+            latent_num = int(latent_num[0])
 
-            # Sample Dirichlet parameter
-            dirichlet = np.random.uniform(self.dirichlet_min, self.dirichlet_max)
+            # Sample number of kernels for each latent function
+            kernel_numbers = np.random.randint(1, self.max_kernels + 1, size=latent_num)
 
-            # Sample weights for combining latent functions
-            weights = np.random.dirichlet(
-                dirichlet * np.ones(latent_num), size=self.num_channels
-            )
+            # Sample kernels for each latent function
+            latent_kernels = [
+                functools.reduce(
+                    self._random_binary_map,
+                    np.random.choice(self.kernel_bank, num_kernels, replace=True),
+                )
+                for num_kernels in kernel_numbers
+            ]
 
-            # Combine latent functions with weights
-            ts = np.dot(weights, latent_functions)
+            try:
+                # Sample latent functions
+                latent_functions = np.array(
+                    [
+                        self._sample_from_gp_prior_efficient(
+                            kernel=kernel, X=X, random_seed=random_seed
+                        )
+                        for kernel in latent_kernels
+                    ]
+                )
 
-            # Generate timestamps
-            start_time = np.datetime64(DEFAULT_START_DATE)
-            timestamps = start_time + np.arange(self.length) * np.timedelta64(
-                1, periodicity
-            )
+                # Sample Dirichlet parameter
+                dirichlet = np.random.uniform(self.dirichlet_min, self.dirichlet_max)
 
-            return {"timestamps": timestamps, "values": ts}
+                # Sample weights for combining latent functions
+                weights = np.random.dirichlet(
+                    dirichlet * np.ones(latent_num), size=self.num_channels
+                )
 
-        except np.linalg.LinAlgError:
-            print(
-                "LinAlgError: Kernel matrix is not positive definite. "
-                "This can happen if the kernel parameters are not suitable."
-            )
+                # Combine latent functions with weights
+                ts = np.dot(weights, latent_functions)
+
+                # Generate timestamps
+                start_time = np.datetime64(DEFAULT_START_DATE)
+                timestamps = start_time + np.arange(self.length) * np.timedelta64(
+                    1, periodicity
+                )
+
+                return {"timestamps": timestamps, "values": ts}
+
+            except np.linalg.LinAlgError as err:
+                print("Error caught:", err)
+                continue
