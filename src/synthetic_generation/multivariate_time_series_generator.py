@@ -1,8 +1,9 @@
+import gc
 import logging
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from typing import Generator, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -37,7 +38,7 @@ class MultivariateTimeSeriesGenerator:
         dirichlet_max: Union[float, Tuple[float, float]] = (1.0, 5.0),
         scale: Union[float, Tuple[float, float]] = (0.5, 2.0),
         weibull_shape: Union[float, Tuple[float, float]] = (1.0, 5.0),
-        weibull_scale: Union[float, Tuple[float, float]] = (1, 3),
+        weibull_scale: Union[int, Tuple[int, int]] = (1, 3),
         periodicities: List[str] = None,
     ):
         """
@@ -72,40 +73,18 @@ class MultivariateTimeSeriesGenerator:
         periodicities : List[str], optional
             List of possible periodicities to sample from (default: ["s", "m", "h", "D", "W"]).
         """
-
-        # Ensure that for every tuple parameter, the min value is less than the max value
-        tuple_params = {
-            "history_length": history_length,
-            "target_length": target_length,
-            "num_channels": num_channels,
-            "max_kernels": max_kernels,
-            "dirichlet_min": dirichlet_min,
-            "dirichlet_max": dirichlet_max,
-            "scale": scale,
-            "weibull_shape": weibull_shape,
-            "weibull_scale": weibull_scale,
-        }
-
-        for param_name, param_value in tuple_params.items():
-            if isinstance(param_value, tuple):
-                min_val, max_val = param_value
-                if min_val > max_val:
-                    raise ValueError(
-                        f"For parameter '{param_name}', the minimum value ({min_val}) "
-                        f"cannot exceed the maximum value ({max_val})"
-                    )
-
-        # Validate max_target_channels
-        if isinstance(num_channels, tuple):
-            if max_target_channels > max(num_channels):
-                raise ValueError(
-                    f"max_target_channels ({max_target_channels}) cannot exceed the maximum value of num_channels ({max(num_channels)})"
-                )
-        else:
-            if max_target_channels > num_channels:
-                raise ValueError(
-                    f"max_target_channels ({max_target_channels}) cannot exceed num_channels ({num_channels})"
-                )
+        self._validate_input_parameters(
+            history_length=history_length,
+            target_length=target_length,
+            max_target_channels=max_target_channels,
+            num_channels=num_channels,
+            max_kernels=max_kernels,
+            dirichlet_min=dirichlet_min,
+            dirichlet_max=dirichlet_max,
+            scale=scale,
+            weibull_shape=weibull_shape,
+            weibull_scale=weibull_scale,
+        )
 
         self.global_seed = global_seed
         self.max_target_channels = max_target_channels
@@ -125,8 +104,92 @@ class MultivariateTimeSeriesGenerator:
             periodicities if periodicities is not None else ["s", "m", "h", "D", "W"]
         )
 
-        np.random.seed(self.global_seed)
-        torch.manual_seed(self.global_seed)
+        # Set random seeds
+        self._set_random_seeds(self.global_seed)
+
+    def _validate_input_parameters(
+        self,
+        history_length: Union[int, Tuple[int, int]],
+        target_length: Union[int, Tuple[int, int]],
+        max_target_channels: int,
+        num_channels: Union[int, Tuple[int, int]],
+        max_kernels: Union[int, Tuple[int, int]],
+        dirichlet_min: Union[float, Tuple[float, float]],
+        dirichlet_max: Union[float, Tuple[float, float]],
+        scale: Union[float, Tuple[float, float]],
+        weibull_shape: Union[float, Tuple[float, float]],
+        weibull_scale: Union[int, Tuple[int, int]],
+    ) -> None:
+        """
+        Validate input parameters to ensure they have valid values.
+
+        Parameters
+        ----------
+        history_length : Union[int, Tuple[int, int]]
+            Fixed history length or range (min, max).
+        target_length : Union[int, Tuple[int, int]]
+            Fixed target length or range (min, max).
+        max_target_channels : int
+            Maximum number of target channels to randomly select.
+        num_channels : Union[int, Tuple[int, int]]
+            Fixed number of channels or range (min, max).
+        max_kernels : Union[int, Tuple[int, int]]
+            Fixed max_kernels value or range (min, max).
+        dirichlet_min : Union[float, Tuple[float, float]]
+            Fixed dirichlet_min value or range (min, max).
+        dirichlet_max : Union[float, Tuple[float, float]]
+            Fixed dirichlet_max value or range (min, max).
+        scale : Union[float, Tuple[float, float]]
+            Fixed scale value or range (min, max).
+        weibull_shape : Union[float, Tuple[float, float]]
+            Fixed weibull_shape value or range (min, max).
+        weibull_scale : Union[int, Tuple[int, int]]
+            Fixed weibull_scale value or range (min, max).
+        """
+        # Dictionary of parameters to validate
+        tuple_params = {
+            "history_length": history_length,
+            "target_length": target_length,
+            "num_channels": num_channels,
+            "max_kernels": max_kernels,
+            "dirichlet_min": dirichlet_min,
+            "dirichlet_max": dirichlet_max,
+            "scale": scale,
+            "weibull_shape": weibull_shape,
+            "weibull_scale": weibull_scale,
+        }
+
+        # Check each tuple parameter to ensure min < max
+        for param_name, param_value in tuple_params.items():
+            if isinstance(param_value, tuple):
+                min_val, max_val = param_value
+                if min_val > max_val:
+                    raise ValueError(
+                        f"For parameter '{param_name}', the minimum value ({min_val}) "
+                        f"cannot exceed the maximum value ({max_val})"
+                    )
+
+        # Validate max_target_channels
+        max_num_channels = (
+            num_channels if isinstance(num_channels, int) else max(num_channels)
+        )
+        if max_target_channels > max_num_channels:
+            raise ValueError(
+                f"max_target_channels ({max_target_channels}) cannot exceed the maximum "
+                f"value of num_channels ({max_num_channels})"
+            )
+
+    def _set_random_seeds(self, seed: int) -> None:
+        """
+        Set random seeds for numpy and torch for reproducibility.
+
+        Parameters
+        ----------
+        seed : int
+            The random seed to set.
+        """
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
     def _parse_param_value(
         self,
@@ -191,6 +254,127 @@ class MultivariateTimeSeriesGenerator:
 
         return int(value) if is_int else value
 
+    def _split_time_series_data(
+        self,
+        values: np.ndarray,
+        timestamps: np.ndarray,
+        history_length: int,
+        target_length: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray, np.ndarray]:
+        """
+        Split time series data into history and target components.
+
+        Parameters
+        ----------
+        values : np.ndarray
+            Time series values with shape (batch_size, total_length, num_channels).
+        timestamps : np.ndarray
+            Timestamps with shape (batch_size, total_length).
+        history_length : int
+            Length of the history window.
+        target_length : int
+            Length of the target window.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor, np.ndarray, np.ndarray]
+            Tuple containing (history_values, future_values, history_timestamps, target_timestamps).
+        """
+        # Split values into history and target
+        history_values = torch.tensor(
+            values[:, :history_length, :], dtype=torch.float32
+        )
+        future_values = torch.tensor(
+            values[:, history_length : history_length + target_length, :],
+            dtype=torch.float32,
+        )
+
+        # Split timestamps
+        history_timestamps = timestamps[:, :history_length]
+        target_timestamps = timestamps[
+            :, history_length : history_length + target_length
+        ]
+
+        return history_values, future_values, history_timestamps, target_timestamps
+
+    def _prepare_time_features(
+        self,
+        history_timestamps: np.ndarray,
+        target_timestamps: np.ndarray,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Prepare time features by normalizing timestamps.
+
+        Parameters
+        ----------
+        history_timestamps : np.ndarray
+            History timestamps.
+        target_timestamps : np.ndarray
+            Target timestamps.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor]
+            Tuple containing (history_time_features, target_time_features).
+        """
+        # Get minimum timestamp for normalization
+        min_timestamp = np.min(history_timestamps[:, 0])
+
+        # Normalize timestamps (days since min_timestamp)
+        history_time_features = torch.tensor(
+            (history_timestamps - min_timestamp) / np.timedelta64(1, "D"),
+            dtype=torch.float32,
+        )[:, :, None]  # Shape: (batch_size, history_length, 1)
+
+        target_time_features = torch.tensor(
+            (target_timestamps - min_timestamp) / np.timedelta64(1, "D"),
+            dtype=torch.float32,
+        )[:, :, None]  # Shape: (batch_size, target_length, 1)
+
+        return history_time_features, target_time_features
+
+    def _select_target_channels(
+        self,
+        batch_size: int,
+        num_channels: int,
+        max_target_channels: int,
+        future_values: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Randomly select target channels.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of time series in the batch.
+        num_channels : int
+            Number of channels in each time series.
+        max_target_channels : int
+            Maximum number of target channels to randomly select.
+        future_values : torch.Tensor
+            Future values tensor.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor]
+            Tuple containing (target_values, target_indices).
+        """
+        # Randomly select the number of target channels (between 1 and max_target_channels)
+        num_targets = min(np.random.randint(1, max_target_channels + 1), num_channels)
+
+        # Randomly select target channels indices (same for all series in the batch)
+        target_indices = torch.tensor(
+            np.random.choice(num_channels, size=num_targets, replace=False),
+            dtype=torch.long,
+        ).expand(batch_size, -1)
+
+        # Vectorized indexing for target values
+        target_values = future_values[
+            :, :, target_indices[0]
+        ]  # Shape: (batch_size, target_length, num_targets)
+
+        return target_values, target_indices
+
     def format_to_container(
         self,
         values: np.ndarray,
@@ -229,45 +413,22 @@ class MultivariateTimeSeriesGenerator:
         if max_target_channels is None:
             max_target_channels = self.max_target_channels
 
-        # Split values into history and target
-        history_values = torch.tensor(
-            values[:, :history_length, :], dtype=torch.float32
-        )
-        future_values = torch.tensor(
-            values[:, history_length : history_length + target_length, :],
-            dtype=torch.float32,
+        # Split data into history and target components
+        history_values, future_values, history_timestamps, target_timestamps = (
+            self._split_time_series_data(
+                values, timestamps, history_length, target_length
+            )
         )
 
-        # Split timestamps
-        history_timestamps = timestamps[:, :history_length]
-        target_timestamps = timestamps[
-            :, history_length : history_length + target_length
-        ]
+        # Prepare time features
+        history_time_features, target_time_features = self._prepare_time_features(
+            history_timestamps, target_timestamps
+        )
 
-        # Vectorized timestamp normalization (days since minimum timestamp)
-        min_timestamp = timestamps[:, 0].min()
-        history_time_features = torch.tensor(
-            (history_timestamps - min_timestamp) / np.timedelta64(1, "D"),
-            dtype=torch.float32,
-        )[:, :, None]  # Shape: (batch_size, history_length, 1)
-        target_time_features = torch.tensor(
-            (target_timestamps - min_timestamp) / np.timedelta64(1, "D"),
-            dtype=torch.float32,
-        )[:, :, None]  # Shape: (batch_size, target_length, 1)
-
-        # Randomly select the number of target channels (between 1 and max_target_channels)
-        num_targets = min(np.random.randint(1, max_target_channels + 1), num_channels)
-
-        # Randomly select target channels indices (same for all series in the batch)
-        target_indices = torch.tensor(
-            np.random.choice(num_channels, size=num_targets, replace=False),
-            dtype=torch.long,
-        ).expand(batch_size, -1)
-
-        # Vectorized indexing for target values
-        target_values = future_values[
-            :, :, target_indices[0]
-        ]  # Shape: (batch_size, target_length, num_targets)
+        # Select target channels
+        target_values, target_indices = self._select_target_channels(
+            batch_size, num_channels, max_target_channels, future_values
+        )
 
         return TimeSeriesDataContainer(
             history_values=history_values,
@@ -279,6 +440,43 @@ class MultivariateTimeSeriesGenerator:
             history_mask=None,  # Not used for now
             target_mask=None,  # Not used for now
         )
+
+    def _sample_batch_parameters(self) -> Dict[str, Any]:
+        """
+        Sample parameter values for a batch generation.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing sampled parameter values.
+        """
+        history_length = self._parse_param_value(self.history_length)
+        target_length = self._parse_param_value(self.target_length)
+        num_channels = self._parse_param_value(self.num_channels)
+        max_kernels = self._parse_param_value(self.max_kernels)
+        dirichlet_min = self._parse_param_value(self.dirichlet_min, is_int=False)
+        dirichlet_max = self._parse_param_value(self.dirichlet_max, is_int=False)
+        scale = self._parse_param_value(self.scale, is_int=False)
+        weibull_shape = self._parse_param_value(self.weibull_shape, is_int=False)
+        weibull_scale = self._parse_param_value(self.weibull_scale, is_int=True)
+        periodicity = np.random.choice(self.periodicities)
+
+        # Ensure dirichlet_min < dirichlet_max
+        if dirichlet_min > dirichlet_max:
+            dirichlet_min, dirichlet_max = dirichlet_max, dirichlet_min
+
+        return {
+            "history_length": history_length,
+            "target_length": target_length,
+            "num_channels": num_channels,
+            "max_kernels": max_kernels,
+            "dirichlet_min": dirichlet_min,
+            "dirichlet_max": dirichlet_max,
+            "scale": scale,
+            "weibull_shape": weibull_shape,
+            "weibull_scale": weibull_scale,
+            "periodicity": periodicity,
+        }
 
     def generate_batch(
         self,
@@ -333,9 +531,9 @@ class MultivariateTimeSeriesGenerator:
         TimeSeriesDataContainer
             A container with the generated time series data.
         """
+        # Set seeds if provided
         if seed is not None:
-            np.random.seed(seed)
-            torch.manual_seed(seed)
+            self._set_random_seeds(seed)
 
         total_length = history_length + target_length
 
@@ -352,21 +550,9 @@ class MultivariateTimeSeriesGenerator:
         )
 
         # Generate batch of time series
-        batch_values = []
-        batch_timestamps = []
-
-        for i in range(batch_size):
-            # Generate a single time series with a unique seed
-            result = generator.generate_time_series(
-                random_seed=seed + i if seed is not None else None,
-                periodicity=periodicity,
-            )
-            batch_values.append(result["values"])  # Shape: (total_length, num_channels)
-            batch_timestamps.append(result["timestamps"])
-
-        # Convert to numpy arrays
-        batch_values = np.array(batch_values)
-        batch_timestamps = np.array(batch_timestamps)
+        batch_values, batch_timestamps = self._generate_time_series_batch(
+            generator, batch_size, periodicity, seed
+        )
 
         # Format the data into a TimeSeriesDataContainer
         return self.format_to_container(
@@ -379,8 +565,64 @@ class MultivariateTimeSeriesGenerator:
             max_target_channels=max_target_channels,
         )
 
-    def _generate_batch_worker(self, args):
-        """Helper function for parallel batch generation."""
+    def _generate_time_series_batch(
+        self,
+        generator: LMCSynthGenerator,
+        batch_size: int,
+        periodicity: str,
+        seed: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Generate a batch of time series using the LMCSynthGenerator.
+
+        Parameters
+        ----------
+        generator : LMCSynthGenerator
+            Initialized generator instance.
+        batch_size : int
+            Number of time series to generate.
+        periodicity : str
+            Time step periodicity for timestamps.
+        seed : int, optional
+            Random seed to use (default: None).
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            Tuple containing (batch_values, batch_timestamps).
+        """
+        batch_values = []
+        batch_timestamps = []
+
+        for i in range(batch_size):
+            # Generate a single time series with a unique seed
+            batch_seed = None if seed is None else seed + i
+            result = generator.generate_time_series(
+                random_seed=batch_seed,
+                periodicity=periodicity,
+            )
+            batch_values.append(result["values"])
+            batch_timestamps.append(result["timestamps"])
+
+        # Convert to numpy arrays
+        return np.array(batch_values), np.array(batch_timestamps)
+
+    def _generate_batch_worker(
+        self, args: Tuple[int, Dict[str, Any]]
+    ) -> Tuple[TimeSeriesDataContainer, int]:
+        """
+        Helper function for parallel batch generation.
+
+        Parameters
+        ----------
+        args : Tuple[int, Dict[str, Any]]
+            Tuple containing (batch_index, parameters_dict).
+
+        Returns
+        -------
+        Tuple[TimeSeriesDataContainer, int]
+            Tuple containing (data_container, batch_index).
+        """
         batch_index, params = args
         seed = self.global_seed + batch_index
         logger.info(f"Generating batch {batch_index} with seed {seed}")
@@ -409,43 +651,11 @@ class MultivariateTimeSeriesGenerator:
         Tuple[TimeSeriesDataContainer, int]
             A tuple containing the TimeSeriesDataContainer and the batch index.
         """
-        if num_cpus is None:
-            num_cpus = min(multiprocessing.cpu_count(), 8)  # Cap at 8 to avoid overload
+        num_cpus = self._determine_cpu_count(num_cpus)
         logger.info(f"Using {num_cpus} CPUs for dataset generation")
 
         # Prepare batch parameters
-        batch_params = []
-        for i in range(num_batches):
-            # Sample parameters for this batch
-            history_length = self._parse_param_value(self.history_length)
-            target_length = self._parse_param_value(self.target_length)
-            num_channels = self._parse_param_value(self.num_channels)
-            max_kernels = self._parse_param_value(self.max_kernels)
-            dirichlet_min = self._parse_param_value(self.dirichlet_min, is_int=False)
-            dirichlet_max = self._parse_param_value(self.dirichlet_max, is_int=False)
-            scale = self._parse_param_value(self.scale, is_int=False)
-            weibull_shape = self._parse_param_value(self.weibull_shape, is_int=False)
-            weibull_scale = self._parse_param_value(self.weibull_scale, is_int=True)
-            periodicity = np.random.choice(self.periodicities)
-
-            # Ensure dirichlet_min < dirichlet_max
-            if dirichlet_min > dirichlet_max:
-                dirichlet_min, dirichlet_max = dirichlet_max, dirichlet_min
-
-            params = {
-                "batch_size": batch_size,
-                "history_length": history_length,
-                "target_length": target_length,
-                "num_channels": num_channels,
-                "max_kernels": max_kernels,
-                "dirichlet_min": dirichlet_min,
-                "dirichlet_max": dirichlet_max,
-                "scale": scale,
-                "weibull_shape": weibull_shape,
-                "weibull_scale": weibull_scale,
-                "periodicity": periodicity,
-            }
-            batch_params.append((i, params))
+        batch_params = self._prepare_batch_parameters(num_batches, batch_size)
 
         # Generate batches in parallel
         with ProcessPoolExecutor(max_workers=num_cpus) as executor:
@@ -459,6 +669,180 @@ class MultivariateTimeSeriesGenerator:
                 except Exception as e:
                     logger.error(f"Error in batch generation: {e}")
                     raise
+
+    def _determine_cpu_count(self, num_cpus: Optional[int] = None) -> int:
+        """
+        Determine the number of CPUs to use for parallel processing.
+
+        Parameters
+        ----------
+        num_cpus : int, optional
+            Requested number of CPUs (default: None).
+
+        Returns
+        -------
+        int
+            Number of CPUs to use.
+        """
+        if num_cpus is None:
+            return min(multiprocessing.cpu_count(), 8)  # Cap at 8 to avoid overload
+        return num_cpus
+
+    def _prepare_batch_parameters(
+        self, num_batches: int, batch_size: int
+    ) -> List[Tuple[int, Dict[str, Any]]]:
+        """
+        Prepare parameters for each batch generation.
+
+        Parameters
+        ----------
+        num_batches : int
+            Number of batches to generate.
+        batch_size : int
+            Number of time series per batch.
+
+        Returns
+        -------
+        List[Tuple[int, Dict[str, Any]]]
+            List of (batch_index, parameters) tuples.
+        """
+        batch_params = []
+        for i in range(num_batches):
+            params = self._sample_batch_parameters()
+            params["batch_size"] = batch_size
+            batch_params.append((i, params))
+        return batch_params
+
+    def _save_batch(
+        self, batch: TimeSeriesDataContainer, batch_idx: int, output_dir: str
+    ) -> None:
+        """
+        Save a batch to disk.
+
+        Parameters
+        ----------
+        batch : TimeSeriesDataContainer
+            The batch to save.
+        batch_idx : int
+            Batch index.
+        output_dir : str
+            Output directory path.
+        """
+        batch_path = os.path.join(output_dir, f"batch_{batch_idx:03d}.pt")
+        torch.save(batch, batch_path)
+        logger.info(f"Saved batch {batch_idx} to {batch_path}")
+
+    def _process_dataset_chunk(
+        self,
+        chunk_start: int,
+        chunk_end: int,
+        chunk_size: int,
+        batch_size: int,
+        num_cpus: int,
+        output_dir: str,
+        combined_file_path: str,
+    ) -> None:
+        """
+        Process a chunk of batches for large dataset generation.
+
+        Parameters
+        ----------
+        chunk_start : int
+            Starting index of the chunk.
+        chunk_end : int
+            Ending index of the chunk.
+        chunk_size : int
+            Size of the chunk.
+        batch_size : int
+            Number of time series per batch.
+        num_cpus : int
+            Number of CPUs to use.
+        output_dir : str
+            Output directory path.
+        combined_file_path : str
+            Path to the combined dataset file.
+        """
+        chunk_size_actual = chunk_end - chunk_start
+        logger.info(f"Processing batches {chunk_start} to {chunk_end - 1}...")
+
+        # Generate and collect batches for this chunk
+        chunk_batches = []
+        chunk_indices = []
+
+        with tqdm(
+            total=chunk_size_actual,
+            desc=f"Generating chunk {(chunk_start // chunk_size) + 1}/{(chunk_end // chunk_size) + 1}",
+        ) as pbar:
+            for batch, batch_idx in self.generate_dataset(
+                num_batches=chunk_size_actual,
+                batch_size=batch_size,
+                num_cpus=num_cpus,
+            ):
+                adjusted_batch_idx = batch_idx + chunk_start
+                chunk_batches.append(batch)
+                chunk_indices.append(adjusted_batch_idx)
+                pbar.update(1)
+
+        # Sort this chunk's batches by index
+        sorted_indices = np.argsort(chunk_indices)
+        sorted_chunk_batches = [chunk_batches[i] for i in sorted_indices]
+
+        # Save or append to the combined file
+        self._save_or_append_chunk(
+            sorted_chunk_batches, chunk_start, combined_file_path, output_dir
+        )
+
+        # Clean up memory
+        self._clean_memory([chunk_batches, chunk_indices, sorted_chunk_batches])
+        logger.info(f"Completed chunk {chunk_start} to {chunk_end - 1}")
+
+    def _save_or_append_chunk(
+        self,
+        sorted_chunk_batches: List[TimeSeriesDataContainer],
+        chunk_start: int,
+        combined_file_path: str,
+        output_dir: str,
+    ) -> None:
+        """
+        Save or append a chunk of batches to the combined dataset file.
+
+        Parameters
+        ----------
+        sorted_chunk_batches : List[TimeSeriesDataContainer]
+            Sorted list of batches in the chunk.
+        chunk_start : int
+            Starting index of the chunk.
+        combined_file_path : str
+            Path to the combined dataset file.
+        output_dir : str
+            Output directory path.
+        """
+        if chunk_start == 0:
+            # First chunk: create new file
+            torch.save(sorted_chunk_batches, combined_file_path)
+        else:
+            # Subsequent chunks: load existing file, append, and save
+            try:
+                existing_data = torch.load(combined_file_path)
+                combined_data = existing_data + sorted_chunk_batches
+                torch.save(combined_data, combined_file_path)
+            except Exception as e:
+                logger.error(f"Error appending to dataset file: {e}")
+                chunk_file = os.path.join(output_dir, f"dataset_chunk_{chunk_start}.pt")
+                torch.save(sorted_chunk_batches, chunk_file)
+
+    def _clean_memory(self, variables_to_delete: List[Any]) -> None:
+        """
+        Clean memory by deleting variables and forcing garbage collection.
+
+        Parameters
+        ----------
+        variables_to_delete : List[Any]
+            List of variables to delete.
+        """
+        for var in variables_to_delete:
+            del var
+        gc.collect()
 
     def save_dataset(
         self,
@@ -490,102 +874,104 @@ class MultivariateTimeSeriesGenerator:
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Saving dataset to {output_dir} with {num_batches} batches")
 
-        if num_cpus is None:
-            num_cpus = min(multiprocessing.cpu_count(), 8)
+        num_cpus = self._determine_cpu_count(num_cpus)
         logger.info(f"Using {num_cpus} CPUs for saving dataset")
 
         if save_as_single_file:
-            # Path for the combined dataset file
-            combined_file_path = os.path.join(output_dir, "dataset.pt")
-
-            # Check if chunk_size is provided, otherwise set a default
-            if chunk_size is None:
-                chunk_size = min(10, num_batches)  # Default to 10 or num_batches
-
-            # For very large datasets, process in chunks to avoid memory issues
-            for chunk_start in range(0, num_batches, chunk_size):
-                chunk_end = min(chunk_start + chunk_size, num_batches)
-                chunk_size_actual = chunk_end - chunk_start
-
-                logger.info(f"Processing batches {chunk_start} to {chunk_end - 1}...")
-
-                # Generate and collect batches for this chunk
-                chunk_batches = []
-                chunk_indices = []
-
-                with tqdm(
-                    total=chunk_size_actual,
-                    desc=f"Generating chunk {(chunk_start // chunk_size) + 1}/{(num_batches + chunk_size - 1) // chunk_size}",
-                ) as pbar:
-                    for batch, batch_idx in self.generate_dataset(
-                        num_batches=chunk_size_actual,
-                        batch_size=batch_size,
-                        num_cpus=num_cpus,
-                    ):
-                        adjusted_batch_idx = batch_idx + chunk_start
-                        chunk_batches.append(batch)
-                        chunk_indices.append(adjusted_batch_idx)
-                        pbar.update(1)
-                # Sort this chunk's batches by index
-                sorted_indices = np.argsort(chunk_indices)
-                sorted_chunk_batches = [chunk_batches[i] for i in sorted_indices]
-
-                # Save or append to the combined file
-                if chunk_start == 0:
-                    # First chunk: create new file
-                    torch.save(sorted_chunk_batches, combined_file_path)
-                else:
-                    # Subsequent chunks: load existing file, append, and save
-                    try:
-                        existing_data = torch.load(combined_file_path)
-                        combined_data = existing_data + sorted_chunk_batches
-                        torch.save(combined_data, combined_file_path)
-                    except Exception as e:
-                        logger.error(f"Error appending to dataset file: {e}")
-                        chunk_file = os.path.join(
-                            output_dir, f"dataset_chunk_{chunk_start // chunk_size}.pt"
-                        )
-                        torch.save(sorted_chunk_batches, chunk_file)
-
-                # Clear memory
-                del chunk_batches, chunk_indices, sorted_chunk_batches
-                if "combined_data" in locals():
-                    del combined_data
-                if "existing_data" in locals():
-                    del existing_data
-
-                # Force garbage collection to free memory
-                import gc
-
-                gc.collect()
-                logger.info(f"Completed chunk {chunk_start} to {chunk_end - 1}")
+            self._save_as_single_file(
+                output_dir, num_batches, batch_size, num_cpus, chunk_size
+            )
         else:
-            # Save individual batches without collecting them all in memory
-            def save_batch(batch, batch_idx, output_dir):
-                batch_path = os.path.join(output_dir, f"batch_{batch_idx:03d}.pt")
-                torch.save(batch, batch_path)
-                logger.info(f"Saved batch {batch_idx} to {batch_path}")
+            self._save_as_individual_files(
+                output_dir, num_batches, batch_size, num_cpus
+            )
 
-            with ThreadPoolExecutor(max_workers=num_cpus) as executor:
-                futures = []
-                with tqdm(
-                    total=num_batches, desc="Generating and saving batches"
-                ) as pbar:
-                    for batch, batch_idx in self.generate_dataset(
-                        num_batches=num_batches,
-                        batch_size=batch_size,
-                        num_cpus=num_cpus,
-                    ):
-                        futures.append(
-                            executor.submit(save_batch, batch, batch_idx, output_dir)
-                        )
-                        pbar.update(1)
+        logger.info(f"Dataset saved to {output_dir}")
 
-                    for future in as_completed(futures):
-                        try:
-                            future.result()  # Ensure any exceptions are raised
-                        except Exception as e:
-                            logger.error(f"Error saving batch: {e}")
-                            raise
+    def _save_as_single_file(
+        self,
+        output_dir: str,
+        num_batches: int,
+        batch_size: int,
+        num_cpus: int,
+        chunk_size: Optional[int] = None,
+    ) -> None:
+        """
+        Save dataset as a single file, processing in chunks to manage memory.
+
+        Parameters
+        ----------
+        output_dir : str
+            Directory to save the dataset.
+        num_batches : int
+            Number of batches to generate.
+        batch_size : int
+            Number of time series per batch.
+        num_cpus : int
+            Number of CPUs to use for generation.
+        chunk_size : int, optional
+            Number of batches to process at once (default: min(10, num_batches)).
+        """
+        # Path for the combined dataset file
+        combined_file_path = os.path.join(output_dir, "dataset.pt")
+
+        # Set default chunk size if not provided
+        if chunk_size is None:
+            chunk_size = min(10, num_batches)
+
+        # Process in chunks to avoid memory issues
+        for chunk_start in range(0, num_batches, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, num_batches)
+            self._process_dataset_chunk(
+                chunk_start,
+                chunk_end,
+                chunk_size,
+                batch_size,
+                num_cpus,
+                output_dir,
+                combined_file_path,
+            )
+
+    def _save_as_individual_files(
+        self,
+        output_dir: str,
+        num_batches: int,
+        batch_size: int,
+        num_cpus: int,
+    ) -> None:
+        """
+        Save dataset as individual batch files.
+
+        Parameters
+        ----------
+        output_dir : str
+            Directory to save the dataset.
+        num_batches : int
+            Number of batches to generate.
+        batch_size : int
+            Number of time series per batch.
+        num_cpus : int
+            Number of CPUs to use for generation.
+        """
+        with ThreadPoolExecutor(max_workers=num_cpus) as executor:
+            futures = []
+            with tqdm(total=num_batches, desc="Generating and saving batches") as pbar:
+                for batch, batch_idx in self.generate_dataset(
+                    num_batches=num_batches,
+                    batch_size=batch_size,
+                    num_cpus=num_cpus,
+                ):
+                    futures.append(
+                        executor.submit(self._save_batch, batch, batch_idx, output_dir)
+                    )
+                    pbar.update(1)
+
+                # Ensure any exceptions are raised
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Error saving batch: {e}")
+                        raise
 
         logger.info(f"Dataset saved to {output_dir}")

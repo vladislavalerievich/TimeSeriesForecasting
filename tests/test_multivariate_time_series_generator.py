@@ -309,7 +309,8 @@ def test_edge_case_small_num_channels():
 
     # Expect a ValueError due to invalid configuration
     with pytest.raises(
-        ValueError, match="max_target_channels .* cannot exceed num_channels"
+        ValueError,
+        match="max_target_channels \(.*\) cannot exceed the maximum value of num_channels \(.*\)",
     ):
         MultivariateTimeSeriesGenerator(
             global_seed=42,
@@ -342,19 +343,22 @@ def test_invalid_periodicity(generator):
 def test_max_target_channels_validation():
     """Test validation of max_target_channels parameter."""
     # Case 1: Fixed num_channels less than max_target_channels
+    num_channels, max_target_channels = 3, 5
+    error_msg_case1 = f"max_target_channels \\({max_target_channels}\\) cannot exceed the maximum value of num_channels \\({num_channels}\\)"
     with pytest.raises(
         ValueError,
-        match="max_target_channels \(5\) cannot exceed num_channels \(3\)",
+        match=error_msg_case1,
     ):
         MultivariateTimeSeriesGenerator(
-            num_channels=3,
-            max_target_channels=5,
+            num_channels=num_channels,
+            max_target_channels=max_target_channels,
         )
 
     # Case 2: Range max num_channels less than max_target_channels
+    error_msg_case2 = f"max_target_channels \\({max_target_channels}\\) cannot exceed the maximum value of num_channels \\(3\\)"
     with pytest.raises(
         ValueError,
-        match="max_target_channels \(5\) cannot exceed the maximum value of num_channels \(3\)",
+        match=error_msg_case2,
     ):
         MultivariateTimeSeriesGenerator(
             num_channels=(1, 3),
