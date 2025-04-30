@@ -48,8 +48,8 @@ class LMCSynthGenerator:
             Scaling factor for Weibull distribution (default: 1.0).
         weibull_shape : float, optional
             Shape parameter for Weibull distribution (default: 2.0).
-        weibull_scale : float, optional
-            Scale parameter for Weibull distribution (default: 1.0).
+        weibull_scale : int, optional
+            Scale parameter for Weibull distribution (default: 1).
         """
         self.length = length
         self.max_kernels = max_kernels
@@ -230,7 +230,8 @@ class LMCSynthGenerator:
                 )
 
                 # Combine latent functions with weights
-                ts = np.dot(weights, latent_functions)
+                ts = np.dot(weights, latent_functions)  # Shape: [num_channels, length]
+                ts = ts.T  # Transpose to [length, num_channels]
 
                 # Generate timestamps
                 start_time = np.datetime64(DEFAULT_START_DATE)

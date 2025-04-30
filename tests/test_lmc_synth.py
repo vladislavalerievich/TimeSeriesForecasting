@@ -311,6 +311,9 @@ def test_generate_time_series_equivalence(seed, test_case):
         f"Timestamps do not match for test case: {params['name']}"
     )
 
+    # Transpose to match [length, num_channels]
+    original_result["target"] = original_result["target"].T
+
     # Compare values/target
     assert np.allclose(new_result["values"], original_result["target"], atol=1e-8), (
         f"Generated time series values do not match for test case: {params['name']}"
