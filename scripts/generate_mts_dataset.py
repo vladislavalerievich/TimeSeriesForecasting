@@ -7,28 +7,29 @@ if __name__ == "__main__":
     generator = MultivariateTimeSeriesGenerator(global_seed=42)
 
     # Generate a single batch
-    batch = generator.generate_batch(
-        batch_size=64, history_length=128, target_length=64, num_channels=10
-    )
-    print("Batch shape:", batch.shape)  # Should be (64, 10, 128 + 64)
-    print("Batch dtype:", batch.dtype)  # Should be torch.float32
-    print("Batch device:", batch.device)  # Should be the same as the generator's device
+    # batch = generator.generate_batch(
+    #     batch_size=32, history_length=128, target_length=64, num_channels=10
+    # )
+    # print("Batch history_values shape:", batch.history_values.shape)
+    # print("Batch target_values shape:", batch.target_values.shape)
+    # print("Batch target_channels_indices shape:", batch.target_channels_indices.shape)
+    # print(
+    #     "Batch history_values dtype:", batch.history_values.dtype
+    # )  # Should be torch.float32
+    # print(
+    #     "Batch target_channels_indices dtype:", batch.target_channels_indices.dtype
+    # )  # Should be torch.int64
+    # print("Batch history_time_features shape:", batch.history_time_features.shape)
+    # print("Batch target_time_features shape:", batch.target_time_features.shape)
+    # print("Batch target_values device:", batch.target_values.device)
 
     # Generate and save a full dataset
     generator.save_dataset(
-        output_dir="synthetic_dataset",
-        num_batches=100,
-        batch_size=64,
-        min_history_length=64,
-        max_history_length=256,
-        min_target_length=32,
-        max_target_length=128,
-        fixed_num_channels=160,  # Fixed channel count
-        n_jobs=8,  # Use 8 CPU cores
+        output_dir="outputs/datasets/mts",
+        num_batches=10,
+        batch_size=5,
+        save_as_single_file=True,
+        num_cpus=1,
     )
 
-    # Use with PyTorch DataLoader
-    # dataset = MultivariateTimeSeriesDataset(
-    #     num_batches=100, batch_size=64, min_history_length=64, max_history_length=256
-    # )
-    # dataloader = torch.utils.data.DataLoader(dataset, batch_size=None)
+    print("Dataset saved successfully.")

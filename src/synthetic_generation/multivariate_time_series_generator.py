@@ -1,6 +1,7 @@
+import logging
 import multiprocessing
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Generator, List, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -9,6 +10,12 @@ from tqdm import tqdm
 
 from src.data_handling.data_containers import TimeSeriesDataContainer
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 class MultivariateTimeSeriesGenerator:
@@ -20,10 +27,10 @@ class MultivariateTimeSeriesGenerator:
     def __init__(
         self,
         global_seed: int = 42,
-        max_target_channels: int = 10,
         distribution_type: Literal["uniform", "log_uniform"] = "uniform",
         history_length: Union[int, Tuple[int, int]] = (64, 256),
         target_length: Union[int, Tuple[int, int]] = (32, 256),
+        max_target_channels: int = 10,
         num_channels: Union[int, Tuple[int, int]] = (1, 256),
         max_kernels: Union[int, Tuple[int, int]] = (1, 10),
         dirichlet_min: Union[float, Tuple[float, float]] = (0.1, 1.0),
@@ -40,14 +47,14 @@ class MultivariateTimeSeriesGenerator:
         ----------
         global_seed : int, optional
             Global random seed for reproducibility (default: 42).
-        max_target_channels : int, optional
-            Maximum number of target channels to randomly select (default: 10).
         distribution_type : str, optional
             Type of distribution to use for sampling parameters ("uniform" or "log_uniform", default: "uniform").
         history_length : Union[int, Tuple[int, int]], optional
             Fixed history length or range (min, max) (default: (64, 256)).
         target_length : Union[int, Tuple[int, int]], optional
             Fixed target length or range (min, max) (default: (32, 256)).
+        max_target_channels : int, optional
+            Maximum number of target channels to randomly select (default: 10).
         num_channels : Union[int, Tuple[int, int]], optional
             Fixed number of channels or range (min, max) (default: (1, 256)).
         max_kernels : Union[int, Tuple[int, int]], optional
@@ -341,6 +348,7 @@ class MultivariateTimeSeriesGenerator:
         """Helper function for parallel batch generation."""
         batch_index, params = args
         seed = self.global_seed + batch_index
+        logger.info(f"Generating batch {batch_index} with seed {seed}")
         return self.generate_batch(seed=seed, **params), batch_index
 
     def generate_dataset(
@@ -367,7 +375,8 @@ class MultivariateTimeSeriesGenerator:
             A tuple containing the TimeSeriesDataContainer and the batch index.
         """
         if num_cpus is None:
-            num_cpus = multiprocessing.cpu_count()
+            num_cpus = min(multiprocessing.cpu_count(), 8)  # Cap at 8 to avoid overload
+        logger.info(f"Using {num_cpus} CPUs for dataset generation")
 
         # Prepare batch parameters
         batch_params = []
@@ -405,8 +414,16 @@ class MultivariateTimeSeriesGenerator:
 
         # Generate batches in parallel
         with ProcessPoolExecutor(max_workers=num_cpus) as executor:
-            for result in executor.map(self._generate_batch_worker, batch_params):
-                yield result
+            futures = [
+                executor.submit(self._generate_batch_worker, args)
+                for args in batch_params
+            ]
+            for future in as_completed(futures):
+                try:
+                    yield future.result()
+                except Exception as e:
+                    logger.error(f"Error in batch generation: {e}")
+                    raise
 
     def save_dataset(
         self,
@@ -415,7 +432,7 @@ class MultivariateTimeSeriesGenerator:
         batch_size: int,
         save_as_single_file: bool = False,
         num_cpus: Optional[int] = None,
-        chunk_size: int = None,  # Process datasets in chunks to save memory
+        chunk_size: Optional[int] = None,
     ) -> None:
         """
         Generate and save a dataset to disk using a memory-efficient streaming approach.
@@ -431,12 +448,16 @@ class MultivariateTimeSeriesGenerator:
         save_as_single_file : bool, optional
             If True, save all batches in a single file (default: False).
         num_cpus : int, optional
-            Number of parallel CPUs for batch generation. If None, use all available CPUs (default: None).
+            Number of parallel CPUs for batch generation (default: None, uses min(cpu_count, 8)).
         chunk_size : int, optional
-            Number of batches to process at once when saving as a single file (default: 100).
-            Smaller values use less memory but may be slower.
+            Number of batches to process at once in single-file mode (default: 10).
         """
         os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving dataset to {output_dir} with {num_batches} batches")
+
+        if num_cpus is None:
+            num_cpus = min(multiprocessing.cpu_count(), 8)
+        logger.info(f"Using {num_cpus} CPUs for saving dataset")
 
         if save_as_single_file:
             # Path for the combined dataset file
@@ -444,12 +465,13 @@ class MultivariateTimeSeriesGenerator:
 
             # Check if chunk_size is provided, otherwise set a default
             if chunk_size is None:
-                chunk_size = batch_size * 10
+                chunk_size = min(10, num_batches)  # Default to 10 or num_batches
 
             # For very large datasets, process in chunks to avoid memory issues
             for chunk_start in range(0, num_batches, chunk_size):
                 chunk_end = min(chunk_start + chunk_size, num_batches)
                 chunk_size_actual = chunk_end - chunk_start
+                logger.info(f"Processing chunk {chunk_start} to {chunk_end - 1}")
 
                 print(f"Processing batches {chunk_start} to {chunk_end - 1}...")
 
@@ -457,27 +479,19 @@ class MultivariateTimeSeriesGenerator:
                 chunk_batches = []
                 chunk_indices = []
 
-                for batch, batch_idx in tqdm(
-                    self.generate_dataset(
+                with tqdm(
+                    total=chunk_size_actual,
+                    desc=f"Generating chunk {(chunk_start // chunk_size) + 1}/{(num_batches + chunk_size - 1) // chunk_size}",
+                ) as pbar:
+                    for batch, batch_idx in self.generate_dataset(
                         num_batches=chunk_size_actual,
                         batch_size=batch_size,
                         num_cpus=num_cpus,
-                    ),
-                    total=chunk_size_actual,
-                    desc=f"Generating chunk {chunk_start // chunk_size + 1}/{(num_batches + chunk_size - 1) // chunk_size}",
-                ):
-                    # Adjust batch index to account for chunking
-                    adjusted_batch_idx = batch_idx + chunk_start
-                    chunk_batches.append(batch)
-                    chunk_indices.append(adjusted_batch_idx)
-
-                    # Option: save individual batches as well
-                    if not save_as_single_file:
-                        batch_path = os.path.join(
-                            output_dir, f"batch_{adjusted_batch_idx:03d}.pt"
-                        )
-                        torch.save(batch, batch_path)
-
+                    ):
+                        adjusted_batch_idx = batch_idx + chunk_start
+                        chunk_batches.append(batch)
+                        chunk_indices.append(adjusted_batch_idx)
+                        pbar.update(1)
                 # Sort this chunk's batches by index
                 sorted_indices = np.argsort(chunk_indices)
                 sorted_chunk_batches = [chunk_batches[i] for i in sorted_indices]
@@ -493,8 +507,7 @@ class MultivariateTimeSeriesGenerator:
                         combined_data = existing_data + sorted_chunk_batches
                         torch.save(combined_data, combined_file_path)
                     except Exception as e:
-                        print(f"Error appending to dataset file: {e}")
-                        # Save this chunk separately as fallback
+                        logger.error(f"Error appending to dataset file: {e}")
                         chunk_file = os.path.join(
                             output_dir, f"dataset_chunk_{chunk_start // chunk_size}.pt"
                         )
@@ -511,16 +524,34 @@ class MultivariateTimeSeriesGenerator:
                 import gc
 
                 gc.collect()
+                logger.info(f"Completed chunk {chunk_start} to {chunk_end - 1}")
         else:
             # Save individual batches without collecting them all in memory
-            for batch, batch_idx in tqdm(
-                self.generate_dataset(
-                    num_batches=num_batches, batch_size=batch_size, num_cpus=num_cpus
-                ),
-                total=num_batches,
-                desc="Generating and saving batches",
-            ):
+            def save_batch(batch, batch_idx, output_dir):
                 batch_path = os.path.join(output_dir, f"batch_{batch_idx:03d}.pt")
                 torch.save(batch, batch_path)
+                logger.info(f"Saved batch {batch_idx} to {batch_path}")
 
-        print(f"Dataset saved to {output_dir}")
+            with ThreadPoolExecutor(max_workers=num_cpus) as executor:
+                futures = []
+                with tqdm(
+                    total=num_batches, desc="Generating and saving batches"
+                ) as pbar:
+                    for batch, batch_idx in self.generate_dataset(
+                        num_batches=num_batches,
+                        batch_size=batch_size,
+                        num_cpus=num_cpus,
+                    ):
+                        futures.append(
+                            executor.submit(save_batch, batch, batch_idx, output_dir)
+                        )
+                        pbar.update(1)
+
+                    for future in as_completed(futures):
+                        try:
+                            future.result()  # Ensure any exceptions are raised
+                        except Exception as e:
+                            logger.error(f"Error saving batch: {e}")
+                            raise
+
+        logger.info(f"Dataset saved to {output_dir}")

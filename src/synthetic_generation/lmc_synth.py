@@ -190,8 +190,7 @@ class LMCSynthGenerator:
 
             # Sample number of latent functions from Weibull distribution
             latent_num = np.rint(
-                np.random.weibull(self.weibull_shape, self.weibull_scale) * self.scale
-                + 1
+                np.random.weibull(self.weibull_shape, size=self.length) * self.scale + 1
             )
             latent_num = np.clip(
                 latent_num, max(2, self.num_channels // 20), self.num_channels
