@@ -196,58 +196,36 @@ class MultivariateTimeSeriesGenerator:
             dtype=torch.float32,
         )
 
-        # Convert timestamps to time features (for now just use raw timestamps)
+        # Split timestamps
         history_timestamps = timestamps[:, :history_length]
         target_timestamps = timestamps[
             :, history_length : history_length + target_length
         ]
 
-        # Convert timestamps to float tensor (later will be replaced with sine/cosine encoding)
-        # Convert datetime64 to float by subtracting the minimum timestamp
+        # Vectorized timestamp normalization (days since minimum timestamp)
+        min_timestamp = timestamps[:, 0].min()
         history_time_features = torch.tensor(
-            np.array(
-                [
-                    (ts - timestamps[:, 0].min()) / np.timedelta64(1, "D")
-                    for ts in history_timestamps
-                ]
-            ),
+            (history_timestamps - min_timestamp) / np.timedelta64(1, "D"),
             dtype=torch.float32,
-        ).reshape(batch_size, history_length, 1)
-
+        )[:, :, None]  # Shape: (batch_size, history_length, 1)
         target_time_features = torch.tensor(
-            np.array(
-                [
-                    (ts - timestamps[:, 0].min()) / np.timedelta64(1, "D")
-                    for ts in target_timestamps
-                ]
-            ),
+            (target_timestamps - min_timestamp) / np.timedelta64(1, "D"),
             dtype=torch.float32,
-        ).reshape(batch_size, target_length, 1)
+        )[:, :, None]  # Shape: (batch_size, target_length, 1)
 
         # Randomly select the number of target channels (between 1 and max_target_channels)
         num_targets = min(np.random.randint(1, max_target_channels + 1), num_channels)
 
-        # Randomly select target channels indices (same indices for all series in the batch)
+        # Randomly select target channels indices (same for all series in the batch)
         target_indices = torch.tensor(
             np.random.choice(num_channels, size=num_targets, replace=False),
             dtype=torch.long,
         ).expand(batch_size, -1)
 
-        # Extract target values based on selected indices
-        target_values = torch.zeros(
-            (batch_size, target_length, num_targets), dtype=torch.float32
-        )
-        print("history_values shape:", history_values.shape)
-        print("future_values shape:", future_values.shape)
-        print("target_indices shape:", target_indices.shape)
-        print("target_values shape:", target_values.shape)
-        print("Sample target_indices[0]:", target_indices[0])
-        print(
-            "future_values[0, :, target_indices[0]] shape:",
-            future_values[0, :, target_indices[0]].shape,
-        )
-        for i in range(batch_size):
-            target_values[i] = future_values[i, :, target_indices[i]]
+        # Vectorized indexing for target values
+        target_values = future_values[
+            :, :, target_indices[0]
+        ]  # Shape: (batch_size, target_length, num_targets)
 
         return TimeSeriesDataContainer(
             history_values=history_values,
@@ -341,7 +319,7 @@ class MultivariateTimeSeriesGenerator:
                 random_seed=seed + i if seed is not None else None,
                 periodicity=periodicity,
             )
-            batch_values.append(result["values"])
+            batch_values.append(result["values"])  # Shape: (total_length, num_channels)
             batch_timestamps.append(result["timestamps"])
 
         # Convert to numpy arrays
@@ -403,7 +381,7 @@ class MultivariateTimeSeriesGenerator:
             dirichlet_max = self._parse_param_value(self.dirichlet_max, is_int=False)
             scale = self._parse_param_value(self.scale, is_int=False)
             weibull_shape = self._parse_param_value(self.weibull_shape, is_int=False)
-            weibull_scale = self._parse_param_value(self.weibull_scale, is_int=False)
+            weibull_scale = self._parse_param_value(self.weibull_scale, is_int=True)
             periodicity = np.random.choice(self.periodicities)
 
             # Ensure dirichlet_min < dirichlet_max

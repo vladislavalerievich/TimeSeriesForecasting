@@ -27,7 +27,7 @@ class LMCSynthGenerator:
         dirichlet_max: float = 2.0,
         scale: float = 1.0,
         weibull_shape: float = 2.0,
-        weibull_scale: float = 1,
+        weibull_scale: int = 1,
     ):
         """
         Initialize the LMC Synthetic Data Generator.
