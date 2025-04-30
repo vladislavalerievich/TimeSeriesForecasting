@@ -72,6 +72,41 @@ class MultivariateTimeSeriesGenerator:
         periodicities : List[str], optional
             List of possible periodicities to sample from (default: ["s", "m", "h", "D", "W"]).
         """
+
+        # Ensure that for every tuple parameter, the min value is less than the max value
+        tuple_params = {
+            "history_length": history_length,
+            "target_length": target_length,
+            "num_channels": num_channels,
+            "max_kernels": max_kernels,
+            "dirichlet_min": dirichlet_min,
+            "dirichlet_max": dirichlet_max,
+            "scale": scale,
+            "weibull_shape": weibull_shape,
+            "weibull_scale": weibull_scale,
+        }
+
+        for param_name, param_value in tuple_params.items():
+            if isinstance(param_value, tuple):
+                min_val, max_val = param_value
+                if min_val > max_val:
+                    raise ValueError(
+                        f"For parameter '{param_name}', the minimum value ({min_val}) "
+                        f"cannot exceed the maximum value ({max_val})"
+                    )
+
+        # Validate max_target_channels
+        if isinstance(num_channels, tuple):
+            if max_target_channels > max(num_channels):
+                raise ValueError(
+                    f"max_target_channels ({max_target_channels}) cannot exceed the maximum value of num_channels ({max(num_channels)})"
+                )
+        else:
+            if max_target_channels > num_channels:
+                raise ValueError(
+                    f"max_target_channels ({max_target_channels}) cannot exceed num_channels ({num_channels})"
+                )
+
         self.global_seed = global_seed
         self.max_target_channels = max_target_channels
         self.distribution_type = distribution_type
@@ -471,9 +506,8 @@ class MultivariateTimeSeriesGenerator:
             for chunk_start in range(0, num_batches, chunk_size):
                 chunk_end = min(chunk_start + chunk_size, num_batches)
                 chunk_size_actual = chunk_end - chunk_start
-                logger.info(f"Processing chunk {chunk_start} to {chunk_end - 1}")
 
-                print(f"Processing batches {chunk_start} to {chunk_end - 1}...")
+                logger.info(f"Processing batches {chunk_start} to {chunk_end - 1}...")
 
                 # Generate and collect batches for this chunk
                 chunk_batches = []
