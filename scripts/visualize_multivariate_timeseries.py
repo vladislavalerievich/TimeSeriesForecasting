@@ -1,7 +1,7 @@
 import logging
 import os
 
-from src.data_handling.plot_multivariate_timeseries_sample import (
+from src.plotting.plot_multivariate_timeseries_sample import (
     plot_multivariate_timeseries_sample,
 )
 from src.synthetic_generation.multivariate_time_series_generator import (

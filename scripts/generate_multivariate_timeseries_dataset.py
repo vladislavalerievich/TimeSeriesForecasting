@@ -12,7 +12,7 @@ if __name__ == "__main__":
         num_batches=100,
         batch_size=64,
         save_as_single_file=False,
-        num_cpus=12,
+        num_cpus=16,
     )
 
     print("Dataset saved successfully.")
