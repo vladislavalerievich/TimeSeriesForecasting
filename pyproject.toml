@@ -1,0 +1,55 @@
+[project]
+name = "timeseries_forecasting"
+version = "0.1.0"
+description = "Multivariate Time Series Forecasting Using Linear RNNs"
+authors = [
+    { name = "Vladyslav Moroshan" },
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9,<3.13"
+
+dependencies = [
+    "numpy",
+    "torch>=2.5.0,<2.6.0",
+    "matplotlib",
+    "tqdm",
+    "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention@main",
+    "wandb",
+    
+]
+
+[project.optional-dependencies]
+dev = [
+    # -- deploy --
+    "build",
+    # -- ci --
+    "pre-commit",
+    "pytest>=8",
+    "ruff",
+    "mypy",
+    "commitizen",    
+    "black",                # Allows mkdocstrings to do formatting...
+]
+
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: POSIX",
+    "Operating System :: Unix",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+ 
+[build-system]
+requires = ["setuptools>=68.2.2", "wheel>=0.41.2"]
+build-backend = "setuptools.build_meta"
+
+package-dir = {"" = "src"}

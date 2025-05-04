@@ -181,7 +181,7 @@ class BaseModel(nn.Module):
         full_embedded = self.concat_target([embedded, target])
 
         result = self.forecast(full_embedded, prediction_length)
-        # TODO apply rescaling to the result
+        # TODO apply rescaling to the resul if needed
         return {"result": result, "scale": med_scale}
 
     def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
