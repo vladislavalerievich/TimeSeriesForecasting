@@ -77,21 +77,6 @@ class CustomScaling(nn.Module):
         return self.scaler(history_channels, epsilon)
 
 
-class PositionExpansion(nn.Module):
-    def __init__(self, periods: int, freqs: int):
-        super().__init__()
-        # Channels could be ceiling(log_2(periods))
-        self.periods = periods
-        self.channels = freqs * 2
-        self.embedding = torch.tensor(position_encoding(periods, freqs), device=device)
-
-    def forward(self, tc: torch.Tensor):
-        flat = tc.view(1, -1)
-        embedded = self.embedding.index_select(0, flat.flatten().to(torch.long))
-        out_shape = tc.shape
-        return embedded.view(out_shape[0], out_shape[1], self.channels)
-
-
 class SMAPEMetric(torchmetrics.Metric):
     def __init__(self, eps=1e-7):
         super().__init__(dist_sync_on_step=False)
