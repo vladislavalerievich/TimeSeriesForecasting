@@ -923,7 +923,7 @@ class MultivariateTimeSeriesGenerator:
             Number of batches to process at once (default: min(10, num_batches)).
         """
         # Path for the combined dataset file
-        combined_file_path = os.path.join(output_dir, "dataset1.pt")
+        combined_file_path = os.path.join(output_dir, "dataset.pt")
 
         # Set default chunk size if not provided
         if chunk_size is None:
