@@ -1,3 +1,12 @@
+history_len: 96
+min_seq_len: 96
+max_seq_len: 96
+pred_len_sample: false
+sample_multi_pred: 0.5
+pred_len_min: 32
+pred_len: 64
+num_ts_features: 7 
+
 step_wave_config:
   num_steps_range: [2, 10]
   height_range: [-2.0, 2.0]

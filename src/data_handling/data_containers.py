@@ -86,6 +86,29 @@ class StaticFeaturesDataContainer:
         else:
             return concatenated
 
+    def to_device(self, device: torch.device) -> None:
+        """
+        Move all tensors in the StaticFeaturesDataContainer to the specified device in place.
+
+        Args:
+            device: The target device (e.g., 'cpu', 'cuda').
+
+        Raises:
+            TypeError: If any tensor attribute is not a torch.Tensor.
+            RuntimeError: If device transfer fails for any tensor.
+        """
+        # Move required tensor attributes
+        self.mean = self.mean.to(device)
+        self.std = self.std.to(device)
+        self.median = self.median.to(device)
+        self.min_val = self.min_val.to(device)
+        self.max_val = self.max_val.to(device)
+        self.autocorr_lag1 = self.autocorr_lag1.to(device)
+
+        # Move optional tensor attribute if it exists
+        if self.trend_slope is not None:
+            self.trend_slope = self.trend_slope.to(device)
+
 
 @dataclass
 class TimeSeriesDataContainer:
@@ -98,23 +121,16 @@ class TimeSeriesDataContainer:
         target_values: Tensor of future observations to predict.
             Shape: [batch_size, pred_len, num_targets]
         target_channels_indices: Tensor mapping target_values columns back to
-            the original channel indices in history_values. Essential for
-            multivariate forecasting where only a subset of channels might be targets.
-            Prevents the model from guessing.
+            the original channel indices in history_values.
             Shape: [batch_size, num_targets]
         history_time_features: Tensor of time-derived features for the history timestamps window.
-            Examples: hour_of_day, day_of_week, month_of_year (often cyclically encoded).
-            Crucial for models to understand temporal context and seasonality.
             Shape: [batch_size, seq_len, num_time_features]
         target_time_features: Tensor of time-derived features for the prediction timestamps window.
-            These are *known* future features.
             Shape: [batch_size, pred_len, num_time_features]
-        static_features: Optional tensor of features that are constant over time for each series
-            in the batch. Examples: Base Sampling Frequency,  Statistical Properties (Mean, Std Dev), etc.
+        static_features: Optional StaticFeaturesDataContainer of features constant over time.
             Shape: [batch_size, num_static_features, num_static_features_per_channel]
         history_mask: Optional boolean/float tensor indicating valid (1/True) vs padded (0/False)
-            entries in history_values/history_time_features. Essential for handling
-            variable length sequences or missing data within the history.
+            entries in history_values/history_time_features.
             Shape: [batch_size, seq_len]
         target_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
             target values.
@@ -125,8 +141,8 @@ class TimeSeriesDataContainer:
     target_values: torch.Tensor
     target_channels_indices: torch.Tensor
 
-    history_time_features: Optional[torch.Tensor]
-    target_time_features: Optional[torch.Tensor]
+    history_time_features: Optional[torch.Tensor] = None
+    target_time_features: Optional[torch.Tensor] = None
 
     static_features: Optional[StaticFeaturesDataContainer] = None
 
@@ -218,3 +234,30 @@ class TimeSeriesDataContainer:
                 raise ValueError(
                     f"Shape mismatch in target_mask: expected {(batch_size, pred_len)} or {self.target_values.shape}, got {self.target_mask.shape}"
                 )
+
+    def to_device(self, device: torch.device) -> None:
+        """
+        Move all tensors in the TimeSeriesDataContainer to the specified device in place.
+
+        Args:
+            device: The target device (e.g., 'cpu', 'cuda').
+
+        Raises:
+            TypeError: If any tensor attribute is not a torch.Tensor or if static_features
+                is not a StaticFeaturesDataContainer.
+            RuntimeError: If device transfer fails for any tensor.
+        """
+        # Move required tensor attributes
+        self.history_values = self.history_values.to(device)
+        self.target_values = self.target_values.to(device)
+        self.target_channels_indices = self.target_channels_indices.to(device)
+        self.history_time_features = self.history_time_features.to(device)
+        self.target_time_features = self.target_time_features.to(device)
+
+        # Move optional tensor attributes if they exist
+        if self.static_features is not None:
+            self.static_features.to_device(device)
+        if self.history_mask is not None:
+            self.history_mask = self.history_mask.to(device)
+        if self.target_mask is not None:
+            self.target_mask = self.target_mask.to(device)
