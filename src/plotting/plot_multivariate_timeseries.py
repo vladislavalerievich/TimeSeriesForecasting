@@ -1,37 +1,45 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.figure import Figure
 
-from src.data_handling.data_containers import TimeSeriesDataContainer
 
-
-def plot_multivariate_timeseries_sample(
-    ts_data: TimeSeriesDataContainer,
-    sample_idx: int = 0,
+def plot_multivariate_timeseries(
+    history_values: np.ndarray,
+    history_time_features: Optional[np.ndarray] = None,
+    target_values: Optional[np.ndarray] = None,
+    target_time_features: Optional[np.ndarray] = None,
+    target_channels_indices: Optional[np.ndarray] = None,
+    predicted_values: Optional[np.ndarray] = None,
     channel_indices: Optional[List[int]] = None,
     max_channels: int = 5,
     figsize: Tuple[int, int] = (12, 6),
     title: str = "Multivariate Time Series",
-    show_target: bool = True,
-    use_colors: bool = True,
     output_file: Optional[str] = None,
     dpi: int = 300,
     show: bool = True,
-    grid: bool = True,
-    linestyle_history: str = "-",
-    linestyle_target: str = "--",
 ) -> Figure:
     """
-    Plot multiple channels of a multivariate time series from a TimeSeriesDataContainer.
+    Plot multiple channels of a multivariate time series with history and optional targets/predictions.
 
     Parameters
     ----------
-    ts_data : TimeSeriesDataContainer
-        The time series data to plot.
-    sample_idx : int
-        Index of the sample in the batch to plot.
+    history_values : np.ndarray
+        Historical values with shape [seq_len, num_channels]
+    history_time_features : np.ndarray, optional
+        Time features for history values with shape [seq_len, num_time_features]
+        First column is used as timestamp.
+    target_values : np.ndarray, optional
+        Target values with shape [pred_len, num_targets]
+    target_time_features : np.ndarray, optional
+        Time features for target values with shape [pred_len, num_time_features]
+        First column is used as timestamp.
+    target_channels_indices : np.ndarray, optional
+        Indices mapping target columns to history channels with shape [num_targets]
+    predicted_values : np.ndarray, optional
+        Model's predicted values with shape [pred_len, num_targets]
     channel_indices : List[int], optional
         Indices of channels to plot. If None, plots up to max_channels.
     max_channels : int
@@ -40,44 +48,23 @@ def plot_multivariate_timeseries_sample(
         Figure size in inches.
     title : str
         Title for the plot.
-    show_target : bool
-        Whether to plot target values.
-    use_colors : bool
-        Whether to use different colors for each channel.
     output_file : str, optional
         Path to save the plot, if provided.
     dpi : int
         DPI for saved figure.
     show : bool
         Whether to display the plot.
-    grid : bool
-        Whether to show a grid.
-    linestyle_history : str
-        Line style for history values (e.g., "-", "--", ":").
-    linestyle_target : str
-        Line style for target values.
 
     Returns
     -------
     Figure
         The matplotlib figure object.
     """
-    # Validate inputs
-    if not isinstance(ts_data, TimeSeriesDataContainer):
-        raise ValueError("ts_data must be a TimeSeriesDataContainer")
-    batch_size = ts_data.history_values.shape[0]
-    if not 0 <= sample_idx < batch_size:
-        raise ValueError(f"sample_idx must be between 0 and {batch_size - 1}")
-
-    # Extract data for the specified sample
-    history_values = ts_data.history_values[sample_idx].detach().cpu().numpy()
-    history_time = (
-        ts_data.history_time_features[sample_idx, :, 0].detach().cpu().numpy()
-        if ts_data.history_time_features is not None
-        else np.arange(history_values.shape[0])
-    )
-
+    # Validate and prepare inputs
+    history_values = np.asarray(history_values)
     num_channels = history_values.shape[1]
+
+    # Set up channel indices to plot
     if channel_indices is None:
         channel_indices = list(range(min(num_channels, max_channels)))
     else:
@@ -86,44 +73,29 @@ def plot_multivariate_timeseries_sample(
                 f"channel_indices must be between 0 and {num_channels - 1}"
             )
 
-    # Handle target data
-    target_values = None
+    # Set up time values
+    if history_time_features is not None:
+        history_time = history_time_features[:, 0]
+    else:
+        history_time = np.arange(history_values.shape[0])
+
+    # Set up target time if available
     target_time = None
-    target_channel_map = None
-    if show_target:
-        if ts_data.target_values is None or ts_data.target_channels_indices is None:
-            raise ValueError("Target values or indices missing when show_target=True")
-        target_values = ts_data.target_values[sample_idx].detach().cpu().numpy()
-        target_time = (
-            ts_data.target_time_features[sample_idx, :, 0].detach().cpu().numpy()
-            if ts_data.target_time_features is not None
-            else np.arange(
-                history_values.shape[0],
-                history_values.shape[0] + target_values.shape[0],
-            )
+    if target_values is not None and target_time_features is not None:
+        target_time = target_time_features[:, 0]
+    elif target_values is not None:
+        target_time = np.arange(
+            history_values.shape[0],
+            history_values.shape[0] + target_values.shape[0],
         )
-        target_channel_indices = (
-            ts_data.target_channels_indices[sample_idx].detach().cpu().numpy()
-        )
-        # Map target indices to history channels
-        target_channel_map = {
-            i: idx
-            for i, idx in enumerate(target_channel_indices)
-            if idx in channel_indices
-        }
 
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Plot each selected channel
-    colors = (
-        plt.cm.tab10(np.linspace(0, 1, len(channel_indices)))
-        if use_colors
-        else [None] * len(channel_indices)
-    )
+    # Plot each selected channel's history
     for i, channel_idx in enumerate(channel_indices):
         label = f"Channel {channel_idx}"
-        color = colors[i] if use_colors else f"C{(i % 10)}"
+        color = f"C{i % 10}"  # Use matplotlib's default color cycle
 
         # Plot history
         ax.plot(
@@ -131,28 +103,40 @@ def plot_multivariate_timeseries_sample(
             history_values[:, channel_idx],
             label=label,
             color=color,
-            linestyle=linestyle_history,
+            linestyle="-",  # Always solid line for history
         )
 
-        # Plot target if available and channel is a target
+        # Plot target if available and this channel is a target
         if (
-            show_target
-            and target_values is not None
-            and channel_idx in target_channel_map.values()
+            target_values is not None
+            and target_channels_indices is not None
+            and target_time is not None
+            and channel_idx in target_channels_indices
         ):
-            target_idx = next(
-                k for k, v in target_channel_map.items() if v == channel_idx
-            )
+            # Find which target index corresponds to this channel
+            target_idx = np.where(target_channels_indices == channel_idx)[0][0]
+
+            # Plot actual target with solid line
             ax.plot(
                 target_time,
                 target_values[:, target_idx],
                 color=color,
-                linestyle=linestyle_target,
-                label=f"{label} (Target)" if not use_colors else None,
+                linestyle="-",  # Solid line for actual values
+                label=f"{label} (Target)",
             )
 
-    # Add target region separator and shading
-    if show_target and target_time is not None:
+            # Plot predictions if available
+            if predicted_values is not None:
+                ax.plot(
+                    target_time,
+                    predicted_values[:, target_idx],
+                    color=color,
+                    linestyle="--",  # Dashed line for predictions
+                    label=f"{label} (Predicted)",
+                )
+
+    # Add history/target separator
+    if target_time is not None:
         ax.axvline(
             x=history_time[-1],
             color="red",
@@ -169,12 +153,11 @@ def plot_multivariate_timeseries_sample(
         )
 
     # Set title and labels
-    ax.set_title(f"{title} (Sample {sample_idx})")
-    ax.set_xlabel("Normalized Time (Days)")
+    ax.set_title(title)
+    ax.set_xlabel("Time")
     ax.set_ylabel("Value")
     ax.legend(loc="best")
-    if grid:
-        ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3)
 
     # Adjust layout
     plt.tight_layout()
@@ -189,3 +172,69 @@ def plot_multivariate_timeseries_sample(
         plt.show()
 
     return fig
+
+
+def plot_from_container(
+    ts_data,
+    sample_idx: int = 0,
+    predicted_values: Optional[np.ndarray] = None,
+    **kwargs,
+) -> Figure:
+    """
+    Helper function to plot from a TimeSeriesDataContainer.
+
+    Parameters
+    ----------
+    ts_data : TimeSeriesDataContainer
+        The time series data container.
+    sample_idx : int
+        Index of the sample in the batch to plot.
+    predicted_values : np.ndarray, optional
+        Model's predicted values with shape [batch_size, pred_len, num_targets]
+        If provided, will extract the predictions for sample_idx.
+    **kwargs :
+        Additional arguments to pass to plot_multivariate_timeseries.
+
+    Returns
+    -------
+    Figure
+        The matplotlib figure object.
+    """
+    # Extract data for the specified sample
+    history_values = ts_data.history_values[sample_idx].detach().cpu().numpy()
+
+    history_time_features = None
+    if ts_data.history_time_features is not None:
+        history_time_features = (
+            ts_data.history_time_features[sample_idx].detach().cpu().numpy()
+        )
+
+    target_values = None
+    if ts_data.target_values is not None:
+        target_values = ts_data.target_values[sample_idx].detach().cpu().numpy()
+
+    target_time_features = None
+    if ts_data.target_time_features is not None:
+        target_time_features = (
+            ts_data.target_time_features[sample_idx].detach().cpu().numpy()
+        )
+
+    target_channels_indices = None
+    if ts_data.target_channels_indices is not None:
+        target_channels_indices = (
+            ts_data.target_channels_indices[sample_idx].detach().cpu().numpy()
+        )
+
+    pred_values = None
+    if predicted_values is not None:
+        pred_values = predicted_values[sample_idx].detach().cpu().numpy()
+
+    return plot_multivariate_timeseries(
+        history_values=history_values,
+        history_time_features=history_time_features,
+        target_values=target_values,
+        target_time_features=target_time_features,
+        target_channels_indices=target_channels_indices,
+        predicted_values=pred_values,
+        **kwargs,
+    )

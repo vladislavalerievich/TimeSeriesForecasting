@@ -19,6 +19,7 @@ if __name__ == "__main__":
         batch_size=64,
         save_as_single_file=True,
         num_cpus=16,
+        chunk_size=16,
     )
 
     print("Dataset saved successfully.")

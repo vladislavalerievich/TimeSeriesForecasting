@@ -10,7 +10,6 @@ import torch
 from tqdm import tqdm
 
 from src.data_handling.data_containers import TimeSeriesDataContainer
-from src.data_handling.utils import compute_time_features
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
 
 # Configure logging
@@ -304,7 +303,7 @@ class MultivariateTimeSeriesGenerator:
         target_timestamps: np.ndarray,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Prepare time features using the compute_time_features function.
+        Prepare time features by normalizing timestamps.
 
         Parameters
         ----------
@@ -318,28 +317,19 @@ class MultivariateTimeSeriesGenerator:
         Tuple[torch.Tensor, torch.Tensor]
             Tuple containing (history_time_features, target_time_features).
         """
-        # Determine if we need sub-day features based on periodicity
-        subday = any(p in self.periodicities for p in ["s", "m", "h"])
+        # Get minimum timestamp for normalization
+        min_timestamp = np.min(history_timestamps[:, 0])
 
-        # Reshape timestamps to flatten batch dimension for computation
-        batch_size, history_len = history_timestamps.shape
-        batch_size, target_len = target_timestamps.shape
+        # Normalize timestamps (days since min_timestamp)
+        history_time_features = torch.tensor(
+            (history_timestamps - min_timestamp) / np.timedelta64(1, "D"),
+            dtype=torch.float32,
+        )[:, :, None]  # Shape: (batch_size, history_length, 1)
 
-        # Reshape to 1D arrays for compute_time_features
-        flat_history_ts = history_timestamps.reshape(-1)
-        flat_target_ts = target_timestamps.reshape(-1)
-
-        # Compute time features
-        history_features = compute_time_features(flat_history_ts, include_subday=subday)
-        target_features = compute_time_features(flat_target_ts, include_subday=subday)
-
-        # Reshape back to original batch dimensions
-        history_features = history_features.reshape(batch_size, history_len, -1)
-        target_features = target_features.reshape(batch_size, target_len, -1)
-
-        # Convert to torch tensors
-        history_time_features = torch.tensor(history_features, dtype=torch.float32)
-        target_time_features = torch.tensor(target_features, dtype=torch.float32)
+        target_time_features = torch.tensor(
+            (target_timestamps - min_timestamp) / np.timedelta64(1, "D"),
+            dtype=torch.float32,
+        )[:, :, None]  # Shape: (batch_size, target_length, 1)
 
         return history_time_features, target_time_features
 

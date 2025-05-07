@@ -1,9 +1,9 @@
 import logging
 import os
 
-from src.plotting.plot_multivariate_timeseries import (
-    plot_multivariate_timeseries_sample,
-)
+import torch
+
+from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.synthetic_generation.multivariate_time_series_generator import (
     MultivariateTimeSeriesGenerator,
 )
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def visualize_batch_samples(
-    batch_size: int = 10,
+    batch_size: int = 1,
     history_length: int = 128,
     target_length: int = 64,
     num_channels: int = 5,
@@ -53,8 +53,14 @@ def visualize_batch_samples(
         target_length=target_length,
         num_channels=num_channels,
     )
-    logger.info(f"Generated batch with {batch_size} samples")
-
+    logger.info(f"Batch history values shape: {batch.history_values.shape}")
+    logger.info(f"Batch target values shape: {batch.target_values.shape}")
+    logger.info(f"Batch target indices shape: {batch.target_channels_indices.shape}")
+    logger.info(
+        f"Batch history time features shape: {batch.history_time_features.shape}"
+    )
+    logger.info(f"Batch target time features shape: {batch.target_time_features.shape}")
+    logger.info(f"Batch history time features values: {batch.history_time_features[0]}")
     # Validate batch size
     if batch.history_values.shape[0] != batch_size:
         raise ValueError(
@@ -65,7 +71,7 @@ def visualize_batch_samples(
     for sample_idx in range(batch_size):
         output_file = os.path.join(output_dir, f"sample_{sample_idx:03d}.png")
         try:
-            plot_multivariate_timeseries_sample(
+            plot_from_container(
                 ts_data=batch,
                 sample_idx=sample_idx,
                 output_file=output_file,
@@ -78,5 +84,59 @@ def visualize_batch_samples(
             raise
 
 
+def visualize_saved_batch(
+    batch_path: str = "outputs/datasets/mts/batch_000.pt",
+    output_dir: str = "outputs/plots/",
+    sample_idx: int = 0,
+    show: bool = False,
+) -> None:
+    """
+    Load a saved batch file and visualize a specific sample.
+
+    Parameters
+    ----------
+    batch_path : str
+        Path to the saved batch file.
+    output_dir : str
+        Directory to save the plots.
+    sample_idx : int
+        Index of the sample to visualize.
+    show : bool
+        Whether to display the plot.
+    """
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Saving plots to {output_dir}")
+
+    # Load batch file
+    try:
+        logger.info(f"Loading batch from {batch_path}")
+        batch = torch.load(batch_path)
+        logger.info(f"Loaded batch with {batch.history_values.shape[0]} samples")
+    except Exception as e:
+        logger.error(f"Failed to load batch from {batch_path}: {e}")
+        raise
+
+    # Visualize specific sample
+    output_file = os.path.join(output_dir, f"saved_sample_{sample_idx:03d}.png")
+    try:
+        # Visualize the sample
+        plot_from_container(
+            ts_data=batch,
+            sample_idx=sample_idx,
+            output_file=output_file,
+            show=show,
+            title=f"Saved Multivariate Time Series (Sample {sample_idx})",
+        )
+        logger.info(f"Saved plot for sample {sample_idx} to {output_file}")
+    except Exception as e:
+        logger.error(f"Failed to save plot for sample {sample_idx}: {e}")
+        raise
+
+
 if __name__ == "__main__":
+    # Visualize synthetic samples
     visualize_batch_samples()
+
+    # Load and visualize the first sample from a saved batch
+    visualize_saved_batch()
