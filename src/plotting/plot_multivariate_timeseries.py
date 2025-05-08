@@ -19,6 +19,7 @@ def plot_multivariate_timeseries(
     output_file: Optional[str] = None,
     dpi: int = 300,
     show: bool = True,
+    timestamp_index: int = 0,
 ) -> Figure:
     """
     Plot multiple channels of a multivariate time series with history and optional targets/predictions.
@@ -29,12 +30,12 @@ def plot_multivariate_timeseries(
         Historical values with shape [seq_len, num_channels]
     history_time_features : np.ndarray, optional
         Time features for history values with shape [seq_len, num_time_features]
-        First column is used as timestamp.
+        The column specified by timestamp_index is used as timestamp.
     target_values : np.ndarray, optional
         Target values with shape [pred_len, num_targets]
     target_time_features : np.ndarray, optional
         Time features for target values with shape [pred_len, num_time_features]
-        First column is used as timestamp.
+        The column specified by timestamp_index is used as timestamp.
     target_channels_indices : np.ndarray, optional
         Indices mapping target columns to history channels with shape [num_targets]
     predicted_values : np.ndarray, optional
@@ -53,6 +54,8 @@ def plot_multivariate_timeseries(
         DPI for saved figure.
     show : bool
         Whether to display the plot.
+    timestamp_index : int
+        Index of the column in *_time_features to use as the timestamp (default: 0).
 
     Returns
     -------
@@ -74,14 +77,14 @@ def plot_multivariate_timeseries(
 
     # Set up time values
     if history_time_features is not None:
-        history_time = history_time_features[:, 0]
+        history_time = history_time_features[:, timestamp_index]
     else:
         history_time = np.arange(history_values.shape[0])
 
     # Set up target time if available
     target_time = None
     if target_values is not None and target_time_features is not None:
-        target_time = target_time_features[:, 0]
+        target_time = target_time_features[:, timestamp_index]
     elif target_values is not None:
         target_time = np.arange(
             history_values.shape[0],
@@ -226,7 +229,17 @@ def plot_from_container(
 
     pred_values = None
     if predicted_values is not None:
-        pred_values = predicted_values[sample_idx].detach().cpu().numpy()
+        import torch
+
+        if isinstance(predicted_values, torch.Tensor):
+            pred_values = predicted_values[sample_idx].detach().cpu().numpy()
+        else:
+            # If predicted_values is a numpy array or scalar, handle accordingly
+            # If it's a batch, index it; if not, use as is
+            try:
+                pred_values = predicted_values[sample_idx]
+            except Exception:
+                pred_values = predicted_values
 
     return plot_multivariate_timeseries(
         history_values=history_values,

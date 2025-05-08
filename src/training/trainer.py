@@ -59,7 +59,6 @@ class TrainingPipeline:
         self.scheduler = None
         self.criterion = None
         self.train_loader = None
-        self.val_data = None  # Fixed validation batch
         self.initial_epoch = 0
 
         # Initialize the synthetic data generator
@@ -211,24 +210,38 @@ class TrainingPipeline:
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Scale target values based on configured scaler."""
         if self.config["scaler"] == "min_max":
-            max_scale = output["scale"][0]
-            min_scale = output["scale"][1]
-            scaled_target = (target - min_scale) / (max_scale - min_scale)
-            return scaled_target, max_scale, min_scale
+            max_scale = output["scale_params"][0]  # [batch_size, 1, num_channels]
+            min_scale = output["scale_params"][1]
+            target_indices = output["target_indices"]  # [batch_size, num_targets]
+            max_targets = torch.gather(
+                max_scale, 2, target_indices.unsqueeze(1)
+            ).expand(-1, target.shape[1], -1)
+            min_targets = torch.gather(
+                min_scale, 2, target_indices.unsqueeze(1)
+            ).expand(-1, target.shape[1], -1)
+            scaled_target = (target - min_targets) / (max_targets - min_targets)
+            return scaled_target, max_targets, min_targets
         else:
-            mean = output["scale"][0]
-            std = output["scale"][1]
-            scaled_target = (target - mean) / std
-            return scaled_target, mean, std
+            mean = output["scale_params"][0]  # [batch_size, 1, num_channels]
+            std = output["scale_params"][1]
+            target_indices = output["target_indices"]  # [batch_size, num_targets]
+            mean_targets = torch.gather(mean, 2, target_indices.unsqueeze(1)).expand(
+                -1, target.shape[1], -1
+            )
+            std_targets = torch.gather(std, 2, target_indices.unsqueeze(1)).expand(
+                -1, target.shape[1], -1
+            )
+            scaled_target = (target - mean_targets) / std_targets
+            return scaled_target, mean_targets, std_targets
 
     def _inverse_scale(self, output: torch.Tensor, scale_params: Tuple) -> torch.Tensor:
         """Inverse scale model predictions."""
         if self.config["scaler"] == "min_max":
-            max_scale, min_scale = scale_params
-            return (output * (max_scale - min_scale)) + min_scale
+            max_targets, min_targets = scale_params
+            return (output * (max_targets - min_targets)) + min_targets
         else:
-            mean, std = scale_params
-            return (output * std) + mean
+            mean_targets, std_targets = scale_params
+            return (output * std_targets) + mean_targets
 
     def _prepare_batch(
         self, batch: TimeSeriesDataContainer
@@ -264,6 +277,7 @@ class TrainingPipeline:
                     predicted_values=pred_future,
                     title=f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})",
                     output_file=None,
+                    show=False,
                 )
                 if self.config["wandb"]:
                     wandb.log({f"val_plot_{i}": wandb.Image(fig)})
@@ -274,6 +288,8 @@ class TrainingPipeline:
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
     ) -> None:
         """Update metric calculations."""
+        predictions = predictions.contiguous()
+        targets = targets.contiguous()
         for metric in metrics.values():
             metric.update(predictions, targets)
 

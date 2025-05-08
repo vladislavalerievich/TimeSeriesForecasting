@@ -56,7 +56,6 @@ class SimpleRMSNorm(nn.Module):
         >>> simple_rms_norm = SimpleRMSNorm(dim=512)
         >>> simple_rms_norm(x).shape
         torch.Size([1, 10, 512])
-
     """
 
     def __init__(self, dim):

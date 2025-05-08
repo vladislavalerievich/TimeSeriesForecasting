@@ -168,26 +168,6 @@ class BaseModel(nn.Module):
         Returns:
             Dictionary with model outputs
         """
-        print("Forward pass through BaseModel")
-        print(
-            "Data container history_values shape:", data_container.history_values.shape
-        )
-        print(
-            "Data container target_values shape:",
-            data_container.target_values.shape,
-        )
-        print(
-            "Data container target_channels_indices shape:",
-            data_container.target_channels_indices.shape,
-        )
-        print(
-            "Data container target_channels_indices shape:",
-            data_container.target_channels_indices.shape,
-        )
-        print(
-            "Data container target_time_features shape:",
-            data_container.target_time_features.shape,
-        )
         history_values = data_container.history_values
         target_values = data_container.target_values
         target_channels_indices = data_container.target_channels_indices
@@ -411,52 +391,65 @@ class MultiStepModel(BaseModel):
                 .repeat(1, prediction_length, 1)
             )
 
-        # Process target embeddings
-        target_embedded = target_embedded.permute(0, 2, 1, 3)
+        # target_embedded: [batch_size, seq_len, num_targets, embed_size]
+        target_embedded = target_embedded.permute(
+            0, 2, 1, 3
+        )  # [batch_size, num_targets, seq_len, embed_size]
+
+        # Flatten batch and targets dimensions for processing
         target_embedded = target_embedded.reshape(
             batch_size * num_targets, seq_len, self.embed_size
         )
 
-        x = self.input_projection_layer(target_embedded)
+        x = self.input_projection_layer(
+            target_embedded
+        )  # [batch_size * num_targets, seq_len, token_embed_dim]
 
-        # Pass through encoder layers
+        # Pass through encoder layers (keeping the flattened shape)
         for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)
+            x = encoder_layer(x)  # [batch_size * num_targets, seq_len, token_embed_dim]
 
-        # Reshape back to separate batch and targets
+        # Now reshape back to separate batch and targets
         x = x.reshape(batch_size, num_targets, seq_len, -1)
 
-        # Apply normalization and activation if needed
+        # Apply normalization and activation
         if self.use_gelu and self.initial_gelu is not None:
             x = self.input_projection_norm(x)
             x = self.initial_gelu(x)
 
-        # Extract the target-specific representations for only the target channels
-        target_pos_embed_for_targets = torch.zeros(
-            batch_size,
-            prediction_length,
-            num_targets,
-            self.embed_size,
-            device=target_pos_embed.device,
-        )
+        # Get target-specific representations
+        batch_indices = torch.arange(batch_size, device=device).view(-1, 1)
+        target_pos_embed_selected = target_pos_embed[
+            batch_indices, :, target_channels_indices
+        ]  # [batch_size, pred_len, num_targets, embed_size]
+        # But this will give [batch_size, pred_len, num_targets, embed_size] if you use advanced indexing
 
-        # For each batch and target, select the correct channel's positional embedding
-        for b in range(batch_size):
-            for t in range(num_targets):
-                channel_idx = target_channels_indices[b, t].long()
-                target_pos_embed_for_targets[b, :, t, :] = target_pos_embed[
-                    b, :, channel_idx, :
-                ]
+        # If needed, permute to [batch_size, num_targets, pred_len, embed_size] for consistency
+        target_pos_embed_selected = target_pos_embed_selected.permute(
+            0, 2, 1, 3
+        )  # [batch_size, num_targets, pred_len, embed_size]
 
-        # Apply target projection to the correct positional embeddings
-        target_repr = self.target_projection(target_pos_embed_for_targets)
+        # Now project
+        target_repr = self.target_projection(
+            target_pos_embed_selected
+        )  # [batch_size, num_targets, pred_len, token_embed_dim]
 
-        # Extract the predictions portion and add target representation
-        predictions = self.final_output_layer(
-            x[:, :, -prediction_length:, :] + target_repr
-        )  # [batch_size, num_targets, pred_len, 1]
+        # Permute to [batch_size, num_targets, pred_len, token_embed_dim] if not already
+        # Now, x is [batch_size, num_targets, pred_len, token_embed_dim]
+        # So you can add and predict:
+        x_sliced = x[
+            :, :, -prediction_length:, :
+        ]  # [batch_size, num_targets, pred_len, token_embed_dim]
+        if x_sliced.shape != target_repr.shape:
+            # Try permuting target_repr
+            if x_sliced.shape == target_repr.permute(0, 2, 1, 3).shape:
+                target_repr = target_repr.permute(0, 2, 1, 3)
+            else:
+                raise ValueError(
+                    f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
+                )
+        predictions = self.final_output_layer(x_sliced + target_repr)
 
-        # Reshape to expected output format [batch_size, pred_len, num_targets]
+        # Squeeze and permute to [batch_size, pred_len, num_targets]
         predictions = predictions.squeeze(-1).permute(0, 2, 1)
-
         return predictions
