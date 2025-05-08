@@ -4,13 +4,6 @@ import random
 import numpy as np
 import torch
 import torchmetrics
-from torch import nn
-
-from src.data_handling.scalers import (
-    custom_scaler_robust,
-    identity_scaler,
-    min_max_scaler,
-)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,26 +25,6 @@ def generate_model_save_name(config):
         f"num_epochs_{config['num_epochs']}_"
         f"initial_lr{config['initial_lr']}_"
         f"learning_rate_{config['learning_rate']}_"
-        f"context_len{config['context_len']}_"
-        f"min_seq_len{config['min_seq_len']}_"
-        f"max_seq_len{config['max_seq_len']}_"
-        f"pred_len{config['pred_len']}_"
-        f"pred_len_min{config['pred_len_min']}_"
-    )
-
-
-def position_encoding(periods: int, freqs: int):
-    return np.hstack(
-        [
-            np.fromfunction(
-                lambda i, j: np.sin(np.pi / periods * (2**j) * (i - 1)),
-                (periods + 1, freqs),
-            ),
-            np.fromfunction(
-                lambda i, j: np.cos(np.pi / periods * (2**j) * (i - 1)),
-                (periods + 1, freqs),
-            ),
-        ]
     )
 
 
@@ -61,20 +34,6 @@ def avoid_constant_inputs(inputs, outputs):
     ).squeeze(1)
     if idx_const_in.size(0) > 0:
         inputs[idx_const_in, 0] += np.random.uniform(0.1, 1)
-
-
-class CustomScaling(nn.Module):
-    def __init__(self, name):
-        super().__init__()
-        if name == "custom_robust":
-            self.scaler = custom_scaler_robust
-        elif name == "min_max":
-            self.scaler = min_max_scaler
-        else:
-            self.scaler = identity_scaler
-
-    def forward(self, history_channels, epsilon):
-        return self.scaler(history_channels, epsilon)
 
 
 class SMAPEMetric(torchmetrics.Metric):

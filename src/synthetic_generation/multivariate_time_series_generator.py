@@ -10,6 +10,7 @@ import torch
 from tqdm import tqdm
 
 from src.data_handling.data_containers import TimeSeriesDataContainer
+from src.data_handling.utils import compute_time_features
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
 
 # Configure logging
@@ -297,42 +298,6 @@ class MultivariateTimeSeriesGenerator:
 
         return history_values, future_values, history_timestamps, target_timestamps
 
-    def _prepare_time_features(
-        self,
-        history_timestamps: np.ndarray,
-        target_timestamps: np.ndarray,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Prepare time features by normalizing timestamps.
-
-        Parameters
-        ----------
-        history_timestamps : np.ndarray
-            History timestamps.
-        target_timestamps : np.ndarray
-            Target timestamps.
-
-        Returns
-        -------
-        Tuple[torch.Tensor, torch.Tensor]
-            Tuple containing (history_time_features, target_time_features).
-        """
-        # Get minimum timestamp for normalization
-        min_timestamp = np.min(history_timestamps[:, 0])
-
-        # Normalize timestamps (days since min_timestamp)
-        history_time_features = torch.tensor(
-            (history_timestamps - min_timestamp) / np.timedelta64(1, "D"),
-            dtype=torch.float32,
-        )[:, :, None]  # Shape: (batch_size, history_length, 1)
-
-        target_time_features = torch.tensor(
-            (target_timestamps - min_timestamp) / np.timedelta64(1, "D"),
-            dtype=torch.float32,
-        )[:, :, None]  # Shape: (batch_size, target_length, 1)
-
-        return history_time_features, target_time_features
-
     def _select_target_channels(
         self,
         batch_size: int,
@@ -421,8 +386,11 @@ class MultivariateTimeSeriesGenerator:
         )
 
         # Prepare time features
-        history_time_features, target_time_features = self._prepare_time_features(
-            history_timestamps, target_timestamps
+        history_time_features = compute_time_features(
+            history_timestamps, include_subday=True
+        )
+        target_time_features = compute_time_features(
+            target_timestamps, include_subday=True
         )
 
         # Select target channels

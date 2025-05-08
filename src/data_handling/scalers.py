@@ -1,53 +1,5 @@
 import torch
-from torch.nn import Module
-
-
-def identity_scaler(inputs, epsilon):
-    return torch.ones_like(inputs[:, 0:1]), inputs
-
-
-def custom_scaler_robust(inputs, epsilon, q_low=0.25, q_high=0.75, clamp=None):
-    # Define a helper function to compute median and IQR excluding NaNs
-    def compute_median_iqr(tensor):
-        # Median
-        median = tensor.nanmedian(dim=1).values
-
-        # IQR (Interquartile Range)
-        q1 = torch.nanquantile(tensor, q_low, dim=1)
-        q3 = torch.nanquantile(tensor, q_high, dim=1)
-        iqr = q3 - q1
-
-        return median, iqr
-
-    medians, iqrs = compute_median_iqr(inputs)
-
-    # Ensure IQR is not zero to avoid division by zero
-    iqrs = iqrs + epsilon
-
-    # Reshape medians and iqrs to match the input shape for broadcasting
-    medians = medians.view(-1, 1, 1)
-    iqrs = iqrs.view(-1, 1, 1)
-    # print(medians.shape, iqrs.shape, inputs_with_nans.shape)
-    # Perform robust scaling
-    inputs_scaled = (inputs - medians) / iqrs
-
-    # Replace NaNs back to 0s if needed
-    inputs_scaled = torch.where(
-        torch.isnan(inputs_scaled), torch.tensor(0.0), inputs_scaled
-    )
-    if clamp is not None:
-        inputs_scaled = torch.clamp(inputs_scaled, -clamp, clamp)
-    return (medians, iqrs), inputs_scaled.to(torch.float32)
-
-
-def min_max_scaler(inputs, epsilon):
-    scale = [
-        torch.max(inputs, dim=1, keepdim=True)[0] + epsilon,
-        torch.min(inputs, dim=1, keepdim=True)[0] - epsilon,
-    ]
-    scale = torch.stack(scale, dim=0)
-    output = (inputs - scale[1]) / (scale[0] - scale[1])
-    return scale, output.to(torch.float32)
+import torch.nn as nn
 
 
 def custom_scaler_robust_multivariate(
@@ -87,7 +39,7 @@ def custom_scaler_robust_multivariate(
         batch_iqrs = q3 - q1
 
         # Ensure IQR is not zero
-        batch_iqrs = batch_iqrs + epsilon
+        batch_iqrs = torch.clamp(batch_iqrs, min=epsilon)
 
         # Store scaling parameters
         medians[:, 0, c] = batch_medians
@@ -139,15 +91,17 @@ def min_max_scaler_multivariate(inputs, epsilon):
         channel_values = inputs[:, :, c]
 
         # Get max and min for each batch sample
-        batch_max = torch.max(channel_values, dim=1, keepdim=True)[0] + epsilon
-        batch_min = torch.min(channel_values, dim=1, keepdim=True)[0] - epsilon
+        batch_max = torch.max(channel_values, dim=1, keepdim=True)[0]
+        batch_min = torch.min(channel_values, dim=1, keepdim=True)[0]
+
+        # Ensure range is not zero
+        range_values = torch.clamp(batch_max - batch_min, min=epsilon)
 
         # Store scaling parameters
         max_values[:, 0, c] = batch_max.squeeze(1)
         min_values[:, 0, c] = batch_min.squeeze(1)
 
         # Apply scaling
-        range_values = batch_max - batch_min
         scaled_channel = (channel_values - batch_min) / range_values
 
         # Handle NaN values
@@ -163,7 +117,71 @@ def min_max_scaler_multivariate(inputs, epsilon):
     return (max_values, min_values), inputs_scaled.to(torch.float32)
 
 
-class CustomScalingMultivariate(Module):
+def rescale_custom_robust(predictions, scale_params, target_indices):
+    """
+    Rescale predictions using the custom robust scaling parameters.
+
+    Args:
+        predictions: Tensor of shape [batch_size, pred_len, num_targets]
+        scale_params: Tuple of (medians, iqrs) as returned by custom_scaler_robust_multivariate
+        target_indices: Tensor of shape [batch_size, num_targets] mapping predictions to original channels
+
+    Returns:
+        Rescaled predictions with shape [batch_size, pred_len, num_targets]
+    """
+    medians, iqrs = scale_params
+    batch_size, pred_len, num_targets = predictions.shape
+
+    # Rescale predictions
+    rescaled = torch.zeros_like(predictions)
+
+    for b in range(batch_size):
+        for t in range(num_targets):
+            # Get the original channel index for this target
+            channel_idx = target_indices[b, t].item()
+
+            # Rescale using the appropriate parameters
+            rescaled[b, :, t] = (
+                predictions[b, :, t] * iqrs[b, 0, channel_idx]
+                + medians[b, 0, channel_idx]
+            )
+
+    return rescaled
+
+
+def rescale_min_max(predictions, scale_params, target_indices):
+    """
+    Rescale predictions using the min-max scaling parameters.
+
+    Args:
+        predictions: Tensor of shape [batch_size, pred_len, num_targets]
+        scale_params: Tuple of (max_values, min_values) as returned by min_max_scaler_multivariate
+        target_indices: Tensor of shape [batch_size, num_targets] mapping predictions to original channels
+
+    Returns:
+        Rescaled predictions with shape [batch_size, pred_len, num_targets]
+    """
+    max_values, min_values = scale_params
+    batch_size, pred_len, num_targets = predictions.shape
+
+    # Rescale predictions
+    rescaled = torch.zeros_like(predictions)
+
+    for b in range(batch_size):
+        for t in range(num_targets):
+            # Get the original channel index for this target
+            channel_idx = target_indices[b, t].item()
+
+            # Rescale using the appropriate parameters
+            range_value = max_values[b, 0, channel_idx] - min_values[b, 0, channel_idx]
+            rescaled[b, :, t] = (
+                predictions[b, :, t] * range_value + min_values[b, 0, channel_idx]
+            )
+
+    return rescaled
+
+
+class CustomScalingMultivariate(nn.Module):
     """
     Custom scaling module for multivariate time series data.
     """
@@ -180,8 +198,7 @@ class CustomScalingMultivariate(Module):
         elif name == "min_max":
             self.scaler = min_max_scaler_multivariate
         else:
-            # Identity scaler as fallback
-            self.scaler = lambda x, eps: (torch.ones_like(x[:, 0:1, :]), x)
+            raise ValueError(f"Unknown scaler name: {name}")
 
     def forward(self, values, epsilon):
         return self.scaler(values, epsilon)

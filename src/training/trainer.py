@@ -1,37 +1,54 @@
 import argparse
+import logging
 import os
-import pprint
 import time
 from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchmetrics
 import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
+from plotting.plot_multivariate_timeseries import plot_from_container
 from src.data_handling.data_containers import TimeSeriesDataContainer
 from src.models.models import MultiStepModel
-from src.synthetic_generation.plot_uts import (
-    plot_synthetic_function,  # Todo update the function
-)
-from src.synthetic_generation.synthetic_generation_mts import (
-    generate_fixed_multivariate_batch as generate_fixed_synthetic_batch,
-)
-from src.synthetic_generation.synthetic_generation_mts import (
-    train_val_loader,
+from src.synthetic_generation.multivariate_time_series_generator import (
+    MultivariateTimeSeriesGenerator,
 )
 from src.utils.utils import (
     SMAPEMetric,
-    avoid_constant_inputs,
     device,
     generate_model_save_name,
     seed_everything,
 )
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+class SyntheticDataset(IterableDataset):
+    def __init__(self, generator, batch_size, num_batches):
+        self.generator = generator
+        self.batch_size = batch_size
+        self.num_batches = num_batches
+
+    def __iter__(self):
+        for _ in range(self.num_batches):
+            yield self.generator.generate_batch(
+                batch_size=self.batch_size,
+                history_length=96,
+                target_length=96,
+                num_channels=160,
+                max_target_channels=2,
+            )
 
 
 class TrainingPipeline:
@@ -43,22 +60,35 @@ class TrainingPipeline:
         self.scheduler = None
         self.criterion = None
         self.train_loader = None
-        self.val_loader = None
+        self.val_data = None  # Fixed validation batch
         self.initial_epoch = 0
-        self.fixed_val_data = generate_fixed_synthetic_batch(
-            config, batch_size=config["num_val_samples_to_plot"]
+
+        # Initialize the synthetic data generator
+        self.generator = MultivariateTimeSeriesGenerator(
+            global_seed=42,
+            history_length=96,
+            target_length=96,
+            max_target_channels=2,
+            num_channels=160,
         )
 
-        print("Initializing training pipeline...")
-        print(pprint.pformat(config))
+        # Generate fixed validation batch
+        self.val_data = self.generator.generate_batch(
+            batch_size=64,
+            seed=42,
+            history_length=96,
+            target_length=96,
+            num_channels=160,
+            max_target_channels=2,
+        )
+
+        logger.info("Initializing training pipeline...")
+        logger.info(f"Config: {yaml.dump(config)}")
         self._setup()
 
     def _setup(self) -> None:
         """Setup model, optimizer, scheduler, and data loaders."""
         seed_everything(self.config["seed"])
-
-        # Determine CPU usage
-        available_cpus = 1 if self.config["debugging"] else os.cpu_count()
 
         # Initialize model
         self.model = MultiStepModel(
@@ -75,10 +105,13 @@ class TrainingPipeline:
         self.config["model_save_name"] = generate_model_save_name(self.config)
         self._load_checkpoint()
 
-        # Load data
-        self.train_loader, self.val_loader = train_val_loader(
-            config=self.config, cpus_available=available_cpus
+        # Setup training data loader with synthetic data
+        synthetic_dataset = SyntheticDataset(
+            self.generator,
+            batch_size=self.config["batch_size"],
+            num_batches=self.config["num_training_iterations_per_epoch"],
         )
+        self.train_loader = DataLoader(synthetic_dataset, batch_size=None)
 
         # Setup loss function
         self._setup_loss_function()
@@ -126,16 +159,16 @@ class TrainingPipeline:
         }
 
     def _setup_wandb(self):
-        # Initialize wandb if enabled
+        """Initialize wandb if enabled."""
         if self.config["wandb"]:
             try:
                 self.run = wandb.init(
-                    project="Sine Wave Experiments",
+                    project="TimeSeriesForecasting",
                     config=self.config,
                     name=self.config["model_save_name"],
                 )
             except Exception as e:
-                print(f"WandB initialization failed: {e}")
+                logger.error(f"WandB initialization failed: {e}")
                 self.config["wandb"] = False
 
     def _load_checkpoint(self) -> None:
@@ -144,9 +177,7 @@ class TrainingPipeline:
             f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth"
         )
         if self.config["continue_training"] and os.path.exists(checkpoint_path):
-            print(
-                f"Loading previous training states from: {self.config['model_save_name']}"
-            )
+            logger.info(f"Loading checkpoint from: {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location=self.device)
             self.model.load_state_dict(ckpt["model_state_dict"])
             self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
@@ -154,7 +185,7 @@ class TrainingPipeline:
                 self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
             self.initial_epoch = ckpt["epoch"]
         else:
-            print("No previous training states found, starting fresh")
+            logger.info("No previous training states found, starting fresh")
 
     def _save_checkpoint(self, epoch: int) -> None:
         """Save model checkpoint."""
@@ -170,25 +201,20 @@ class TrainingPipeline:
             ckpt,
             f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth",
         )
+        logger.info(f"Checkpoint saved at epoch {epoch}")
 
     def _scale_target(
         self, target: torch.Tensor, output: Dict
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Scale target values based on configured scaler."""
         if self.config["scaler"] == "min_max":
-            # Extract scale values and ensure proper dimensions
-            max_scale = output["scale"][0]  # [batch_size, pred_len, 1]
-            min_scale = output["scale"][1]  # [batch_size, pred_len, 1]
-
-            # Scale target using min-max scaling, maintaining dimensions
+            max_scale = output["scale"][0]
+            min_scale = output["scale"][1]
             scaled_target = (target - min_scale) / (max_scale - min_scale)
             return scaled_target, max_scale, min_scale
         else:
-            # For other scalers (like standard)
-            mean = output["scale"][0]  # [batch_size, pred_len, 1]
-            std = output["scale"][1]  # [batch_size, pred_len, 1]
-
-            # Scale target using standardization, maintaining dimensions
+            mean = output["scale"][0]
+            std = output["scale"][1]
             scaled_target = (target - mean) / std
             return scaled_target, mean, std
 
@@ -201,52 +227,45 @@ class TrainingPipeline:
             mean, std = scale_params
             return (output * std) + mean
 
+    def _prepare_batch(
+        self, batch: TimeSeriesDataContainer
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Prepare batch data for model input."""
+        batch.to_device(self.device)
+        return batch, batch.target_values
+
     def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
         """Plot fixed validation examples and log to WandB."""
-        fixed_data, fixed_target = self._prepare_batch(self.fixed_val_data)
+        fixed_data = self.val_data
         with torch.no_grad():
+            fixed_data.to_device(self.device)
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                fixed_output = self.model(fixed_data, fixed_target.size(1))
-                _, *scale_params = self._scale_target(fixed_target, fixed_output)
+                fixed_output = self.model(fixed_data, fixed_data.target_values.size(1))
+                _, *scale_params = self._scale_target(
+                    fixed_data.target_values, fixed_output
+                )
                 inv_scaled_fixed_output = self._inverse_scale(
                     fixed_output["result"], scale_params
                 )
 
-            for i in range(fixed_data.history_values.shape[0]):
-                # Create a single-sample TimeSeriesData instance
-                sample_data = TimeSeriesData(
-                    history_ts=fixed_data.history_ts[i : i + 1],
-                    history_values=fixed_data.history_values[i : i + 1],
-                    target_ts=fixed_data.target_ts[i : i + 1],
-                    target_values=fixed_data.target_values[i : i + 1],
-                    task=fixed_data.task[i : i + 1],
+            for i in range(
+                min(
+                    self.config["num_val_samples_to_plot"],
+                    fixed_data.history_values.shape[0],
                 )
+            ):
                 pred_future = inv_scaled_fixed_output[i].cpu().numpy().squeeze(-1)
-
-                fig = plot_synthetic_function(
-                    data=sample_data,
-                    pred_future=pred_future,
+                fig = plot_from_container(
+                    ts_data=fixed_data,
+                    sample_idx=i,
+                    predicted_values=pred_future,
                     title=f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})",
                     output_file=None,
                 )
                 if self.config["wandb"]:
                     wandb.log({f"val_plot_{i}": wandb.Image(fig)})
-                plt.close(fig)  # Clean up after logging
-
-    def _prepare_batch(
-        self, batch: TimeSeriesData
-    ) -> Tuple[TimeSeriesData, torch.Tensor]:
-        """Prepare batch data for processing."""
-        prepared_batch = TimeSeriesData(
-            history_ts=batch.history_ts.to(self.device),
-            history_values=batch.history_values.to(self.device),
-            target_ts=batch.target_ts.to(self.device),
-            target_values=batch.target_values.to(self.device),
-            task=batch.task.to(self.device),
-        )
-        target = prepared_batch.target_values
-        avoid_constant_inputs(prepared_batch.history_values, target)
-        return prepared_batch, target
+                plt.close(fig)
+                logger.info(f"Plotted validation sample {i + 1} for epoch {epoch}")
 
     def _update_metrics(
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
@@ -260,7 +279,10 @@ class TrainingPipeline:
     ) -> None:
         """Log training progress."""
         avg_loss = running_loss / 10
-
+        logger.info(
+            f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, "
+            f"Batch Len: {self.config['batch_size']}, Sc. Loss: {avg_loss:.4f}"
+        )
         if self.config["wandb"]:
             wandb.log(
                 {
@@ -269,29 +291,10 @@ class TrainingPipeline:
                     "train/mse": self.train_metrics["mse"].compute(),
                     "train/smape": self.train_metrics["smape"].compute(),
                     "epoch": epoch,
-                    "step": epoch * self.config["training_rounds"] + batch_idx,
+                    "step": epoch * self.config["num_training_iterations_per_epoch"]
+                    + batch_idx,
                 }
             )
-
-    def _maybe_sample_prediction(
-        self, target: torch.Tensor, data: TimeSeriesData
-    ) -> Tuple[int, torch.Tensor, TimeSeriesData]:
-        """Randomly sample prediction length if configured."""
-        pred_len = target.size(1)
-        if self.config["sample_multi_pred"] > np.random.rand():
-            pred_limits = np.random.randint(4, pred_len + 1, 2)
-            start_pred, end_pred = min(pred_limits), max(pred_limits)
-            if end_pred == start_pred:
-                start_pred, end_pred = (
-                    (start_pred - 1, end_pred)
-                    if start_pred == pred_len
-                    else (start_pred, end_pred + 1)
-                )
-            pred_len = end_pred - start_pred
-            target = target[:, start_pred:end_pred].contiguous()
-            data.target_ts = data.target_ts[:, start_pred:end_pred].contiguous()
-            data.target_values = data.target_values[:, start_pred:end_pred].contiguous()
-        return pred_len, target, data
 
     def _train_epoch(self, epoch: int) -> float:
         """Train for one epoch."""
@@ -300,21 +303,14 @@ class TrainingPipeline:
         epoch_loss = 0.0
 
         for batch_idx, batch in enumerate(self.train_loader):
-            if batch_idx >= self.config["training_rounds"]:
+            if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
             data, target = self._prepare_batch(batch)
-            pred_len, target, data = self._maybe_sample_prediction(target, data)
-
             self.optimizer.zero_grad()
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                 output = self.model(
-                    data,
-                    pred_len,
-                    training=True,
-                    drop_enc_allow=(
-                        self.config["sample_multi_pred"] <= np.random.rand()
-                    ),
+                    data_container=data, training=True, drop_enc_allow=False
                 )
                 scaled_target, *scale_params = self._scale_target(target, output)
                 loss = self.criterion(output["result"], scaled_target.half())
@@ -331,47 +327,37 @@ class TrainingPipeline:
             epoch_loss += loss.item()
 
             if batch_idx % 10 == 9:
-                print(
-                    f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, Batch Len:{data.history_values.shape[0]}, Sc. Loss: {running_loss / 10:.4f}"
-                )
                 self._log_training_progress(epoch, batch_idx, running_loss)
                 running_loss = 0.0
 
-        return epoch_loss / min(batch_idx + 1, self.config["training_rounds"])
+        return epoch_loss / min(
+            batch_idx + 1, self.config["num_training_iterations_per_epoch"]
+        )
 
-    def _validate_epoch(self, epoch) -> float:
-        """Validate model for one epoch."""
+    def _validate_epoch(self, epoch: int) -> float:
+        """Validate model on the fixed synthetic validation batch."""
         self.model.eval()
         total_val_loss = 0.0
 
         with torch.no_grad():
-            for batch_idx, batch in enumerate(self.val_loader):
-                if batch_idx >= self.config["validation_rounds"]:
-                    break
+            data, target = self._prepare_batch(self.val_data)
+            pred_len = target.size(1)
+            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                output = self.model(data, pred_len)
+                scaled_target, *scale_params = self._scale_target(target, output)
+                val_loss = self.criterion(output["result"], scaled_target.half()).item()
+            total_val_loss = val_loss  # Single batch
+            inv_scaled_output = self._inverse_scale(output["result"], scale_params)
+            self._update_metrics(self.val_metrics, inv_scaled_output, target)
 
-                data, target = self._prepare_batch(batch)
-                pred_len = target.size(1)
-
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data, pred_len)
-                    scaled_target, *scale_params = self._scale_target(target, output)
-                    val_loss = self.criterion(
-                        output["result"], scaled_target.half()
-                    ).item()
-
-                total_val_loss += val_loss
-                inv_scaled_output = self._inverse_scale(output["result"], scale_params)
-                self._update_metrics(self.val_metrics, inv_scaled_output, target)
-
-        avg_val_loss = total_val_loss / min(
-            batch_idx + 1, self.config["validation_rounds"]
-        )
+        avg_val_loss = total_val_loss  # Since it's one batch
         self._plot_fixed_examples(epoch, avg_val_loss)
+        logger.info(f"Epoch {epoch + 1} Validation Loss: {avg_val_loss:.4f}")
         return avg_val_loss
 
     def train(self) -> None:
         """Execute the training pipeline."""
-        print("Starting training...")
+        logger.info("Starting training...")
 
         for epoch in range(self.initial_epoch, self.config["num_epochs"]):
             start_time = time.time()
@@ -403,9 +389,9 @@ class TrainingPipeline:
                     }
                 )
 
-            # Print epoch summary
+            # Epoch summary
             epoch_time = time.time() - start_time
-            print(f"Epoch: {epoch + 1}, Time: {epoch_time / 60:.2f} mins")
+            logger.info(f"Epoch: {epoch + 1}, Time: {epoch_time / 60:.2f} mins")
 
             # Reset metrics
             for metric_dict in [self.train_metrics, self.val_metrics]:
@@ -422,6 +408,7 @@ class TrainingPipeline:
 
         if self.config["wandb"]:
             wandb.finish()
+        logger.info("Training completed successfully.")
 
 
 if __name__ == "__main__":
@@ -435,13 +422,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     with open(args.config) as config_file:
-        config = yaml.load(config_file, yaml.loader.SafeLoader)
+        config = yaml.load(config_file, Loader=yaml.SafeLoader)
 
     os.environ["WANDB_MODE"] = "online" if config["wandb"] else "offline"
     pipeline = TrainingPipeline(config)
     pipeline.train()
-
-    if config["wandb"]:
-        wandb.finish()
-
-    print("Training completed successfully.")

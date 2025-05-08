@@ -10,7 +10,8 @@ lr_scheduler: cosine
 initial_lr: 0.00001
 learning_rate: 0.0000001
 loss: mse # mae
-scaler: robust
+scaler: custom_robust
+
 
 batch_size: 64
 num_epochs: 10
@@ -39,6 +40,7 @@ MultiStepModel:
 
 EncoderConfig:
   encoder_type: GatedDeltaNet
+  token_embed_dim: 1024 # Todo: remove duplicate
   num_layers: 2
   num_heads: 4  
   norm: true

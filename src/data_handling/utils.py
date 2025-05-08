@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import torch
 
 
 def compute_time_features(
@@ -11,17 +12,21 @@ def compute_time_features(
 
     Parameters
     ----------
-    timestamps : array-like
-        Array of timestamps.
+    timestamps : array-like, shape (batch_size, length)
+        2D array of timestamps.
     include_subday : bool, optional
         Whether to include hour, minute, second features (default: False).
 
     Returns
     -------
-    np.ndarray
-        Array of time features with shape (len(ts), n_features).
+    torch.Tensor
+        Tensor of time features with shape (batch_size, length, n_features).
     """
-    ts = pd.to_datetime(timestamps)
+    timestamps = np.asarray(timestamps)
+    batch_size, length = timestamps.shape
+    # Flatten to 1D for vectorized processing
+    flat_timestamps = timestamps.reshape(-1)
+    ts = pd.to_datetime(flat_timestamps)
     if include_subday:
         features = np.stack(
             [
@@ -46,4 +51,8 @@ def compute_time_features(
             ],
             axis=-1,
         )
-    return features
+    # Reshape back to (batch_size, length, n_features)
+    n_features = features.shape[-1]
+    features = features.reshape(batch_size, length, n_features)
+    # Convert to torch tensor (use long for integer features)
+    return torch.from_numpy(features).long()

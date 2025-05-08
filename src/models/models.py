@@ -1,18 +1,24 @@
-import numpy as np
 import torch
 import torch.nn as nn
 
+from src.data_handling.data_containers import TimeSeriesDataContainer
+from src.data_handling.scalers import CustomScalingMultivariate
 from src.models.blocks import (
     ConcatLayer,
     DilatedConv1dBlock,
     EncoderFactory,
+    PositionExpansion,
     SinPositionalEncoding,
 )
-from src.models.constants import DAY, DOW, HOUR, MINUTE, MONTH, NUM_TASKS, YEAR
-from src.utils.utils import CustomScaling, PositionExpansion, device
+from src.models.constants import DAY, DOW, HOUR, MINUTE, MONTH, YEAR
+from src.utils.utils import device
 
 
 class BaseModel(nn.Module):
+    """
+    Base model for multivariate time series forecasting with channel-specific positional encodings.
+    """
+
     def __init__(
         self,
         epsilon=1e-3,
@@ -24,13 +30,14 @@ class BaseModel(nn.Module):
         handle_constants_model=False,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__()
         assert encoding_dropout >= 0.0 and encoding_dropout <= 1.0
         self.epsilon = epsilon
-        # pos embeddings
         self.sub_day = sub_day
         self.encoding_dropout = encoding_dropout
         self.handle_constants_model = handle_constants_model
+
+        # Create position embeddings for time features
         if sub_day:
             self.pos_minute = PositionExpansion(60, 4)
             self.pos_hour = PositionExpansion(24, 6)
@@ -38,6 +45,8 @@ class BaseModel(nn.Module):
         self.pos_month = PositionExpansion(12, 4)
         self.pos_day = PositionExpansion(31, 6)
         self.pos_dow = PositionExpansion(7, 4)
+
+        # Calculate embedding size
         if sub_day:
             self.embed_size = sum(
                 emb.channels
@@ -55,158 +64,253 @@ class BaseModel(nn.Module):
                 emb.channels
                 for emb in (self.pos_year, self.pos_month, self.pos_day, self.pos_dow)
             )
-        # scaler
-        self.scaler = CustomScaling(scaler)
-        # time series initial embedding
-        self.expand_target_nopos = nn.Linear(1, self.embed_size, bias=True)
-        self.expand_target_nopos.name = "NoPosEnc"
-        self.expand_target_forpos = nn.Linear(1, self.embed_size, bias=True)
-        self.expand_target_forpos.name = "ForPosEnc"
-        # sinuosoidal positional encoding
+
+        # Create multivariate scaler
+        self.scaler = CustomScalingMultivariate(scaler)
+
+        # Initial embedding layers for time series values
+        self.expand_values = nn.Linear(1, self.embed_size, bias=True)
+
+        # Sinusoidal positional encoding
         self.sin_pos_encoder = None
         self.sin_pos_flag = sin_pos_enc
         if sin_pos_enc:
             self.sin_pos_encoder = SinPositionalEncoding(
                 d_model=self.embed_size, max_len=5000, sin_pos_const=sin_pos_const
             )
+
+        # Concatenation layers
         self.concat_pos = ConcatLayer(dim=-1, name="ConcatPos")
         self.concat_embed = ConcatLayer(dim=-1, name="ConcatEmbed")
-        self.concat_target = ConcatLayer(dim=1, name="AppendTarget")
-        self.target_marker = nn.Embedding(NUM_TASKS, self.embed_size)
+        self.concat_targets = ConcatLayer(dim=1, name="ConcatTargets")
 
     @staticmethod
-    def tc(ts: torch.Tensor, time_index: int):
-        return ts[:, :, time_index]
+    def tc(time_features: torch.Tensor, time_index: int):
+        """Extract a specific time feature from the time feature tensor."""
+        return time_features[:, :, time_index]
 
-    def forward(self, x, prediction_length=None, training=False, drop_enc_allow=False):
-        # drop enc allow is a flag to allow dropping of positional encodings as we use it in case of patching the preds so we can't drop the encodings
-        ts, history, target_dates, task = (
-            x["ts"],
-            x["history"],
-            x["target_dates"],
-            x["task"],
-        )
-        # Build position encodings
-        if self.handle_constants_model:
-            idx_const_in = torch.nonzero(
-                torch.all(history == history[:, 0].unsqueeze(1), dim=1)
-            ).squeeze(1)
-            if idx_const_in.size(0) > 0:
-                # not sure yet, to be tested
-                history[idx_const_in, 0] += np.random.uniform(0.1, 1)
+    def get_positional_embeddings(
+        self, time_features, reference_year=None, num_channels=1, drop_enc_allow=False
+    ):
+        """
+        Generate positional embeddings for time features, channel-specific if sin_pos_enc=True.
 
-        if (np.random.rand() < self.encoding_dropout) and training and drop_enc_allow:
-            pos_embedding = torch.zeros(
-                ts.shape[0], ts.shape[1], self.embed_size, device=device
-            ).to(torch.float32)
-            target_pos_embed = torch.zeros(
-                target_dates.shape[0],
-                target_dates.shape[1],
+        Args:
+            time_features: Time features tensor [batch_size, seq_len, num_time_features]
+            reference_year: Optional reference year for computing year delta
+            num_channels: Number of channels for channel-specific encodings
+            drop_enc_allow: Whether to allow dropout of encodings
+
+        Returns:
+            Positional embeddings tensor [batch_size, seq_len, num_channels, embed_size]
+        """
+        batch_size, seq_len, _ = time_features.shape
+        if (torch.rand(1).item() < self.encoding_dropout) and drop_enc_allow:
+            return torch.zeros(
+                batch_size,
+                seq_len,
+                num_channels,
                 self.embed_size,
                 device=device,
             ).to(torch.float32)
+
+        if self.sin_pos_flag and self.sin_pos_encoder is not None:
+            # Generate channel-specific sinusoidal encodings
+            return self.sin_pos_encoder(time_features, num_channels).to(torch.float32)
+
+        # Using custom time feature embeddings
+        year = self.tc(time_features, YEAR)
+        if reference_year is not None:
+            delta_year = torch.clamp(
+                reference_year - year, min=0, max=self.pos_year.periods
+            )
         else:
-            if self.sin_pos_flag:
-                input_total = torch.concatenate([history, task], dim=1)
-                total_pos_embedding = self.sin_pos_encoder(input_total).to(
-                    torch.float32
-                )
-                pos_embedding = total_pos_embedding[:, : history.shape[1]]
-                target_pos_embed = total_pos_embedding[:, history.shape[1] :]
-            else:
-                year = self.tc(ts, YEAR)
-                delta_year = torch.clamp(
-                    year[:, -1:] - year, min=0, max=self.pos_year.periods
-                )
-                target_year = torch.clamp(
-                    year[:, -1:] - self.tc(target_dates, YEAR),
-                    min=0,
-                    max=self.pos_year.periods,
-                )
+            delta_year = torch.zeros_like(year)
 
-                if self.sub_day:
-                    pos_embedding = self.concat_pos(
-                        [
-                            self.pos_minute(self.tc(ts, MINUTE)),
-                            self.pos_hour(self.tc(ts, HOUR)),
-                            self.pos_year(delta_year),
-                            self.pos_month(self.tc(ts, MONTH)),
-                            self.pos_day(self.tc(ts, DAY)),
-                            self.pos_dow(self.tc(ts, DOW)),
-                        ]
-                    ).to(torch.float32)
+        if self.sub_day:
+            pos_embedding = self.concat_pos(
+                [
+                    self.pos_minute(self.tc(time_features, MINUTE)),
+                    self.pos_hour(self.tc(time_features, HOUR)),
+                    self.pos_year(delta_year),
+                    self.pos_month(self.tc(time_features, MONTH)),
+                    self.pos_day(self.tc(time_features, DAY)),
+                    self.pos_dow(self.tc(time_features, DOW)),
+                ]
+            ).to(torch.float32)
+        else:
+            pos_embedding = self.concat_pos(
+                [
+                    self.pos_year(delta_year),
+                    self.pos_month(self.tc(time_features, MONTH)),
+                    self.pos_day(self.tc(time_features, DAY)),
+                    self.pos_dow(self.tc(time_features, DOW)),
+                ]
+            ).to(torch.float32)
 
-                    target_pos_embed = self.concat_pos(
-                        [
-                            self.pos_minute(self.tc(target_dates, MINUTE)),
-                            self.pos_hour(self.tc(target_dates, HOUR)),
-                            self.pos_year(target_year),
-                            self.pos_month(self.tc(target_dates, MONTH)),
-                            self.pos_day(self.tc(target_dates, DAY)),
-                            self.pos_dow(self.tc(target_dates, DOW)),
-                        ]
-                    ).to(torch.float32)
+        # Expand to channel dimension
+        return pos_embedding.unsqueeze(2).expand(-1, -1, num_channels, -1)
 
-                else:
-                    pos_embedding = self.concat_pos(
-                        [
-                            self.pos_year(delta_year),
-                            self.pos_month(self.tc(ts, MONTH)),
-                            self.pos_day(self.tc(ts, DAY)),
-                            self.pos_dow(self.tc(ts, DOW)),
-                        ]
-                    ).to(torch.float32)
+    def forward(
+        self,
+        data_container: TimeSeriesDataContainer,
+        training=False,
+        drop_enc_allow=False,
+    ):
+        """
+        Forward pass through the model.
 
-                    target_pos_embed = self.concat_pos(
-                        [
-                            self.pos_year(target_year),
-                            self.pos_month(self.tc(target_dates, MONTH)),
-                            self.pos_day(self.tc(target_dates, DAY)),
-                            self.pos_dow(self.tc(target_dates, DOW)),
-                        ]
-                    ).to(torch.float32)
+        Args:
+            data_container: TimeSeriesDataContainer with history and target data
+            training: Whether in training mode
+            drop_enc_allow: Whether to allow dropping encodings
 
-        # Embed history
-        history_channels = history.unsqueeze(-1)
-        med_scale, scaled = self.scaler(history_channels, self.epsilon)
-
-        embed_nopos = self.expand_target_nopos(scaled)
-        embed_pos = (self.expand_target_forpos(scaled) + pos_embedding).to(
-            torch.float32
+        Returns:
+            Dictionary with model outputs
+        """
+        print("Forward pass through BaseModel")
+        print(
+            "Data container history_values shape:", data_container.history_values.shape
         )
-        embedded = self.concat_embed([embed_nopos, embed_pos])  # 72  dil cov ->  4*72
-
-        task_embed = self.target_marker(task)
-        target = self.concat_embed([task_embed, task_embed + target_pos_embed])
-        full_embedded = self.concat_target([embedded, target])
-
-        result = self.forecast(full_embedded, prediction_length)
-        # TODO apply rescaling to the resul if needed
-        return {"result": result, "scale": med_scale}
-
-    def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
-        scale = y_pred["scale"]
-        return nn.functional.mse_loss(
-            y_pred["result"] / scale, y / scale, reduction="mean"
+        print(
+            "Data container target_values shape:",
+            data_container.target_values.shape,
         )
+        print(
+            "Data container target_channels_indices shape:",
+            data_container.target_channels_indices.shape,
+        )
+        print(
+            "Data container target_channels_indices shape:",
+            data_container.target_channels_indices.shape,
+        )
+        print(
+            "Data container target_time_features shape:",
+            data_container.target_time_features.shape,
+        )
+        history_values = data_container.history_values
+        target_values = data_container.target_values
+        target_channels_indices = data_container.target_channels_indices
+        history_time_features = data_container.history_time_features
+        target_time_features = data_container.target_time_features
+
+        batch_size, seq_len, num_channels = history_values.shape
+        pred_len = target_values.shape[1] if target_values is not None else 0
+
+        # Handle constant channels if needed
+        if self.handle_constants_model:
+            is_constant = torch.all(history_values == history_values[:, 0:1, :], dim=1)
+            noise = torch.randn_like(history_values) * 0.1 * is_constant.unsqueeze(1)
+            history_values = history_values + noise
+
+        # Get year reference
+        if history_time_features is not None:
+            reference_year = self.tc(history_time_features, YEAR)[:, -1:]
+        else:
+            reference_year = None
+
+        # Scale history values
+        history_scale_params, history_scaled = self.scaler(history_values, self.epsilon)
+
+        # Scale target values during training
+        target_scaled = None
+        if training and target_values is not None:
+            _, num_targets = target_channels_indices.shape
+            target_scaled = torch.zeros_like(target_values)
+            for b in range(batch_size):
+                for t in range(num_targets):
+                    channel_idx = target_channels_indices[b, t].long()
+                    median = history_scale_params[0][b, 0, channel_idx]
+                    iqr = history_scale_params[1][b, 0, channel_idx]
+                    target_scaled[b, :, t] = (target_values[b, :, t] - median) / iqr
+
+        # Get positional embeddings for history
+        if history_time_features is not None:
+            history_pos_embed = self.get_positional_embeddings(
+                history_time_features, reference_year, num_channels, drop_enc_allow
+            )
+        else:
+            history_pos_embed = torch.zeros(
+                batch_size,
+                seq_len,
+                num_channels,
+                self.embed_size,
+                device=device,
+            ).to(torch.float32)
+
+        # Get positional embeddings for targets
+        if target_time_features is not None:
+            target_pos_embed = self.get_positional_embeddings(
+                target_time_features, reference_year, num_channels, drop_enc_allow
+            )
+        else:
+            target_pos_embed = torch.zeros(
+                batch_size,
+                pred_len,
+                num_channels,
+                self.embed_size,
+                device=device,
+            ).to(torch.float32)
+
+        # Vectorized channel embeddings
+        history_scaled = history_scaled.unsqueeze(
+            -1
+        )  # [batch_size, seq_len, num_channels, 1]
+        channel_embeddings = self.expand_values(
+            history_scaled
+        )  # [batch_size, seq_len, num_channels, embed_size]
+        channel_embeddings = channel_embeddings + history_pos_embed
+        all_channels_embedded = channel_embeddings.view(batch_size, seq_len, -1)
+
+        # Forecast using the embeddings
+        predictions = self.forecast(
+            all_channels_embedded, target_pos_embed, target_channels_indices, pred_len
+        )
+
+        return {
+            "result": predictions,
+            "scale_params": history_scale_params,
+            "target_indices": target_channels_indices,
+            "target_scaled": target_scaled,
+        }
+
+    def compute_loss(self, y_true, y_pred):
+        """
+        Compute loss between predictions and pre-scaled ground truth.
+
+        Args:
+            y_true: Ground truth target values [batch_size, pred_len, num_targets]
+            y_pred: Dictionary containing predictions and scaling info
+
+        Returns:
+            Loss value
+        """
+        predictions = y_pred["result"]
+        target_scaled = y_pred["target_scaled"]
+        batch_size, pred_len, num_targets = predictions.shape
+
+        # Use pre-scaled target values
+        loss = nn.functional.mse_loss(predictions, target_scaled)
+        return loss / num_targets
 
     def forecast(
-        self,
-        ts: torch.Tensor,
-        scale: torch.Tensor,
-        embedded: torch.Tensor,
-        target: torch.Tensor,
+        self, embedded, target_pos_embed, target_channels_indices, prediction_length
     ):
-        raise NotImplementedError
+        raise NotImplementedError("Subclasses must implement forecast method")
 
 
 class MultiStepModel(BaseModel):
+    """
+    Multivariate time series forecasting model with encoder layers.
+    """
+
     def __init__(
         self,
         base_model_config,
         encoder_config,
         scaler="custom_robust",
         num_encoder_layers=2,
+        hidden_dim=128,
         token_embed_dim=1024,
         use_gelu=True,
         use_input_projection_norm=False,
@@ -220,24 +324,31 @@ class MultiStepModel(BaseModel):
         super().__init__(scaler=scaler, **base_model_config)
         self.num_encoder_layers = num_encoder_layers
         self.use_gelu = use_gelu
-        token_input_dim = self.embed_size * 2
+        self.hidden_dim = hidden_dim
 
+        # Calculate input dimension
+        self.channel_embed_dim = self.embed_size
+
+        # Create projection layer
         if use_dilated_conv:
             self.input_projection_layer = DilatedConv1dBlock(
-                token_input_dim,
+                self.channel_embed_dim,
                 token_embed_dim,
                 dilated_conv_kernel_size,
                 dilated_conv_max_dilation,
                 single_conv=False,
             )
         else:
-            self.input_projection_layer = nn.Linear(token_input_dim, token_embed_dim)
+            self.input_projection_layer = nn.Linear(
+                self.channel_embed_dim, token_embed_dim
+            )
 
-        self.global_residual = (
-            nn.Linear(token_input_dim * (linear_sequence_length + 1), token_embed_dim)
-            if use_global_residual
-            else None
-        )
+        # Create global residual connection
+        self.global_residual = None
+        if use_global_residual:
+            self.global_residual = nn.Linear(
+                self.channel_embed_dim * (linear_sequence_length + 1), token_embed_dim
+            )
 
         self.linear_sequence_length = linear_sequence_length
         self.initial_gelu = nn.GELU() if use_gelu else None
@@ -247,37 +358,63 @@ class MultiStepModel(BaseModel):
             else nn.Identity()
         )
 
-        # Create encoder layers using the factory
+        # Create encoder layers
         self.encoder_layers = nn.ModuleList(
             [
-                EncoderFactory.create_encoder(
-                    token_embed_dim=token_embed_dim, **encoder_config
-                )
+                EncoderFactory.create_encoder(**encoder_config)
                 for _ in range(self.num_encoder_layers)
             ]
         )
 
-        self.final_output_layer = (
-            nn.Linear(token_embed_dim * 2, 1)
-            if use_global_residual
-            else nn.Linear(token_embed_dim, 1)
-        )
-        self.final_output_layer.name = "FinalOutput"
+        # Target-specific projection layers
+        self.target_projection = nn.Linear(self.embed_size, token_embed_dim)
+
+        # Final output layer
+        self.final_output_layer = nn.Linear(token_embed_dim, 1)
         self.final_activation = nn.Identity()
 
-    def forecast(self, embedded: torch.Tensor, prediction_length: int):
+    def forecast(
+        self, embedded, target_pos_embed, target_channels_indices, prediction_length
+    ):
+        """
+        Generate forecasts for target channels in parallel.
+
+        Args:
+            embedded: Embedded history values [batch_size, seq_len, num_channels * embed_size]
+            target_pos_embed: Target positional embeddings [batch_size, pred_len, num_channels, embed_size]
+            target_channels_indices: Indices of target channels [batch_size, num_targets]
+            prediction_length: Length of prediction horizon
+
+        Returns:
+            Predictions tensor [batch_size, pred_len, num_targets]
+        """
+        batch_size, seq_len, _ = embedded.shape
+        num_targets = target_channels_indices.shape[1]
+
+        # Reshape embedded to separate channels
+        embedded = embedded.view(batch_size, seq_len, -1, self.embed_size)
+
+        # Select target channel embeddings
+        batch_indices = torch.arange(batch_size, device=device).view(-1, 1)
+        target_embedded = embedded[
+            batch_indices, :, target_channels_indices
+        ]  # [batch_size, seq_len, num_targets, embed_size]
+
+        # Global residual connection
         if self.global_residual:
-            glob_res = embedded[:, -(self.linear_sequence_length + 1) :, :].reshape(
-                embedded.shape[0], -1
-            )
+            glob_res = target_embedded[
+                :, -(self.linear_sequence_length + 1) :, :, :
+            ].reshape(batch_size, -1)
             glob_res = (
                 self.global_residual(glob_res)
                 .unsqueeze(1)
                 .repeat(1, prediction_length, 1)
             )
 
-        x = self.input_projection_layer(embedded)
+        # Project to token embedding dimension
+        x = self.input_projection_layer(target_embedded.view(batch_size, seq_len, -1))
 
+        # Apply normalization and activation
         if self.use_gelu and self.initial_gelu is not None:
             x = self.input_projection_norm(x)
             x = self.initial_gelu(x)
@@ -286,15 +423,25 @@ class MultiStepModel(BaseModel):
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
 
+        # Create target-specific representation
+        target_repr = self.target_projection(
+            target_pos_embed.view(batch_size, prediction_length, -1)
+        )
+
+        # Combine with encoded history
         if self.global_residual:
-            x = self.final_output_layer(
-                torch.concat([x[:, -prediction_length:, :], glob_res], dim=-1)
+            x_target = torch.cat(
+                [x[:, -prediction_length:, :], glob_res, target_repr], dim=-1
             )
+            predictions = self.final_output_layer(x_target)
         else:
-            x = self.final_output_layer(x[:, -prediction_length:, :])
+            predictions = self.final_output_layer(
+                x[:, -prediction_length:, :] + target_repr
+            )
 
-        x = self.final_activation(x)
+        # Apply final activation
+        predictions = self.final_activation(predictions).view(
+            batch_size, prediction_length, num_targets
+        )
 
-        # Keep the feature dimension to match target shape [batch_size, seq_len, 1]
-        # Instead of squeezing the last dimension
-        return x
+        return predictions

@@ -1,12 +1,46 @@
 import math
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from fla.layers.delta_net import DeltaNet
 from fla.layers.gated_deltanet import GatedDeltaNet
 
-from src.utils.utils import device
+
+class PositionExpansion(nn.Module):
+    """
+    Creates positional embeddings for time features.
+    """
+
+    def __init__(self, periods: int, freqs: int):
+        super().__init__()
+        # Channels could be ceiling(log_2(periods))
+        self.periods = periods
+        self.channels = freqs * 2
+
+        # Create position encoding
+        pos_encoding = np.hstack(
+            [
+                np.fromfunction(
+                    lambda i, j: np.sin(np.pi / periods * (2**j) * (i - 1)),
+                    (periods + 1, freqs),
+                ),
+                np.fromfunction(
+                    lambda i, j: np.cos(np.pi / periods * (2**j) * (i - 1)),
+                    (periods + 1, freqs),
+                ),
+            ]
+        )
+        self.embedding = torch.tensor(
+            pos_encoding, device="cuda" if torch.cuda.is_available() else "cpu"
+        )
+
+    def forward(self, tc: torch.Tensor):
+        flat = tc.view(-1)  # Flatten completely
+        embedded = self.embedding.index_select(0, flat.to(torch.long))
+        out_shape = tc.shape + (self.channels,)  # Add channel dimension
+        return embedded.view(*out_shape)
 
 
 class SimpleRMSNorm(nn.Module):
@@ -36,18 +70,27 @@ class SimpleRMSNorm(nn.Module):
 
 class SinPositionalEncoding(nn.Module):
     def __init__(self, d_model=36, max_len=5000, sin_pos_const=10000.0):
-        super(SinPositionalEncoding, self).__init__()
-        self.encoding = torch.zeros(max_len, d_model)
-        positions = torch.arange(0, max_len).unsqueeze(1).float()
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() * -(math.log(sin_pos_const) / d_model)
-        )
-        self.encoding[:, 0::2] = torch.sin(positions * div_term)
-        self.encoding[:, 1::2] = torch.cos(positions * div_term)
-        self.encoding = self.encoding.unsqueeze(0).to(device)
+        super().__init__()
+        self.d_model = d_model
+        self.max_len = max_len
+        self.sin_pos_const = sin_pos_const
 
-    def forward(self, x):
-        return self.encoding[:, : x.size(1)].detach()
+    def forward(self, x, num_channels):
+        batch_size, seq_len, _ = x.shape
+        encoding = torch.zeros(
+            batch_size, seq_len, num_channels, self.d_model, device=x.device
+        )
+        positions = torch.arange(0, seq_len, device=x.device).unsqueeze(1).float()
+        div_term = torch.exp(
+            torch.arange(0, self.d_model, 2, device=x.device).float()
+            * -(math.log(self.sin_pos_const) / self.d_model)
+        )
+        for c in range(num_channels):
+            # Modulate frequencies by channel index
+            channel_offset = (c + 1) * 0.1
+            encoding[:, :, c, 0::2] = torch.sin(positions * div_term * channel_offset)
+            encoding[:, :, c, 1::2] = torch.cos(positions * div_term * channel_offset)
+        return encoding.detach()
 
 
 class DilatedConv1dBlock(nn.Module):
@@ -90,9 +133,8 @@ class DilatedConv1dBlock(nn.Module):
                         bias=True,
                     )
                 )
-
             self.inception_conv = nn.Conv1d(
-                in_channels=out_channels,  # Total number of channels from all convolutions
+                in_channels=out_channels,
                 out_channels=out_channels,
                 kernel_size=1,
                 stride=1,
@@ -100,7 +142,6 @@ class DilatedConv1dBlock(nn.Module):
             )
 
     def forward(self, x):
-        # x is expected to be of shape (batch_size, in_channels, sequence_length)
         x = x.transpose(1, 2)
         seq_len = x.shape[-1]
         if self.single_conv:
