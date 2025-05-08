@@ -34,32 +34,3 @@ def avoid_constant_inputs(inputs, outputs):
     ).squeeze(1)
     if idx_const_in.size(0) > 0:
         inputs[idx_const_in, 0] += np.random.uniform(0.1, 1)
-
-
-class SMAPEMetric(torchmetrics.Metric):
-    def __init__(self, eps=1e-7):
-        super().__init__(dist_sync_on_step=False)
-        self.eps = eps
-        self.add_state("total_smape", default=torch.tensor(0.0), dist_reduce_fx="sum")
-        self.add_state("total_count", default=torch.tensor(0), dist_reduce_fx="sum")
-
-    def update(self, preds: torch.Tensor, target: torch.Tensor):
-        """
-        Update state with predictions and true labels.
-        Args:
-            preds (torch.Tensor): The predictions.
-            target (torch.Tensor): Ground truth values.
-        """
-        preds = preds.float()
-        target = target.float()
-        diff = torch.abs((target - preds) / torch.clamp(target + preds, min=self.eps))
-        smape = 200.0 * torch.mean(diff)  # Compute SMAPE for current batch
-        # Multiply by batch size to prepare for mean
-        self.total_smape += smape * target.numel()
-        self.total_count += target.numel()
-
-    def compute(self):
-        """
-        Computes the mean of the accumulated SMAPE values.
-        """
-        return self.total_smape / self.total_count

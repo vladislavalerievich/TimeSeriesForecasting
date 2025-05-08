@@ -10,7 +10,7 @@ from src.models.blocks import (
     PositionExpansion,
     SinPositionalEncoding,
 )
-from src.models.constants import DAY, DOW, HOUR, MINUTE, MONTH, YEAR
+from src.models.constants import DAY, DOW, HOUR, MINUTE, MONTH, SECOND, YEAR
 from src.utils.utils import device
 
 
@@ -411,37 +411,52 @@ class MultiStepModel(BaseModel):
                 .repeat(1, prediction_length, 1)
             )
 
-        # Project to token embedding dimension
-        x = self.input_projection_layer(target_embedded.view(batch_size, seq_len, -1))
+        # Process target embeddings
+        target_embedded = target_embedded.permute(0, 2, 1, 3)
+        target_embedded = target_embedded.reshape(
+            batch_size * num_targets, seq_len, self.embed_size
+        )
 
-        # Apply normalization and activation
-        if self.use_gelu and self.initial_gelu is not None:
-            x = self.input_projection_norm(x)
-            x = self.initial_gelu(x)
+        x = self.input_projection_layer(target_embedded)
 
         # Pass through encoder layers
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
 
-        # Create target-specific representation
-        target_repr = self.target_projection(
-            target_pos_embed.view(batch_size, prediction_length, -1)
+        # Reshape back to separate batch and targets
+        x = x.reshape(batch_size, num_targets, seq_len, -1)
+
+        # Apply normalization and activation if needed
+        if self.use_gelu and self.initial_gelu is not None:
+            x = self.input_projection_norm(x)
+            x = self.initial_gelu(x)
+
+        # Extract the target-specific representations for only the target channels
+        target_pos_embed_for_targets = torch.zeros(
+            batch_size,
+            prediction_length,
+            num_targets,
+            self.embed_size,
+            device=target_pos_embed.device,
         )
 
-        # Combine with encoded history
-        if self.global_residual:
-            x_target = torch.cat(
-                [x[:, -prediction_length:, :], glob_res, target_repr], dim=-1
-            )
-            predictions = self.final_output_layer(x_target)
-        else:
-            predictions = self.final_output_layer(
-                x[:, -prediction_length:, :] + target_repr
-            )
+        # For each batch and target, select the correct channel's positional embedding
+        for b in range(batch_size):
+            for t in range(num_targets):
+                channel_idx = target_channels_indices[b, t].long()
+                target_pos_embed_for_targets[b, :, t, :] = target_pos_embed[
+                    b, :, channel_idx, :
+                ]
 
-        # Apply final activation
-        predictions = self.final_activation(predictions).view(
-            batch_size, prediction_length, num_targets
-        )
+        # Apply target projection to the correct positional embeddings
+        target_repr = self.target_projection(target_pos_embed_for_targets)
+
+        # Extract the predictions portion and add target representation
+        predictions = self.final_output_layer(
+            x[:, :, -prediction_length:, :] + target_repr
+        )  # [batch_size, num_targets, pred_len, 1]
+
+        # Reshape to expected output format [batch_size, pred_len, num_targets]
+        predictions = predictions.squeeze(-1).permute(0, 2, 1)
 
         return predictions

@@ -21,7 +21,6 @@ from src.synthetic_generation.multivariate_time_series_generator import (
     MultivariateTimeSeriesGenerator,
 )
 from src.utils.utils import (
-    SMAPEMetric,
     device,
     generate_model_save_name,
     seed_everything,
@@ -150,12 +149,16 @@ class TrainingPipeline:
         self.train_metrics = {
             "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
             "mse": torchmetrics.MeanSquaredError().to(self.device),
-            "smape": SMAPEMetric().to(self.device),
+            "smape": torchmetrics.SymmetricMeanAbsolutePercentageError().to(
+                self.device
+            ),
         }
         self.val_metrics = {
             "mape": torchmetrics.MeanAbsolutePercentageError().to(self.device),
             "mse": torchmetrics.MeanSquaredError().to(self.device),
-            "smape": SMAPEMetric().to(self.device),
+            "smape": torchmetrics.SymmetricMeanAbsolutePercentageError().to(
+                self.device
+            ),
         }
 
     def _setup_wandb(self):
