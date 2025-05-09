@@ -4,7 +4,7 @@ model_save_name_prefix: GatedDeltaNet_rtx_2080_allow_neg_eigval_False
 continue_training: false
 seed: 2025
 debugging: false
-wandb: false # whether to log to wandb for testing
+wandb: true # whether to log to wandb for testing
 
 lr_scheduler: cosine
 initial_lr: 0.00001
@@ -12,11 +12,10 @@ learning_rate: 0.0000001
 loss: mse # mae
 scaler: custom_robust
 
-
 batch_size: 64
-num_epochs: 10
+num_epochs: 100
 num_training_iterations_per_epoch: 100
-num_validation_iteration_per_epoch: 100
+num_validation_iteration_per_epoch: 10
 num_val_samples_to_plot: 5
 
 BaseModelConfig:
