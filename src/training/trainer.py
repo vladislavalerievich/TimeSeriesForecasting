@@ -34,19 +34,32 @@ logger = logging.getLogger(__name__)
 
 
 class SyntheticDataset(IterableDataset):
-    def __init__(self, generator, batch_size, num_batches):
+    def __init__(
+        self,
+        generator,
+        batch_size,
+        num_batches,
+        history_length,
+        target_length,
+        num_channels,
+        max_target_channels,
+    ):
         self.generator = generator
         self.batch_size = batch_size
         self.num_batches = num_batches
+        self.history_length = history_length
+        self.target_length = target_length
+        self.num_channels = num_channels
+        self.max_target_channels = max_target_channels
 
     def __iter__(self):
         for _ in range(self.num_batches):
             yield self.generator.generate_batch(
                 batch_size=self.batch_size,
-                history_length=96,
-                target_length=96,
-                num_channels=160,
-                max_target_channels=2,
+                history_length=self.history_length,
+                target_length=self.target_length,
+                num_channels=self.num_channels,
+                max_target_channels=self.max_target_channels,
             )
 
 
@@ -60,25 +73,6 @@ class TrainingPipeline:
         self.criterion = None
         self.train_loader = None
         self.initial_epoch = 0
-
-        # Initialize the synthetic data generator
-        self.generator = MultivariateTimeSeriesGenerator(
-            global_seed=42,
-            history_length=96,
-            target_length=96,
-            max_target_channels=2,
-            num_channels=160,
-        )
-
-        # Generate fixed validation batch
-        self.val_data = self.generator.generate_batch(
-            batch_size=64,
-            seed=42,
-            history_length=96,
-            target_length=96,
-            num_channels=160,
-            max_target_channels=2,
-        )
 
         logger.info("Initializing training pipeline...")
         logger.info(f"Config: {yaml.dump(config)}")
@@ -103,11 +97,34 @@ class TrainingPipeline:
         self.config["model_save_name"] = generate_model_save_name(self.config)
         self._load_checkpoint()
 
+        # Initialize the synthetic data generator
+        self.generator = MultivariateTimeSeriesGenerator(
+            global_seed=self.config["seed"],
+            history_length=96,
+            target_length=96,
+            num_channels=160,
+            max_target_channels=self.config["max_target_channels"],
+        )
+
+        # Generate fixed validation batch
+        self.val_data = self.generator.generate_batch(
+            batch_size=self.config["batch_size"],
+            seed=self.config["seed"],
+            history_length=96,
+            target_length=96,
+            num_channels=160,
+            max_target_channels=self.config["max_target_channels"],
+        )
+
         # Setup training data loader with synthetic data
         synthetic_dataset = SyntheticDataset(
             self.generator,
             batch_size=self.config["batch_size"],
             num_batches=self.config["num_training_iterations_per_epoch"],
+            history_length=96,
+            target_length=96,
+            num_channels=160,
+            max_target_channels=self.max_target_channels,
         )
         self.train_loader = DataLoader(synthetic_dataset, batch_size=None)
 
@@ -270,7 +287,7 @@ class TrainingPipeline:
                     fixed_data.history_values.shape[0],
                 )
             ):
-                pred_future = inv_scaled_fixed_output[i].cpu().numpy().squeeze(-1)
+                pred_future = inv_scaled_fixed_output[i].cpu().numpy()
                 fig = plot_from_container(
                     ts_data=fixed_data,
                     sample_idx=i,

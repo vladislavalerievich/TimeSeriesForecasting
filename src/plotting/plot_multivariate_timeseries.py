@@ -20,6 +20,7 @@ def plot_multivariate_timeseries(
     """
     Plot multiple channels of a multivariate time series with history and optional targets/predictions.
     Only plots the series specified in target_channels_indices, supporting any number of target channels.
+    Predicted values are plotted in varying shades of red to distinguish from target values.
 
     Parameters
     ----------
@@ -89,7 +90,6 @@ def plot_multivariate_timeseries(
     # Plot each selected channel
     for i, channel_idx in enumerate(target_channels_indices):
         channel_idx = int(channel_idx)  # Ensure it's an integer
-        label = f"Channel {channel_idx}"
         color = f"C{i % 10}"  # Use matplotlib's default color cycle
 
         # Extract and check history for this target channel
@@ -102,9 +102,11 @@ def plot_multivariate_timeseries(
         ax.plot(
             history_time,
             y_hist.reshape(-1),
-            label=f"{label} (History)",
             color=color,
             linestyle="-",  # Solid line for history
+            label=f"Ch{channel_idx}: True ({color}) | Pred (red shade)"
+            if predicted_values is not None
+            else f"Ch{channel_idx}: True ({color})",
         )
 
         # Plot target if available
@@ -125,7 +127,7 @@ def plot_multivariate_timeseries(
                 y_target.reshape(-1),
                 color=color,
                 linestyle="-",  # Solid line for actual values
-                label=f"{label} (Target)",
+                label=None,  # No separate label for target
             )
 
             # Plot predictions if available
@@ -135,12 +137,15 @@ def plot_multivariate_timeseries(
                     raise ValueError(
                         f"predicted_values for channel {channel_idx} (target idx {target_idx}) has shape {y_pred.shape}, expected ({target_time.shape[0]},)"
                     )
+                # Generate shade of red: darker for earlier indices, lighter for later
+                red_shade = 1.0 - (i / max(len(target_channels_indices), 1)) * 0.5
+                pred_color = (red_shade, 0.2, 0.2)  # RGB: varying red intensity
                 ax.plot(
                     target_time,
                     y_pred.reshape(-1),
-                    color=color,
+                    color=pred_color,
                     linestyle="--",  # Dashed line for predictions
-                    label=f"{label} (Predicted)",
+                    label=None,  # No separate label for predictions
                 )
 
     # Add history/target separator
