@@ -37,6 +37,7 @@ def compute_time_features(
                 ts.day_of_year.values,
                 ts.hour.values,
                 ts.minute.values,
+                ts.second.values,
             ],
             axis=-1,
         )

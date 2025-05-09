@@ -39,6 +39,7 @@ class BaseModel(nn.Module):
 
         # Create position embeddings for time features
         if sub_day:
+            self.pos_second = PositionExpansion(60, 2)
             self.pos_minute = PositionExpansion(60, 4)
             self.pos_hour = PositionExpansion(24, 6)
         self.pos_year = PositionExpansion(10, 4)
@@ -51,6 +52,7 @@ class BaseModel(nn.Module):
             self.embed_size = sum(
                 emb.channels
                 for emb in (
+                    self.pos_second,
                     self.pos_minute,
                     self.pos_hour,
                     self.pos_year,
@@ -130,6 +132,7 @@ class BaseModel(nn.Module):
         if self.sub_day:
             pos_embedding = self.concat_pos(
                 [
+                    self.pos_second(self.tc(time_features, SECOND)),
                     self.pos_minute(self.tc(time_features, MINUTE)),
                     self.pos_hour(self.tc(time_features, HOUR)),
                     self.pos_year(delta_year),
