@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.data_handling.data_containers import TimeSeriesDataContainer
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.multivariate_time_series_generator import (
     MultivariateTimeSeriesGenerator,
 )
@@ -86,7 +86,7 @@ def test_generate_batch_shapes(generator):
     )
 
     # Assertions
-    assert isinstance(result, TimeSeriesDataContainer)
+    assert isinstance(result, BatchTimeSeriesContainer)
     assert result.history_values.shape == (batch_size, history_length, num_channels)
     assert result.target_values.shape[0] == batch_size
     assert result.target_values.shape[1] == target_length
@@ -197,7 +197,7 @@ def test_generate_dataset_yields_correctly(generator):
     # Assertions
     assert len(batches) == num_batches
     for batch, batch_idx in batches:
-        assert isinstance(batch, TimeSeriesDataContainer)
+        assert isinstance(batch, BatchTimeSeriesContainer)
         assert batch.history_values.shape[0] == batch_size
         assert batch_idx in range(num_batches)
 
@@ -257,7 +257,7 @@ def test_save_dataset_individual_files(temp_dir):
     assert os.path.exists(os.path.join(temp_dir, "batch_000.pt"))
     assert os.path.exists(os.path.join(temp_dir, "batch_001.pt"))
     batch = torch.load(os.path.join(temp_dir, "batch_000.pt"))
-    assert isinstance(batch, TimeSeriesDataContainer)
+    assert isinstance(batch, BatchTimeSeriesContainer)
 
     # (batch_size, history_length, num_channels)
     assert batch.history_values.shape == (2, 32, 3)
@@ -299,7 +299,7 @@ def test_save_dataset_single_file(generator, temp_dir):
     assert os.path.exists(dataset_path)
     dataset = torch.load(dataset_path)
     assert len(dataset) == num_batches
-    assert all(isinstance(batch, TimeSeriesDataContainer) for batch in dataset)
+    assert all(isinstance(batch, BatchTimeSeriesContainer) for batch in dataset)
 
 
 def test_edge_case_small_num_channels():
@@ -412,7 +412,7 @@ def test_generate_batch_minimal_values(generator):
         seed=42,
     )
 
-    assert isinstance(result, TimeSeriesDataContainer)
+    assert isinstance(result, BatchTimeSeriesContainer)
     assert result.history_values.shape == (batch_size, history_length, num_channels)
     assert result.target_values.shape == (batch_size, target_length, 1)
     assert result.target_channels_indices.shape == (batch_size, 1)
@@ -434,7 +434,7 @@ def test_generate_batch_max_target_channels_equals_num_channels(generator):
         seed=42,
     )
 
-    assert isinstance(result, TimeSeriesDataContainer)
+    assert isinstance(result, BatchTimeSeriesContainer)
     assert result.history_values.shape == (batch_size, history_length, num_channels)
     assert result.target_values.shape[0] == batch_size
     assert result.target_values.shape[1] == target_length
@@ -471,7 +471,7 @@ def test_generate_dataset_single_cpu(generator):
 
     assert len(batches) == num_batches
     for batch, batch_idx in batches:
-        assert isinstance(batch, TimeSeriesDataContainer)
+        assert isinstance(batch, BatchTimeSeriesContainer)
         assert batch.history_values.shape[0] == batch_size
         assert batch_idx in range(num_batches)
 
@@ -508,7 +508,7 @@ def test_save_dataset_chunk_size_equals_num_batches(temp_dir):
     assert os.path.exists(dataset_path)
     dataset = torch.load(dataset_path)
     assert len(dataset) == num_batches
-    assert all(isinstance(batch, TimeSeriesDataContainer) for batch in dataset)
+    assert all(isinstance(batch, BatchTimeSeriesContainer) for batch in dataset)
 
 
 def test_format_to_container_identical_timestamps(generator):
@@ -565,7 +565,7 @@ def test_dirichlet_min_max_swap(generator):
 
     assert len(batches) == num_batches
     for batch, batch_idx in batches:
-        assert isinstance(batch, TimeSeriesDataContainer)
+        assert isinstance(batch, BatchTimeSeriesContainer)
 
 
 def test_generate_batch_extreme_weibull_parameters(generator):
@@ -580,7 +580,7 @@ def test_generate_batch_extreme_weibull_parameters(generator):
         seed=42,
     )
 
-    assert isinstance(result, TimeSeriesDataContainer)
+    assert isinstance(result, BatchTimeSeriesContainer)
     assert result.history_values.shape == (2, 32, 2)
     assert result.target_values.shape[0] == 2
     assert result.target_values.shape[1] == 16

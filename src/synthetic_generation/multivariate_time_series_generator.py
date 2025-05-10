@@ -9,8 +9,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from src.data_handling.data_containers import TimeSeriesDataContainer
-from src.data_handling.utils import compute_time_features
+from src.data_handling.data_containers import BatchTimeSeriesContainer
+from src.data_handling.time_features import compute_time_features
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
 
 # Configure logging
@@ -349,7 +349,7 @@ class MultivariateTimeSeriesGenerator:
         batch_size: int,
         num_channels: int,
         max_target_channels: Optional[int] = None,
-    ) -> TimeSeriesDataContainer:
+    ) -> BatchTimeSeriesContainer:
         """
         Format generated time series data into a TimeSeriesDataContainer.
 
@@ -398,7 +398,7 @@ class MultivariateTimeSeriesGenerator:
             batch_size, num_channels, max_target_channels, future_values
         )
 
-        return TimeSeriesDataContainer(
+        return BatchTimeSeriesContainer(
             history_values=history_values,
             target_values=target_values,
             target_channels_indices=target_indices,
@@ -461,7 +461,7 @@ class MultivariateTimeSeriesGenerator:
         periodicity: str = "s",
         seed: Optional[int] = None,
         max_target_channels: Optional[int] = None,
-    ) -> TimeSeriesDataContainer:
+    ) -> BatchTimeSeriesContainer:
         """
         Generate a batch of synthetic multivariate time series.
 
@@ -577,7 +577,7 @@ class MultivariateTimeSeriesGenerator:
 
     def _generate_batch_worker(
         self, args: Tuple[int, Dict[str, Any]]
-    ) -> Tuple[TimeSeriesDataContainer, int]:
+    ) -> Tuple[BatchTimeSeriesContainer, int]:
         """
         Helper function for parallel batch generation.
 
@@ -601,7 +601,7 @@ class MultivariateTimeSeriesGenerator:
         num_batches: int,
         batch_size: int,
         num_cpus: Optional[int] = None,
-    ) -> Generator[Tuple[TimeSeriesDataContainer, int], None, None]:
+    ) -> Generator[Tuple[BatchTimeSeriesContainer, int], None, None]:
         """
         Generate a dataset of batches of synthetic multivariate time series.
 
@@ -682,7 +682,7 @@ class MultivariateTimeSeriesGenerator:
         return batch_params
 
     def _save_batch(
-        self, batch: TimeSeriesDataContainer, batch_idx: int, output_dir: str
+        self, batch: BatchTimeSeriesContainer, batch_idx: int, output_dir: str
     ) -> None:
         """
         Save a batch to disk.
@@ -766,7 +766,7 @@ class MultivariateTimeSeriesGenerator:
 
     def _save_or_append_chunk(
         self,
-        sorted_chunk_batches: List[TimeSeriesDataContainer],
+        sorted_chunk_batches: List[BatchTimeSeriesContainer],
         chunk_start: int,
         combined_file_path: str,
         output_dir: str,

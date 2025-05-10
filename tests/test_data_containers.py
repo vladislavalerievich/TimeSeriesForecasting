@@ -2,8 +2,8 @@ import pytest
 import torch
 
 from src.data_handling.data_containers import (
+    BatchTimeSeriesContainer,
     StaticFeaturesDataContainer,
-    TimeSeriesDataContainer,
 )
 
 
@@ -51,7 +51,7 @@ def test_time_series_data_container(num_channels, use_static_features, use_masks
     target_mask = torch.ones(batch_size, pred_len) if use_masks else None
 
     # Create container
-    container = TimeSeriesDataContainer(
+    container = BatchTimeSeriesContainer(
         history_values=history_values,
         target_values=target_values,
         target_channels_indices=target_channels_indices,

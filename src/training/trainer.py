@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
 from plotting.plot_multivariate_timeseries import plot_from_container
-from src.data_handling.data_containers import TimeSeriesDataContainer
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.models.models import MultiStepModel
 from src.synthetic_generation.multivariate_time_series_generator import (
     MultivariateTimeSeriesGenerator,
@@ -261,7 +261,7 @@ class TrainingPipeline:
             return (output * std_targets) + mean_targets
 
     def _prepare_batch(
-        self, batch: TimeSeriesDataContainer
+        self, batch: BatchTimeSeriesContainer
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Prepare batch data for model input."""
         batch.to_device(self.device)

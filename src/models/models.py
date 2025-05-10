@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.data_handling.data_containers import TimeSeriesDataContainer
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.data_handling.scalers import CustomScalingMultivariate
 from src.models.blocks import (
     ConcatLayer,
@@ -156,7 +156,7 @@ class BaseModel(nn.Module):
 
     def forward(
         self,
-        data_container: TimeSeriesDataContainer,
+        data_container: BatchTimeSeriesContainer,
         training=False,
         drop_enc_allow=False,
     ):

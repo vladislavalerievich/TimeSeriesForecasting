@@ -111,7 +111,7 @@ class StaticFeaturesDataContainer:
 
 
 @dataclass
-class TimeSeriesDataContainer:
+class BatchTimeSeriesContainer:
     """
     Container for a batch of multivariate time series data and their associated features.
 
