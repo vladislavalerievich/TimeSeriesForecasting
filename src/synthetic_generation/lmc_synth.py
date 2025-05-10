@@ -156,7 +156,7 @@ class LMCSynthGenerator:
         return ts
 
     def generate_time_series(
-        self, random_seed: Optional[int] = 42, periodicity: str = "s"
+        self, random_seed: Optional[int] = 42, periodicity: str = "D"
     ) -> Dict:
         """
         Generate a single multivariate synthetic time series.
