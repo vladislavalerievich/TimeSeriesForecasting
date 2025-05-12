@@ -32,7 +32,6 @@ class MultivariateTimeSeriesGenerator:
         distribution_type: Literal["uniform", "log_uniform"] = "uniform",
         history_length: Union[int, Tuple[int, int]] = (64, 256),
         target_length: Union[int, Tuple[int, int]] = (32, 256),
-        max_target_channels: int = 10,
         num_channels: Union[int, Tuple[int, int]] = (1, 256),
         max_kernels: Union[int, Tuple[int, int]] = (1, 10),
         dirichlet_min: Union[float, Tuple[float, float]] = (0.1, 1.0),
@@ -55,8 +54,6 @@ class MultivariateTimeSeriesGenerator:
             Fixed history length or range (min, max) (default: (64, 256)).
         target_length : Union[int, Tuple[int, int]], optional
             Fixed target length or range (min, max) (default: (32, 256)).
-        max_target_channels : int, optional
-            Maximum number of target channels to randomly select (default: 10).
         num_channels : Union[int, Tuple[int, int]], optional
             Fixed number of channels or range (min, max) (default: (1, 256)).
         max_kernels : Union[int, Tuple[int, int]], optional
@@ -77,7 +74,6 @@ class MultivariateTimeSeriesGenerator:
         self._validate_input_parameters(
             history_length=history_length,
             target_length=target_length,
-            max_target_channels=max_target_channels,
             num_channels=num_channels,
             max_kernels=max_kernels,
             dirichlet_min=dirichlet_min,
@@ -88,7 +84,6 @@ class MultivariateTimeSeriesGenerator:
         )
 
         self.global_seed = global_seed
-        self.max_target_channels = max_target_channels
         self.distribution_type = distribution_type
 
         # Parameter configurations
@@ -298,48 +293,6 @@ class MultivariateTimeSeriesGenerator:
 
         return history_values, future_values, history_timestamps, target_timestamps
 
-    def _select_target_channels(
-        self,
-        batch_size: int,
-        num_channels: int,
-        max_target_channels: int,
-        future_values: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Randomly select target channels.
-
-        Parameters
-        ----------
-        batch_size : int
-            Number of time series in the batch.
-        num_channels : int
-            Number of channels in each time series.
-        max_target_channels : int
-            Maximum number of target channels to randomly select.
-        future_values : torch.Tensor
-            Future values tensor.
-
-        Returns
-        -------
-        Tuple[torch.Tensor, torch.Tensor]
-            Tuple containing (target_values, target_indices).
-        """
-        # Randomly select the number of target channels (between 1 and max_target_channels)
-        num_targets = min(np.random.randint(1, max_target_channels + 1), num_channels)
-
-        # Randomly select target channels indices (same for all series in the batch)
-        target_indices = torch.tensor(
-            np.random.choice(num_channels, size=num_targets, replace=False),
-            dtype=torch.long,
-        ).expand(batch_size, -1)
-
-        # Vectorized indexing for target values
-        target_values = future_values[
-            :, :, target_indices[0]
-        ]  # Shape: (batch_size, target_length, num_targets)
-
-        return target_values, target_indices
-
     def format_to_container(
         self,
         values: np.ndarray,
@@ -393,15 +346,14 @@ class MultivariateTimeSeriesGenerator:
             target_timestamps, include_subday=True
         )
 
-        # Select target channels
-        target_values, target_indices = self._select_target_channels(
-            batch_size, num_channels, max_target_channels, future_values
-        )
+        # Randomly select target channel.
+        target_index = torch.randint(0, num_channels, (batch_size,))
+        target_values = future_values[:, :, target_index]
 
         return BatchTimeSeriesContainer(
             history_values=history_values,
             target_values=target_values,
-            target_channels_indices=target_indices,
+            target_index=target_index,
             history_time_features=history_time_features,
             target_time_features=target_time_features,
             static_features=None,  # Not used for now

@@ -12,10 +12,11 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
+from src.synthetic_generation.abstract_generator import AbstractTimeSeriesGenerator
 from src.synthetic_generation.constants import DEFAULT_START_DATE
 
 
-class LMCSynthGenerator:
+class LMCSynthGenerator(AbstractTimeSeriesGenerator):
     """Generate synthetic multivariate time series data using Latent Multi-Channel Synthesis."""
 
     def __init__(
@@ -118,7 +119,7 @@ class LMCSynthGenerator:
         return np.random.choice(binary_maps)(a, b)
 
     @staticmethod
-    def _sample_from_gp_prior_efficient(
+    def _sample_from_gp_prior(
         kernel: Kernel,
         X: np.ndarray,
         random_seed: Optional[int] = 42,
@@ -213,7 +214,7 @@ class LMCSynthGenerator:
                 # Sample latent functions
                 latent_functions = np.array(
                     [
-                        self._sample_from_gp_prior_efficient(
+                        self._sample_from_gp_prior(
                             kernel=kernel, X=X, random_seed=random_seed
                         )
                         for kernel in latent_kernels

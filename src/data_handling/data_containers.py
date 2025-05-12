@@ -120,9 +120,8 @@ class BatchTimeSeriesContainer:
             Shape: [batch_size, seq_len, num_channels]
         target_values: Tensor of future observations to predict.
             Shape: [batch_size, pred_len, num_targets]
-        target_channels_indices: Tensor mapping target_values columns back to
-            the original channel indices in history_values.
-            Shape: [batch_size, num_targets]
+        target_index: Tensor of target channel index.
+            Shape: [batch_size, 1]
         history_time_features: Tensor of time-derived features for the history timestamps window.
             Shape: [batch_size, seq_len, num_time_features]
         target_time_features: Tensor of time-derived features for the prediction timestamps window.
@@ -139,7 +138,7 @@ class BatchTimeSeriesContainer:
 
     history_values: torch.Tensor
     target_values: torch.Tensor
-    target_channels_indices: torch.Tensor
+    target_index: torch.Tensor
 
     history_time_features: Optional[torch.Tensor] = None
     target_time_features: Optional[torch.Tensor] = None
@@ -155,8 +154,8 @@ class BatchTimeSeriesContainer:
             raise TypeError("history_values must be a Tensor")
         if not isinstance(self.target_values, torch.Tensor):
             raise TypeError("target_values must be a Tensor")
-        if not isinstance(self.target_channels_indices, torch.Tensor):
-            raise TypeError("target_channels_indices must be a Tensor")
+        if not isinstance(self.target_index, torch.Tensor):
+            raise TypeError("target_index must be a Tensor")
 
         batch_size, seq_len, num_channels = self.history_values.shape
         pred_len = self.target_values.shape[1]
@@ -164,14 +163,8 @@ class BatchTimeSeriesContainer:
         # --- Core Shape Checks ---
         if self.target_values.shape[0] != batch_size:
             raise ValueError("Batch size mismatch between history and target_values")
-        if self.target_channels_indices.shape[0] != batch_size:
-            raise ValueError(
-                "Batch size mismatch between history and target_channels_indices"
-            )
-        if self.target_values.shape[2] != self.target_channels_indices.shape[1]:
-            raise ValueError(
-                f"Number of target features mismatch: target_values {self.target_values.shape[2]} vs indices {self.target_channels_indices.shape[1]}"
-            )
+        if self.target_index.shape[0] != batch_size:
+            raise ValueError("Batch size mismatch between history and target_index")
 
         # --- Optional Time Features ---
         if self.history_time_features is not None:
@@ -250,7 +243,7 @@ class BatchTimeSeriesContainer:
         # Move required tensor attributes
         self.history_values = self.history_values.to(device)
         self.target_values = self.target_values.to(device)
-        self.target_channels_indices = self.target_channels_indices.to(device)
+        self.target_index = self.target_index.to(device)
         self.history_time_features = self.history_time_features.to(device)
         self.target_time_features = self.target_time_features.to(device)
 

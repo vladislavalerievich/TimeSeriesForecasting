@@ -229,23 +229,23 @@ class TrainingPipeline:
         if self.config["scaler"] == "min_max":
             max_scale = output["scale_params"][0]  # [batch_size, 1, num_channels]
             min_scale = output["scale_params"][1]
-            target_indices = output["target_indices"]  # [batch_size, num_targets]
-            max_targets = torch.gather(
-                max_scale, 2, target_indices.unsqueeze(1)
-            ).expand(-1, target.shape[1], -1)
-            min_targets = torch.gather(
-                min_scale, 2, target_indices.unsqueeze(1)
-            ).expand(-1, target.shape[1], -1)
+            target_index = output["target_index"]  # [batch_size, 1]
+            max_targets = torch.gather(max_scale, 2, target_index).expand(
+                -1, target.shape[1], -1
+            )
+            min_targets = torch.gather(min_scale, 2, target_index).expand(
+                -1, target.shape[1], -1
+            )
             scaled_target = (target - min_targets) / (max_targets - min_targets)
             return scaled_target, max_targets, min_targets
         else:
             mean = output["scale_params"][0]  # [batch_size, 1, num_channels]
             std = output["scale_params"][1]
-            target_indices = output["target_indices"]  # [batch_size, num_targets]
-            mean_targets = torch.gather(mean, 2, target_indices.unsqueeze(1)).expand(
+            target_index = output["target_index"]  # [batch_size, 1]
+            mean_targets = torch.gather(mean, 2, target_index).expand(
                 -1, target.shape[1], -1
             )
-            std_targets = torch.gather(std, 2, target_indices.unsqueeze(1)).expand(
+            std_targets = torch.gather(std, 2, target_index).expand(
                 -1, target.shape[1], -1
             )
             scaled_target = (target - mean_targets) / std_targets

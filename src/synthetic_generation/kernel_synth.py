@@ -13,10 +13,11 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
+from src.synthetic_generation.abstract_generator import AbstractTimeSeriesGenerator
 from src.synthetic_generation.constants import DEFAULT_START_DATE
 
 
-class KernelSynthGenerator:
+class KernelSynthGenerator(AbstractTimeSeriesGenerator):
     """
     Generate independent synthetic univariate time series using kernel synthesis.
 
