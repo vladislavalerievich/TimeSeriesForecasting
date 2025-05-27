@@ -13,8 +13,8 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
-from src.synthetic_generation.abstract_generator import AbstractTimeSeriesGenerator
 from src.synthetic_generation.constants import DEFAULT_START_DATE
+from synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
 
 
 class KernelSynthGenerator(AbstractTimeSeriesGenerator):
@@ -97,7 +97,9 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         ts = gpr.sample_y(X, n_samples=1, random_state=random_seed)
         return ts.squeeze()
 
-    def generate_time_series(self, random_seed: Optional[int] = None) -> Dict:
+    def generate_time_series(
+        self, random_seed: Optional[int] = None, periodicity: str = "D"
+    ) -> Dict:
         """
         Generate a single independent univariate time series.
 
@@ -115,5 +117,7 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         except np.linalg.LinAlgError:
             return self.generate_series(random_seed)
         start_time = np.datetime64(DEFAULT_START_DATE)
-        timestamps = start_time + np.arange(self.length).astype("timedelta64[D]")
+        timestamps = start_time + np.arange(self.length) * np.timedelta64(
+            1, periodicity
+        )
         return {"timestamps": timestamps, "values": ts}
