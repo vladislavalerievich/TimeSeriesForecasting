@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -44,10 +44,11 @@ class AbstractTimeSeriesGenerator(ABC):
         pass
 
 
-class AbstractGeneratorWrapper:
+class GeneratorWrapper:
     """
-    Abstract base class for generator wrapper implementations.
-    Defines a common interface for all synthetic data generator wrappers.
+    Unified base class for all generator wrappers, combining the logic of the previous
+    AbstractGeneratorWrapper and BaseGeneratorWrapper. Provides parameter sampling,
+    validation, and batch formatting utilities for synthetic data generators.
     """
 
     def __init__(
@@ -57,10 +58,11 @@ class AbstractGeneratorWrapper:
         history_length: Union[int, Tuple[int, int]] = (64, 256),
         target_length: Union[int, Tuple[int, int]] = (32, 256),
         num_channels: Union[int, Tuple[int, int]] = (1, 256),
+        periodicities: List[str] = None,
         **kwargs,
     ):
         """
-        Initialize the AbstractGeneratorWrapper.
+        Initialize the GeneratorWrapper.
 
         Parameters
         ----------
@@ -74,52 +76,46 @@ class AbstractGeneratorWrapper:
             Fixed target length or range (min, max) (default: (32, 256)).
         num_channels : Union[int, Tuple[int, int]], optional
             Fixed number of channels or range (min, max) (default: (1, 256)).
+        periodicities : List[str], optional
+            List of possible periodicities to sample from (default: ["s", "m", "h", "D", "W"]).
         """
         self.global_seed = global_seed
         self.distribution_type = distribution_type
         self.history_length = history_length
         self.target_length = target_length
         self.num_channels = num_channels
-
-        # Set random seeds
+        self.periodicities = (
+            periodicities if periodicities is not None else ["s", "m", "h", "D", "W"]
+        )
         self._set_random_seeds(self.global_seed)
+        self._validate_input_parameters()
 
     def _set_random_seeds(self, seed: int) -> None:
-        """
-        Set random seeds for numpy and torch for reproducibility.
-
-        Parameters
-        ----------
-        seed : int
-            The random seed to set.
-        """
         np.random.seed(seed)
         torch.manual_seed(seed)
+
+    def _validate_input_parameters(self) -> None:
+        tuple_params = {
+            "history_length": self.history_length,
+            "target_length": self.target_length,
+            "num_channels": self.num_channels,
+        }
+        for param_name, param_value in tuple_params.items():
+            if isinstance(param_value, tuple):
+                min_val, max_val = param_value
+                if min_val > max_val:
+                    raise ValueError(
+                        f"For parameter '{param_name}', the minimum value ({min_val}) "
+                        f"cannot exceed the maximum value ({max_val})"
+                    )
 
     def _parse_param_value(
         self,
         param_config: Union[int, float, Tuple[int, float], Tuple[float, float]],
         is_int: bool = True,
     ) -> Union[int, float]:
-        """
-        Parse a parameter configuration which can be either a fixed value or a range.
-        If it's a fixed value, return it directly; if it's a range, sample from it.
-
-        Parameters
-        ----------
-        param_config : Union[int, float, Tuple[int, float], Tuple[float, float]]
-            Parameter configuration, either a fixed value or a (min, max) range.
-        is_int : bool, optional
-            Whether to return an integer value (default: True).
-
-        Returns
-        -------
-        Union[int, float]
-            The fixed value or a sampled value from the range.
-        """
         if isinstance(param_config, (int, float)):
             return int(param_config) if is_int else float(param_config)
-
         min_val, max_val = param_config
         return self._sample_from_range(min_val, max_val, is_int)
 
@@ -129,26 +125,8 @@ class AbstractGeneratorWrapper:
         max_val: Union[int, float],
         is_int: bool = True,
     ) -> Union[int, float]:
-        """
-        Sample a value from the specified range using the configured distribution type.
-
-        Parameters
-        ----------
-        min_val : Union[int, float]
-            Minimum value of the range.
-        max_val : Union[int, float]
-            Maximum value of the range.
-        is_int : bool, optional
-            Whether to return an integer value (default: True).
-
-        Returns
-        -------
-        Union[int, float]
-            A sampled value from the specified range.
-        """
         if min_val == max_val:
             return min_val
-
         if self.distribution_type == "uniform":
             value = np.random.uniform(min_val, max_val)
         elif self.distribution_type == "log_uniform":
@@ -156,39 +134,39 @@ class AbstractGeneratorWrapper:
             value = 10 ** np.random.uniform(log_min, log_max)
         else:
             raise ValueError(f"Unknown distribution type: {self.distribution_type}")
-
         return int(value) if is_int else value
 
     def sample_parameters(self) -> Dict[str, Any]:
-        """
-        Sample parameter values for a batch generation.
+        history_length = self._parse_param_value(self.history_length)
+        target_length = self._parse_param_value(self.target_length)
+        num_channels = self._parse_param_value(self.num_channels)
+        periodicity = np.random.choice(self.periodicities)
+        return {
+            "history_length": history_length,
+            "target_length": target_length,
+            "num_channels": num_channels,
+            "periodicity": periodicity,
+        }
 
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary containing sampled parameter values.
-        """
-        raise NotImplementedError("Subclasses must implement sample_parameters()")
-
-    def generate_batch(
-        self, batch_size: int, seed: Optional[int] = None, **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Generate a batch of synthetic multivariate time series.
-
-        Parameters
-        ----------
-        batch_size : int
-            Number of time series to generate.
-        seed : int, optional
-            Random seed for this batch (default: None).
-
-        Returns
-        -------
-        Dict[str, Any]
-            A dictionary containing the generated batch data.
-        """
-        raise NotImplementedError("Subclasses must implement generate_batch()")
+    def _split_time_series_data(
+        self,
+        values: np.ndarray,
+        timestamps: np.ndarray,
+        history_length: int,
+        target_length: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray, np.ndarray]:
+        history_values = torch.tensor(
+            values[:, :history_length, :], dtype=torch.float32
+        )
+        future_values = torch.tensor(
+            values[:, history_length : history_length + target_length, :],
+            dtype=torch.float32,
+        )
+        history_timestamps = timestamps[:, :history_length]
+        target_timestamps = timestamps[
+            :, history_length : history_length + target_length
+        ]
+        return history_values, future_values, history_timestamps, target_timestamps
 
     def format_to_container(
         self,
@@ -198,28 +176,35 @@ class AbstractGeneratorWrapper:
         target_length: int,
         batch_size: int,
         num_channels: int,
-    ) -> Any:
-        """
-        Format generated time series data into a container format.
+    ):
+        from src.data_handling.data_containers import BatchTimeSeriesContainer
+        from src.data_handling.time_features import compute_time_features
 
-        Parameters
-        ----------
-        values : np.ndarray
-            Generated time series values.
-        timestamps : np.ndarray
-            Generated timestamps.
-        history_length : int
-            Length of the history window.
-        target_length : int
-            Length of the target window.
-        batch_size : int
-            Number of time series in the batch.
-        num_channels : int
-            Number of channels in each time series.
+        history_values, future_values, history_timestamps, target_timestamps = (
+            self._split_time_series_data(
+                values, timestamps, history_length, target_length
+            )
+        )
+        history_time_features = compute_time_features(
+            history_timestamps, include_subday=True
+        )
+        target_time_features = compute_time_features(
+            target_timestamps, include_subday=True
+        )
+        target_index = torch.randint(0, num_channels, (batch_size,))
+        target_values = torch.zeros((batch_size, target_length), dtype=torch.float32)
+        for i in range(batch_size):
+            target_values[i] = future_values[i, :, target_index[i]]
+        return BatchTimeSeriesContainer(
+            history_values=history_values,
+            target_values=target_values,
+            target_index=target_index,
+            history_time_features=history_time_features,
+            target_time_features=target_time_features,
+            static_features=None,
+            history_mask=None,
+            target_mask=None,
+        )
 
-        Returns
-        -------
-        Any
-            A container with the formatted time series data.
-        """
-        raise NotImplementedError("Subclasses must implement format_to_container()")
+    def generate_batch(self, batch_size: int, seed: Optional[int] = None, **kwargs):
+        raise NotImplementedError("Subclasses must implement generate_batch()")

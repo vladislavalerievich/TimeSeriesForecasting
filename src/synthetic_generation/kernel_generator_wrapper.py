@@ -4,12 +4,12 @@ import numpy as np
 import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
-from src.synthetic_generation.base_generator_wrapper import BaseGeneratorWrapper
+from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.constants import DEFAULT_START_DATE
 from src.synthetic_generation.kernel_synth import KernelSynthGenerator
 
 
-class KernelGeneratorWrapper(BaseGeneratorWrapper):
+class KernelGeneratorWrapper(GeneratorWrapper):
     """
     Wrapper for KernelSynthGenerator to generate batches of multivariate time series data
     by stacking multiple univariate series.
