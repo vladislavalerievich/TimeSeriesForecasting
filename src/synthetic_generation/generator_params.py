@@ -25,3 +25,18 @@ class GeneratorParams:
         for k, v in kwargs.items():
             if hasattr(self, k):
                 setattr(self, k, v)
+
+
+@dataclass
+class LMCGeneratorParams(GeneratorParams):
+    max_kernels: int = 5
+    dirichlet_min: float = 0.1
+    dirichlet_max: float = 2.0
+    scale: float = 1.0
+    weibull_shape: float = 2.0
+    weibull_scale: int = 1
+
+
+@dataclass
+class KernelGeneratorParams(GeneratorParams):
+    max_kernels: int = 5

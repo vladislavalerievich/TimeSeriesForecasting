@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -6,17 +6,8 @@ import torch
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.constants import DEFAULT_START_DATE
-from src.synthetic_generation.generator_params import GeneratorParams
+from src.synthetic_generation.generator_params import LMCGeneratorParams
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
-
-
-class LMCGeneratorParams(GeneratorParams):
-    max_kernels: int = 5
-    dirichlet_min: float = 0.1
-    dirichlet_max: float = 2.0
-    scale: float = 1.0
-    weibull_shape: float = 2.0
-    weibull_scale: int = 1
 
 
 class LMCGeneratorWrapper(GeneratorWrapper):
@@ -64,7 +55,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         batch_size: int,
         periodicity: str,
         seed: Optional[int] = None,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple:
         """
         Generate a batch of time series using the LMCSynthGenerator.
 

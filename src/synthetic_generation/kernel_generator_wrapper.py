@@ -1,17 +1,11 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional
 
 import numpy as np
-import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
-from src.synthetic_generation.constants import DEFAULT_START_DATE
-from src.synthetic_generation.generator_params import GeneratorParams
+from src.synthetic_generation.generator_params import KernelGeneratorParams
 from src.synthetic_generation.kernel_synth import KernelSynthGenerator
-
-
-class KernelGeneratorParams(GeneratorParams):
-    max_kernels: int = 5
 
 
 class KernelGeneratorWrapper(GeneratorWrapper):
@@ -33,19 +27,9 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         Dict[str, Any]
             Dictionary containing sampled parameter values.
         """
-        # Get common parameters from parent class
         params = super().sample_parameters()
-
-        # Sample Kernel-specific parameters
         max_kernels = self.params.max_kernels
-
-        # Add Kernel-specific parameters to the dictionary
-        params.update(
-            {
-                "max_kernels": max_kernels,
-            }
-        )
-
+        params.update({"max_kernels": max_kernels})
         return params
 
     def _generate_univariate_time_series(
@@ -76,7 +60,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         length: int,
         max_kernels: int,
         seed: Optional[int] = None,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple:
         """
         Generate a single multivariate time series by stacking multiple univariate series.
 
@@ -96,28 +80,19 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         Tuple[np.ndarray, np.ndarray]
             Tuple containing (values, timestamps).
         """
-        # Initialize the generator
         generator = KernelSynthGenerator(
             length=length,
             max_kernels=max_kernels,
         )
-
-        # Generate univariate series for each channel
         values = []
         timestamps = None
-
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
             result = self._generate_univariate_time_series(generator, channel_seed)
             values.append(result["values"])
-
-            # Use the same timestamps for all channels
             if timestamps is None:
                 timestamps = result["timestamps"]
-
-        # Stack the univariate series to form a multivariate series
-        values = np.column_stack(values)  # Shape: (length, num_channels)
-
+        values = np.column_stack(values)
         return values, timestamps
 
     def _generate_time_series_batch(
@@ -127,7 +102,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         length: int,
         max_kernels: int,
         seed: Optional[int] = None,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple:
         """
         Generate a batch of multivariate time series.
 
@@ -151,7 +126,6 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         """
         batch_values = []
         batch_timestamps = []
-
         for i in range(batch_size):
             batch_seed = None if seed is None else seed + i * num_channels
             values, timestamps = self._generate_multivariate_time_series(
@@ -162,10 +136,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             )
             batch_values.append(values)
             batch_timestamps.append(timestamps)
-
-        # Reshape values to (batch_size, length, num_channels)
         batch_values = np.array(batch_values).transpose(0, 1, 2)
-
         return batch_values, np.array(batch_timestamps)
 
     def generate_batch(
@@ -191,22 +162,15 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         BatchTimeSeriesContainer
             A container with the generated time series data.
         """
-        # Set seeds if provided
         if seed is not None:
             self._set_random_seeds(seed)
-
-        # Sample parameters if not provided
         if params is None:
             params = self.sample_parameters()
-
         history_length = params["history_length"]
         target_length = params["target_length"]
         num_channels = params["num_channels"]
         max_kernels = params["max_kernels"]
-
         total_length = history_length + target_length
-
-        # Generate batch of time series
         batch_values, batch_timestamps = self._generate_time_series_batch(
             batch_size=batch_size,
             num_channels=num_channels,
@@ -214,8 +178,6 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             max_kernels=max_kernels,
             seed=seed,
         )
-
-        # Format the data into a BatchTimeSeriesContainer
         return self.format_to_container(
             values=batch_values,
             timestamps=batch_timestamps,
