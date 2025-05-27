@@ -1,13 +1,13 @@
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 from tqdm import tqdm
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
-from synthetic_generation.abstract_classes import AbstractGeneratorWrapper
+from src.synthetic_generation.abstract_classes import GeneratorWrapper
 
 # Configure logging
 logging.basicConfig(
@@ -24,7 +24,7 @@ class DatasetComposer:
 
     def __init__(
         self,
-        generator_proportions: Dict[AbstractGeneratorWrapper, float],
+        generator_proportions: Dict[GeneratorWrapper, float],
         global_seed: int = 42,
     ):
         """
@@ -32,7 +32,7 @@ class DatasetComposer:
 
         Parameters
         ----------
-        generator_proportions : Dict[AbstractGeneratorWrapper, float]
+        generator_proportions : Dict[GeneratorWrapper, float]
             Dictionary mapping generator wrappers to their proportions in the dataset.
             The proportions should sum to 1.0.
         global_seed : int, optional
@@ -58,9 +58,7 @@ class DatasetComposer:
                 f"Generator proportions should sum to 1.0, got {total_proportion}"
             )
 
-    def _compute_batch_counts(
-        self, num_batches: int
-    ) -> Dict[AbstractGeneratorWrapper, int]:
+    def _compute_batch_counts(self, num_batches: int) -> Dict[GeneratorWrapper, int]:
         """
         Compute the number of batches to generate from each generator.
 
@@ -71,7 +69,7 @@ class DatasetComposer:
 
         Returns
         -------
-        Dict[AbstractGeneratorWrapper, int]
+        Dict[GeneratorWrapper, int]
             Dictionary mapping generator wrappers to the number of batches to generate.
         """
         batch_counts = {}

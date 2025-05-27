@@ -6,75 +6,28 @@ import torch
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.constants import DEFAULT_START_DATE
+from src.synthetic_generation.generator_params import GeneratorParams
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
+
+
+class LMCGeneratorParams(GeneratorParams):
+    max_kernels: int = 5
+    dirichlet_min: float = 0.1
+    dirichlet_max: float = 2.0
+    scale: float = 1.0
+    weibull_shape: float = 2.0
+    weibull_scale: int = 1
 
 
 class LMCGeneratorWrapper(GeneratorWrapper):
     """
     Wrapper for LMCSynthGenerator to generate batches of multivariate time series data.
+    Accepts an LMCGeneratorParams dataclass for configuration.
     """
 
-    def __init__(
-        self,
-        global_seed: int = 42,
-        distribution_type: str = "uniform",
-        history_length: Union[int, Tuple[int, int]] = (64, 256),
-        target_length: Union[int, Tuple[int, int]] = (32, 256),
-        num_channels: Union[int, Tuple[int, int]] = (1, 256),
-        max_kernels: Union[int, Tuple[int, int]] = (1, 10),
-        dirichlet_min: Union[float, Tuple[float, float]] = (0.1, 1.0),
-        dirichlet_max: Union[float, Tuple[float, float]] = (1.0, 5.0),
-        scale: Union[float, Tuple[float, float]] = (0.5, 2.0),
-        weibull_shape: Union[float, Tuple[float, float]] = (1.0, 5.0),
-        weibull_scale: Union[int, Tuple[int, int]] = (1, 3),
-        periodicities: List[str] = None,
-    ):
-        """
-        Initialize the LMCGeneratorWrapper.
-
-        Parameters
-        ----------
-        global_seed : int, optional
-            Global random seed for reproducibility (default: 42).
-        distribution_type : str, optional
-            Type of distribution to use for sampling parameters ("uniform" or "log_uniform", default: "uniform").
-        history_length : Union[int, Tuple[int, int]], optional
-            Fixed history length or range (min, max) (default: (64, 256)).
-        target_length : Union[int, Tuple[int, int]], optional
-            Fixed target length or range (min, max) (default: (32, 256)).
-        num_channels : Union[int, Tuple[int, int]], optional
-            Fixed number of channels or range (min, max) (default: (1, 256)).
-        max_kernels : Union[int, Tuple[int, int]], optional
-            Fixed max_kernels value or range (min, max) (default: (1, 10)).
-        dirichlet_min : Union[float, Tuple[float, float]], optional
-            Fixed dirichlet_min value or range (min, max) (default: (0.1, 1.0)).
-        dirichlet_max : Union[float, Tuple[float, float]], optional
-            Fixed dirichlet_max value or range (min, max) (default: (1.0, 5.0)).
-        scale : Union[float, Tuple[float, float]], optional
-            Fixed scale value or range (min, max) (default: (0.5, 2.0)).
-        weibull_shape : Union[float, Tuple[float, float]], optional
-            Fixed weibull_shape value or range (min, max) (default: (1.0, 5.0)).
-        weibull_scale : Union[int, Tuple[int, int]], optional
-            Fixed weibull_scale value or range (min, max) (default: (1, 3)).
-        periodicities : List[str], optional
-            List of possible periodicities to sample from (default: ["s", "m", "h", "D", "W"]).
-        """
-        super().__init__(
-            global_seed=global_seed,
-            distribution_type=distribution_type,
-            history_length=history_length,
-            target_length=target_length,
-            num_channels=num_channels,
-            periodicities=periodicities,
-        )
-
-        # LMC-specific parameters
-        self.max_kernels = max_kernels
-        self.dirichlet_min = dirichlet_min
-        self.dirichlet_max = dirichlet_max
-        self.scale = scale
-        self.weibull_shape = weibull_shape
-        self.weibull_scale = weibull_scale
+    def __init__(self, params: LMCGeneratorParams):
+        super().__init__(params)
+        self.params: LMCGeneratorParams = params
 
     def sample_parameters(self) -> Dict[str, Any]:
         """
@@ -85,22 +38,14 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         Dict[str, Any]
             Dictionary containing sampled parameter values.
         """
-        # Get common parameters from parent class
         params = super().sample_parameters()
-
-        # Sample LMC-specific parameters
-        max_kernels = self._parse_param_value(self.max_kernels)
-        dirichlet_min = self._parse_param_value(self.dirichlet_min, is_int=False)
-        dirichlet_max = self._parse_param_value(self.dirichlet_max, is_int=False)
-        scale = self._parse_param_value(self.scale, is_int=False)
-        weibull_shape = self._parse_param_value(self.weibull_shape, is_int=False)
-        weibull_scale = self._parse_param_value(self.weibull_scale)
-
-        # Ensure dirichlet_min < dirichlet_max
-        if dirichlet_min > dirichlet_max:
-            dirichlet_min, dirichlet_max = dirichlet_max, dirichlet_min
-
-        # Add LMC-specific parameters to the dictionary
+        # LMC-specific parameters
+        max_kernels = self.params.max_kernels
+        dirichlet_min = self.params.dirichlet_min
+        dirichlet_max = self.params.dirichlet_max
+        scale = self.params.scale
+        weibull_shape = self.params.weibull_shape
+        weibull_scale = self.params.weibull_scale
         params.update(
             {
                 "max_kernels": max_kernels,
@@ -111,7 +56,6 @@ class LMCGeneratorWrapper(GeneratorWrapper):
                 "weibull_scale": weibull_scale,
             }
         )
-
         return params
 
     def _generate_time_series_batch(

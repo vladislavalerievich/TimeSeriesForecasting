@@ -6,56 +6,23 @@ import torch
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.constants import DEFAULT_START_DATE
+from src.synthetic_generation.generator_params import GeneratorParams
 from src.synthetic_generation.kernel_synth import KernelSynthGenerator
+
+
+class KernelGeneratorParams(GeneratorParams):
+    max_kernels: int = 5
 
 
 class KernelGeneratorWrapper(GeneratorWrapper):
     """
     Wrapper for KernelSynthGenerator to generate batches of multivariate time series data
-    by stacking multiple univariate series.
+    by stacking multiple univariate series. Accepts a KernelGeneratorParams dataclass for configuration.
     """
 
-    def __init__(
-        self,
-        global_seed: int = 42,
-        distribution_type: str = "uniform",
-        history_length: Union[int, Tuple[int, int]] = (64, 256),
-        target_length: Union[int, Tuple[int, int]] = (32, 256),
-        num_channels: Union[int, Tuple[int, int]] = (1, 256),
-        max_kernels: Union[int, Tuple[int, int]] = (1, 5),
-        periodicities: List[str] = None,
-    ):
-        """
-        Initialize the KernelGeneratorWrapper.
-
-        Parameters
-        ----------
-        global_seed : int, optional
-            Global random seed for reproducibility (default: 42).
-        distribution_type : str, optional
-            Type of distribution to use for sampling parameters ("uniform" or "log_uniform", default: "uniform").
-        history_length : Union[int, Tuple[int, int]], optional
-            Fixed history length or range (min, max) (default: (64, 256)).
-        target_length : Union[int, Tuple[int, int]], optional
-            Fixed target length or range (min, max) (default: (32, 256)).
-        num_channels : Union[int, Tuple[int, int]], optional
-            Fixed number of channels or range (min, max) (default: (1, 256)).
-        max_kernels : Union[int, Tuple[int, int]], optional
-            Fixed max_kernels value or range (min, max) (default: (1, 5)).
-        periodicities : List[str], optional
-            List of possible periodicities to sample from (default: ["s", "m", "h", "D", "W"]).
-        """
-        super().__init__(
-            global_seed=global_seed,
-            distribution_type=distribution_type,
-            history_length=history_length,
-            target_length=target_length,
-            num_channels=num_channels,
-            periodicities=periodicities,
-        )
-
-        # Kernel-specific parameters
-        self.max_kernels = max_kernels
+    def __init__(self, params: KernelGeneratorParams):
+        super().__init__(params)
+        self.params: KernelGeneratorParams = params
 
     def sample_parameters(self) -> Dict[str, Any]:
         """
@@ -70,7 +37,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         params = super().sample_parameters()
 
         # Sample Kernel-specific parameters
-        max_kernels = self._parse_param_value(self.max_kernels)
+        max_kernels = self.params.max_kernels
 
         # Add Kernel-specific parameters to the dictionary
         params.update(

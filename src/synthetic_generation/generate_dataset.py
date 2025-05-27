@@ -1,11 +1,16 @@
 import argparse
 import logging
 import os
-from typing import Dict
 
 from src.synthetic_generation.dataset_composer import DatasetComposer
-from src.synthetic_generation.kernel_generator_wrapper import KernelGeneratorWrapper
-from src.synthetic_generation.lmc_generator_wrapper import LMCGeneratorWrapper
+from src.synthetic_generation.kernel_generator_wrapper import (
+    KernelGeneratorParams,
+    KernelGeneratorWrapper,
+)
+from src.synthetic_generation.lmc_generator_wrapper import (
+    LMCGeneratorParams,
+    LMCGeneratorWrapper,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -120,20 +125,23 @@ def main():
 
     kernel_proportion = 1.0 - args.lmc_proportion
 
-    # Create generator wrappers
-    lmc_generator = LMCGeneratorWrapper(
+    # Create generator params dataclasses
+    lmc_params = LMCGeneratorParams(
+        global_seed=args.seed,
+        history_length=history_length,
+        target_length=target_length,
+        num_channels=num_channels,
+    )
+    kernel_params = KernelGeneratorParams(
         global_seed=args.seed,
         history_length=history_length,
         target_length=target_length,
         num_channels=num_channels,
     )
 
-    kernel_generator = KernelGeneratorWrapper(
-        global_seed=args.seed,
-        history_length=history_length,
-        target_length=target_length,
-        num_channels=num_channels,
-    )
+    # Create generator wrappers
+    lmc_generator = LMCGeneratorWrapper(lmc_params)
+    kernel_generator = KernelGeneratorWrapper(kernel_params)
 
     # Create generator proportions dictionary
     generator_proportions = {

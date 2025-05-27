@@ -1,24 +1,18 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
+
+from src.synthetic_generation.generator_params import GeneratorParams
 
 
 class AbstractTimeSeriesGenerator(ABC):
     """
     Abstract base class for synthetic time series generators.
 
-    All concrete implementations must define `generate_time_series` and `length`.
+    All concrete implementations must define `generate_time_series`.
     """
-
-    @property
-    @abstractmethod
-    def length(self) -> int:
-        """
-        Length of the generated time series.
-        """
-        pass
 
     @abstractmethod
     def generate_time_series(
@@ -46,48 +40,21 @@ class AbstractTimeSeriesGenerator(ABC):
 
 class GeneratorWrapper:
     """
-    Unified base class for all generator wrappers, combining the logic of the previous
-    AbstractGeneratorWrapper and BaseGeneratorWrapper. Provides parameter sampling,
-    validation, and batch formatting utilities for synthetic data generators.
+    Unified base class for all generator wrappers, using a GeneratorParams dataclass
+    for configuration. Provides parameter sampling, validation, and batch formatting utilities.
     """
 
-    def __init__(
-        self,
-        global_seed: int = 42,
-        distribution_type: str = "uniform",
-        history_length: Union[int, Tuple[int, int]] = (64, 256),
-        target_length: Union[int, Tuple[int, int]] = (32, 256),
-        num_channels: Union[int, Tuple[int, int]] = (1, 256),
-        periodicities: List[str] = None,
-        **kwargs,
-    ):
+    def __init__(self, params: GeneratorParams):
         """
-        Initialize the GeneratorWrapper.
+        Initialize the GeneratorWrapper with a GeneratorParams dataclass.
 
         Parameters
         ----------
-        global_seed : int, optional
-            Global random seed for reproducibility (default: 42).
-        distribution_type : str, optional
-            Type of distribution to use for sampling parameters ("uniform" or "log_uniform", default: "uniform").
-        history_length : Union[int, Tuple[int, int]], optional
-            Fixed history length or range (min, max) (default: (64, 256)).
-        target_length : Union[int, Tuple[int, int]], optional
-            Fixed target length or range (min, max) (default: (32, 256)).
-        num_channels : Union[int, Tuple[int, int]], optional
-            Fixed number of channels or range (min, max) (default: (1, 256)).
-        periodicities : List[str], optional
-            List of possible periodicities to sample from (default: ["s", "m", "h", "D", "W"]).
+        params : GeneratorParams
+            Dataclass instance containing all generator configuration parameters.
         """
-        self.global_seed = global_seed
-        self.distribution_type = distribution_type
-        self.history_length = history_length
-        self.target_length = target_length
-        self.num_channels = num_channels
-        self.periodicities = (
-            periodicities if periodicities is not None else ["s", "m", "h", "D", "W"]
-        )
-        self._set_random_seeds(self.global_seed)
+        self.params = params
+        self._set_random_seeds(self.params.global_seed)
         self._validate_input_parameters()
 
     def _set_random_seeds(self, seed: int) -> None:
@@ -96,9 +63,9 @@ class GeneratorWrapper:
 
     def _validate_input_parameters(self) -> None:
         tuple_params = {
-            "history_length": self.history_length,
-            "target_length": self.target_length,
-            "num_channels": self.num_channels,
+            "history_length": self.params.history_length,
+            "target_length": self.params.target_length,
+            "num_channels": self.params.num_channels,
         }
         for param_name, param_value in tuple_params.items():
             if isinstance(param_value, tuple):
@@ -127,20 +94,22 @@ class GeneratorWrapper:
     ) -> Union[int, float]:
         if min_val == max_val:
             return min_val
-        if self.distribution_type == "uniform":
+        if self.params.distribution_type == "uniform":
             value = np.random.uniform(min_val, max_val)
-        elif self.distribution_type == "log_uniform":
+        elif self.params.distribution_type == "log_uniform":
             log_min, log_max = np.log10(min_val), np.log10(max_val)
             value = 10 ** np.random.uniform(log_min, log_max)
         else:
-            raise ValueError(f"Unknown distribution type: {self.distribution_type}")
+            raise ValueError(
+                f"Unknown distribution type: {self.params.distribution_type}"
+            )
         return int(value) if is_int else value
 
     def sample_parameters(self) -> Dict[str, Any]:
-        history_length = self._parse_param_value(self.history_length)
-        target_length = self._parse_param_value(self.target_length)
-        num_channels = self._parse_param_value(self.num_channels)
-        periodicity = np.random.choice(self.periodicities)
+        history_length = self._parse_param_value(self.params.history_length)
+        target_length = self._parse_param_value(self.params.target_length)
+        num_channels = self._parse_param_value(self.params.num_channels)
+        periodicity = np.random.choice(self.params.periodicities)
         return {
             "history_length": history_length,
             "target_length": target_length,
