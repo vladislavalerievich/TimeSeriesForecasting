@@ -77,8 +77,8 @@ def plot_synthetic_uts(
 
 
 if __name__ == "__main__":
-    from src.synthetic_generation.sine_wave import generate_sine_batch
-    from src.synthetic_generation.step import generate_step_batch
+    from synthetic_generation.sine_wave_generator import generate_sine_batch
+    from synthetic_generation.step_generator import generate_step_batch
 
     seq_lens = [128, 256, 512, 640]
 

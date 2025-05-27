@@ -4,7 +4,7 @@ model_save_name_prefix: GatedDeltaNet_rtx_2080_allow_neg_eigval_False
 continue_training: false
 seed: 2025
 debugging: false
-wandb: true # whether to log to wandb for testing
+wandb: false # whether to log to wandb for testing
 
 lr_scheduler: cosine
 initial_lr: 0.00001

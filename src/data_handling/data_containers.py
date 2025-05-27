@@ -11,6 +11,8 @@ class StaticFeaturesDataContainer:
     Each tensor should have shape [batch_size, num_channels].
     """
 
+    frequency: torch.Tensor
+
     # --- Core Statistics ---
     mean: torch.Tensor
     std: torch.Tensor
@@ -25,6 +27,7 @@ class StaticFeaturesDataContainer:
     def __post_init__(self):
         """Validate that all feature tensors have consistent shapes and types."""
         feature_list = [
+            self.frequency,
             self.mean,
             self.std,
             self.median,
@@ -49,6 +52,7 @@ class StaticFeaturesDataContainer:
     def get_feature_tensors(self) -> List[torch.Tensor]:
         """Returns a list of available (non-None) feature tensors."""
         feature_list = [
+            self.frequency,
             self.mean,
             self.std,
             self.median,
@@ -98,6 +102,7 @@ class StaticFeaturesDataContainer:
             RuntimeError: If device transfer fails for any tensor.
         """
         # Move required tensor attributes
+        self.frequency = self.frequency.to(device)
         self.mean = self.mean.to(device)
         self.std = self.std.to(device)
         self.median = self.median.to(device)

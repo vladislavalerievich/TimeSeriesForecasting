@@ -4,9 +4,7 @@ import os
 import torch
 
 from src.plotting.plot_multivariate_timeseries import plot_from_container
-from src.synthetic_generation.multivariate_time_series_generator import (
-    MultivariateTimeSeriesGenerator,
-)
+from src.synthetic_generation.lmc_generator_wrapper import LMCGeneratorWrapper
 
 # Configure logging
 logging.basicConfig(
@@ -46,7 +44,7 @@ def visualize_batch_samples(
     logger.info(f"Saving plots to {output_dir}")
 
     # Create generator and generate batch
-    generator = MultivariateTimeSeriesGenerator(global_seed=global_seed)
+    generator = LMCGeneratorWrapper(global_seed=global_seed)
     batch = generator.generate_batch(
         batch_size=batch_size,
         history_length=history_length,
