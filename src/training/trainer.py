@@ -11,14 +11,26 @@ import torch.optim as optim
 import torchmetrics
 import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
 from plotting.plot_multivariate_timeseries import plot_from_container
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.models.models import MultiStepModel
-from src.synthetic_generation.multivariate_time_series_generator import (
-    MultivariateTimeSeriesGenerator,
+from src.synthetic_generation.data_loaders import (
+    SyntheticTrainDataLoader,
+    SyntheticValidationDataLoader,
+)
+from src.synthetic_generation.dataset_composer import (
+    DatasetComposer,
+    OnTheFlyDatasetGenerator,
+)
+from src.synthetic_generation.kernel_generator_wrapper import (
+    KernelGeneratorParams,
+    KernelGeneratorWrapper,
+)
+from src.synthetic_generation.lmc_generator_wrapper import (
+    LMCGeneratorParams,
+    LMCGeneratorWrapper,
 )
 from src.utils.utils import (
     device,
@@ -33,36 +45,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class SyntheticDataset(IterableDataset):
-    def __init__(
-        self,
-        generator,
-        batch_size,
-        num_batches,
-        history_length,
-        target_length,
-        num_channels,
-        max_target_channels,
-    ):
-        self.generator = generator
-        self.batch_size = batch_size
-        self.num_batches = num_batches
-        self.history_length = history_length
-        self.target_length = target_length
-        self.num_channels = num_channels
-        self.max_target_channels = max_target_channels
-
-    def __iter__(self):
-        for _ in range(self.num_batches):
-            yield self.generator.generate_batch(
-                batch_size=self.batch_size,
-                history_length=self.history_length,
-                target_length=self.target_length,
-                num_channels=self.num_channels,
-                max_target_channels=self.max_target_channels,
-            )
-
-
 class TrainingPipeline:
     def __init__(self, config: Dict):
         self.config = config
@@ -72,6 +54,7 @@ class TrainingPipeline:
         self.scheduler = None
         self.criterion = None
         self.train_loader = None
+        self.val_loader = None
         self.initial_epoch = 0
 
         logger.info("Initializing training pipeline...")
@@ -97,42 +80,55 @@ class TrainingPipeline:
         self.config["model_save_name"] = generate_model_save_name(self.config)
         self._load_checkpoint()
 
-        # Initialize the synthetic data generator
-        self.generator = MultivariateTimeSeriesGenerator(
+        # --- Synthetic Data Generation Setup ---
+        lmc_params = LMCGeneratorParams(
             global_seed=self.config["seed"],
-            history_length=96,
-            target_length=96,
-            num_channels=160,
-            max_target_channels=self.config["max_target_channels"],
+            history_length=self.config.get("history_length", 256),
+            target_length=self.config.get("target_length", 64),
+            num_channels=self.config.get("num_channels", (1, 8)),
+        )
+        kernel_params = KernelGeneratorParams(
+            global_seed=self.config["seed"],
+            history_length=self.config.get("history_length", 256),
+            target_length=self.config.get("target_length", 64),
+            num_channels=self.config.get("num_channels", (1, 8)),
+        )
+        lmc_gen = LMCGeneratorWrapper(lmc_params)
+        kernel_gen = KernelGeneratorWrapper(kernel_params)
+        generator_proportions = {
+            lmc_gen: self.config.get("lmc_proportion", 0.85),
+            kernel_gen: 1.0 - self.config.get("lmc_proportion", 0.85),
+        }
+        composer = DatasetComposer(
+            generator_proportions=generator_proportions, global_seed=self.config["seed"]
         )
 
-        # Generate fixed validation batch
-        self.val_data = self.generator.generate_batch(
+        # On-the-fly training data loader
+        on_the_fly_gen = OnTheFlyDatasetGenerator(
+            composer=composer,
             batch_size=self.config["batch_size"],
-            seed=self.config["seed"],
-            history_length=96,
-            target_length=96,
-            num_channels=160,
-            max_target_channels=self.config["max_target_channels"],
+            buffer_size=10,
+            global_seed=self.config["seed"],
+        )
+        self.train_loader = SyntheticTrainDataLoader(
+            generator=on_the_fly_gen,
+            num_batches_per_epoch=self.config["num_training_iterations_per_epoch"],
+            device=self.device,
         )
 
-        # Setup training data loader with synthetic data
-        synthetic_dataset = SyntheticDataset(
-            self.generator,
-            batch_size=self.config["batch_size"],
-            num_batches=self.config["num_training_iterations_per_epoch"],
-            history_length=96,
-            target_length=96,
-            num_channels=160,
-            max_target_channels=self.max_target_channels,
+        # Fixed validation data loader (load all batches from disk)
+        val_data_path = self.config.get(
+            "val_data_path",
+            "data/synthetic_val_data_lmc_75_kernel_25_batches_10_batch_size_64",
         )
-        self.train_loader = DataLoader(synthetic_dataset, batch_size=None)
+        self.val_loader = SyntheticValidationDataLoader(
+            data_path=val_data_path,
+            device=self.device,
+        )
 
-        # Setup loss function
+        # Setup loss function, metrics, wandb
         self._setup_loss_function()
-
         self._setup_metrics()
-
         self._setup_wandb()
 
     def _setup_optimizer(self) -> None:
@@ -268,38 +264,34 @@ class TrainingPipeline:
         return batch, batch.target_values
 
     def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
-        """Plot fixed validation examples and log to WandB."""
-        fixed_data = self.val_data
+        """Plot the first series from every validation batch and log to WandB."""
         with torch.no_grad():
-            fixed_data.to_device(self.device)
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                fixed_output = self.model(fixed_data, fixed_data.target_values.size(1))
-                _, *scale_params = self._scale_target(
-                    fixed_data.target_values, fixed_output
-                )
-                inv_scaled_fixed_output = self._inverse_scale(
-                    fixed_output["result"], scale_params
-                )
+            for batch_idx, batch in enumerate(self.val_loader):
+                batch.to_device(self.device)
+                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                    output = self.model(batch, batch.target_values.size(1))
+                    _, *scale_params = self._scale_target(batch.target_values, output)
+                    inv_scaled_output = self._inverse_scale(
+                        output["result"], scale_params
+                    )
 
-            for i in range(
-                min(
-                    self.config["num_val_samples_to_plot"],
-                    fixed_data.history_values.shape[0],
-                )
-            ):
-                pred_future = inv_scaled_fixed_output[i].cpu().numpy()
+                # Plot the first series in this batch
+                i = 0
+                pred_future = inv_scaled_output[i].cpu().numpy()
                 fig = plot_from_container(
-                    ts_data=fixed_data,
+                    ts_data=batch,
                     sample_idx=i,
                     predicted_values=pred_future,
-                    title=f"Epoch {epoch} - Example {i + 1} (Val Loss: {avg_val_loss:.4f})",
+                    title=f"Epoch {epoch} - Val Batch {batch_idx + 1} (Val Loss: {avg_val_loss:.4f})",
                     output_file=None,
                     show=False,
                 )
                 if self.config["wandb"]:
-                    wandb.log({f"val_plot_{i}": wandb.Image(fig)})
+                    wandb.log({f"val_plot_batch{batch_idx + 1}": wandb.Image(fig)})
                 plt.close(fig)
-                logger.info(f"Plotted validation sample {i + 1} for epoch {epoch}")
+                logger.info(
+                    f"Plotted validation batch {batch_idx + 1} for epoch {epoch}"
+                )
 
     def _update_metrics(
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
@@ -371,22 +363,27 @@ class TrainingPipeline:
         )
 
     def _validate_epoch(self, epoch: int) -> float:
-        """Validate model on the fixed synthetic validation batch."""
+        """Validate model on all fixed synthetic validation batches."""
         self.model.eval()
         total_val_loss = 0.0
+        num_batches = 0
 
         with torch.no_grad():
-            data, target = self._prepare_batch(self.val_data)
-            pred_len = target.size(1)
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                output = self.model(data, pred_len)
-                scaled_target, *scale_params = self._scale_target(target, output)
-                val_loss = self.criterion(output["result"], scaled_target.half()).item()
-            total_val_loss = val_loss  # Single batch
-            inv_scaled_output = self._inverse_scale(output["result"], scale_params)
-            self._update_metrics(self.val_metrics, inv_scaled_output, target)
+            for batch in self.val_loader:
+                data, target = self._prepare_batch(batch)
+                pred_len = target.size(1)
+                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                    output = self.model(data, pred_len)
+                    scaled_target, *scale_params = self._scale_target(target, output)
+                    val_loss = self.criterion(
+                        output["result"], scaled_target.half()
+                    ).item()
+                total_val_loss += val_loss
+                inv_scaled_output = self._inverse_scale(output["result"], scale_params)
+                self._update_metrics(self.val_metrics, inv_scaled_output, target)
+                num_batches += 1
 
-        avg_val_loss = total_val_loss  # Since it's one batch
+        avg_val_loss = total_val_loss / max(1, num_batches)
         self._plot_fixed_examples(epoch, avg_val_loss)
         logger.info(f"Epoch {epoch + 1} Validation Loss: {avg_val_loss:.4f}")
         return avg_val_loss

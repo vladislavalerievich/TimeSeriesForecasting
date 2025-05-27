@@ -124,7 +124,7 @@ class BatchTimeSeriesContainer:
         history_values: Tensor of historical observations.
             Shape: [batch_size, seq_len, num_channels]
         target_values: Tensor of future observations to predict.
-            Shape: [batch_size, pred_len, num_targets]
+            Shape: [batch_size, pred_len]
         target_index: Tensor of target channel index.
             Shape: [batch_size, 1]
         history_time_features: Tensor of time-derived features for the history timestamps window.
@@ -138,7 +138,7 @@ class BatchTimeSeriesContainer:
             Shape: [batch_size, seq_len]
         target_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
             target values.
-            Shape: [batch_size, pred_len] or [batch_size, pred_len, num_targets]
+            Shape: [batch_size, pred_len]
     """
 
     history_values: torch.Tensor

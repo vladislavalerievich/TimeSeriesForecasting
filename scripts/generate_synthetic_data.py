@@ -23,33 +23,30 @@ if __name__ == "__main__":
     # Set up parameters
     lmc_params = LMCGeneratorParams(
         global_seed=global_seed,
-        history_length=16,
-        target_length=8,
-        num_channels=3,
+        history_length=256,
+        target_length=64,
+        num_channels=[1, 8],
     )
     kernel_params = KernelGeneratorParams(
         global_seed=global_seed,
-        history_length=16,
-        target_length=8,
-        num_channels=3,
+        history_length=256,
+        target_length=64,
+        num_channels=[1, 8],
     )
 
-    # Create generator wrappers
     lmc_gen = LMCGeneratorWrapper(lmc_params)
     kernel_gen = KernelGeneratorWrapper(kernel_params)
 
-    # Compose dataset (50/50 split for demonstration)
-    generator_proportions = {lmc_gen: 0.5, kernel_gen: 0.5}
+    generator_proportions = {lmc_gen: 0.75, kernel_gen: 0.25}
     composer = DatasetComposer(
         generator_proportions=generator_proportions, global_seed=global_seed
     )
 
-    # Directory to save dataset
-    save_dir = "outputs/datasets/synthetic_data"
+    save_dir = "data/synthetic_val_data_lmc_75_kernel_25_batches_10_batch_size_64"
     os.makedirs(save_dir, exist_ok=True)
 
-    print("--- Generating and saving 4 batches to disk ---")
-    composer.save_dataset(output_dir=save_dir, num_batches=4, batch_size=2)
+    print("--- Generating and saving 10 batches to disk ---")
+    composer.save_dataset(output_dir=save_dir, num_batches=10, batch_size=64)
 
     # Load and print shapes from saved dataset
     val_loader = SyntheticValidationDataLoader(data_path=save_dir)

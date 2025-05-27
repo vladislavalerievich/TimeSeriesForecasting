@@ -163,3 +163,4 @@ cython_debug/
 
 # Datasets, logs, plots, etc.
 outputs/
+data/

@@ -13,11 +13,9 @@ loss: mse # mae
 scaler: custom_robust
 
 batch_size: 64
-max_target_channels: 1
 num_epochs: 100
 num_training_iterations_per_epoch: 100
 num_validation_iteration_per_epoch: 10
-num_val_samples_to_plot: 5
 
 BaseModelConfig:
   sin_pos_enc: false
