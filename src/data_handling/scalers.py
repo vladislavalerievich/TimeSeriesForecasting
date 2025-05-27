@@ -117,66 +117,63 @@ def min_max_scaler_multivariate(inputs, epsilon):
     return (max_values, min_values), inputs_scaled.to(torch.float32)
 
 
-def rescale_custom_robust(predictions, scale_params, target_indices):
+def rescale_custom_robust(predictions, scale_params, target_index):
     """
     Rescale predictions using the custom robust scaling parameters.
 
     Args:
-        predictions: Tensor of shape [batch_size, pred_len, num_targets]
+        predictions: Tensor of shape [batch_size, pred_len, 1]
         scale_params: Tuple of (medians, iqrs) as returned by custom_scaler_robust_multivariate
-        target_indices: Tensor of shape [batch_size, num_targets] mapping predictions to original channels
+        target_index: Tensor of shape [batch_size, 1] specifying the target channel for each batch item
 
     Returns:
-        Rescaled predictions with shape [batch_size, pred_len, num_targets]
+        Rescaled predictions with shape [batch_size, pred_len, 1]
     """
     medians, iqrs = scale_params
-    batch_size, pred_len, num_targets = predictions.shape
+    batch_size, pred_len, _ = predictions.shape
 
     # Rescale predictions
     rescaled = torch.zeros_like(predictions)
 
     for b in range(batch_size):
-        for t in range(num_targets):
-            # Get the original channel index for this target
-            channel_idx = target_indices[b, t].item()
+        # Get the target channel index for this batch item
+        channel_idx = target_index[b, 0].long()
 
-            # Rescale using the appropriate parameters
-            rescaled[b, :, t] = (
-                predictions[b, :, t] * iqrs[b, 0, channel_idx]
-                + medians[b, 0, channel_idx]
-            )
+        # Rescale using the appropriate parameters
+        rescaled[b, :, 0] = (
+            predictions[b, :, 0] * iqrs[b, 0, channel_idx] + medians[b, 0, channel_idx]
+        )
 
     return rescaled
 
 
-def rescale_min_max(predictions, scale_params, target_indices):
+def rescale_min_max(predictions, scale_params, target_index):
     """
     Rescale predictions using the min-max scaling parameters.
 
     Args:
-        predictions: Tensor of shape [batch_size, pred_len, num_targets]
+        predictions: Tensor of shape [batch_size, pred_len, 1]
         scale_params: Tuple of (max_values, min_values) as returned by min_max_scaler_multivariate
-        target_indices: Tensor of shape [batch_size, num_targets] mapping predictions to original channels
+        target_index: Tensor of shape [batch_size, 1] specifying the target channel for each batch item
 
     Returns:
-        Rescaled predictions with shape [batch_size, pred_len, num_targets]
+        Rescaled predictions with shape [batch_size, pred_len, 1]
     """
     max_values, min_values = scale_params
-    batch_size, pred_len, num_targets = predictions.shape
+    batch_size, pred_len, _ = predictions.shape
 
     # Rescale predictions
     rescaled = torch.zeros_like(predictions)
 
     for b in range(batch_size):
-        for t in range(num_targets):
-            # Get the original channel index for this target
-            channel_idx = target_indices[b, t].item()
+        # Get the target channel index for this batch item
+        channel_idx = target_index[b, 0].long()
 
-            # Rescale using the appropriate parameters
-            range_value = max_values[b, 0, channel_idx] - min_values[b, 0, channel_idx]
-            rescaled[b, :, t] = (
-                predictions[b, :, t] * range_value + min_values[b, 0, channel_idx]
-            )
+        # Rescale using the appropriate parameters
+        range_value = max_values[b, 0, channel_idx] - min_values[b, 0, channel_idx]
+        rescaled[b, :, 0] = (
+            predictions[b, :, 0] * range_value + min_values[b, 0, channel_idx]
+        )
 
     return rescaled
 

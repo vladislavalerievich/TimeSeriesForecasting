@@ -173,7 +173,7 @@ class BaseModel(nn.Module):
         """
         history_values = data_container.history_values
         target_values = data_container.target_values
-        target_channels_indices = data_container.target_channels_indices
+        target_index = data_container.target_index
         history_time_features = data_container.history_time_features
         target_time_features = data_container.target_time_features
 
@@ -198,14 +198,13 @@ class BaseModel(nn.Module):
         # Scale target values during training
         target_scaled = None
         if training and target_values is not None:
-            _, num_targets = target_channels_indices.shape
             target_scaled = torch.zeros_like(target_values)
+            # Get scaling parameters for each target channel
             for b in range(batch_size):
-                for t in range(num_targets):
-                    channel_idx = target_channels_indices[b, t].long()
-                    median = history_scale_params[0][b, 0, channel_idx]
-                    iqr = history_scale_params[1][b, 0, channel_idx]
-                    target_scaled[b, :, t] = (target_values[b, :, t] - median) / iqr
+                channel_idx = target_index[b].long()
+                median = history_scale_params[0][b, 0, channel_idx]
+                iqr = history_scale_params[1][b, 0, channel_idx]
+                target_scaled[b, :, 0] = (target_values[b, :, 0] - median) / iqr
 
         # Get positional embeddings for history
         if history_time_features is not None:
@@ -247,13 +246,13 @@ class BaseModel(nn.Module):
 
         # Forecast using the embeddings
         predictions = self.forecast(
-            all_channels_embedded, target_pos_embed, target_channels_indices, pred_len
+            all_channels_embedded, target_pos_embed, target_index, pred_len
         )
 
         return {
             "result": predictions,
             "scale_params": history_scale_params,
-            "target_indices": target_channels_indices,
+            "target_index": target_index,
             "target_scaled": target_scaled,
         }
 
@@ -262,7 +261,7 @@ class BaseModel(nn.Module):
         Compute loss between predictions and pre-scaled ground truth.
 
         Args:
-            y_true: Ground truth target values [batch_size, pred_len, num_targets]
+            y_true: Ground truth target values [batch_size, pred_len, 1]
             y_pred: Dictionary containing predictions and scaling info
 
         Returns:
@@ -270,15 +269,12 @@ class BaseModel(nn.Module):
         """
         predictions = y_pred["result"]
         target_scaled = y_pred["target_scaled"]
-        batch_size, pred_len, num_targets = predictions.shape
 
-        # Use pre-scaled target values
+        # Use pre-scaled target values - no need to normalize by num_targets since it's always 1
         loss = nn.functional.mse_loss(predictions, target_scaled)
-        return loss / num_targets
+        return loss
 
-    def forecast(
-        self, embedded, target_pos_embed, target_channels_indices, prediction_length
-    ):
+    def forecast(self, embedded, target_pos_embed, target_index, prediction_length):
         raise NotImplementedError("Subclasses must implement forecast method")
 
 
@@ -356,34 +352,39 @@ class MultiStepModel(BaseModel):
         self.final_output_layer = nn.Linear(token_embed_dim, 1)
         self.final_activation = nn.Identity()
 
-    def forecast(
-        self, embedded, target_pos_embed, target_channels_indices, prediction_length
-    ):
+    def forecast(self, embedded, target_pos_embed, target_index, prediction_length):
         """
-        Generate forecasts for target channels in parallel.
+        Generate forecasts for target channels specified by target_index.
 
         Args:
             embedded: Embedded history values [batch_size, seq_len, num_channels * embed_size]
             target_pos_embed: Target positional embeddings [batch_size, pred_len, num_channels, embed_size]
-            target_channels_indices: Indices of target channels [batch_size, num_targets]
+            target_index: Indices of target channels [batch_size, 1]
             prediction_length: Length of prediction horizon
 
         Returns:
-            Predictions tensor [batch_size, pred_len, num_targets]
+            Predictions tensor [batch_size, pred_len, 1]
         """
         batch_size, seq_len, _ = embedded.shape
-        num_targets = target_channels_indices.shape[1]
 
         # Reshape embedded to separate channels
         embedded = embedded.view(batch_size, seq_len, -1, self.embed_size)
 
-        # Select target channel embeddings
-        batch_indices = torch.arange(batch_size, device=device).view(-1, 1)
-        target_embedded = embedded[
-            batch_indices, :, target_channels_indices
-        ]  # [batch_size, seq_len, num_targets, embed_size]
+        # Get batch indices for selection
+        batch_indices = torch.arange(batch_size, device=device)
 
-        # Global residual connection
+        # Select target channel embeddings for each item in batch
+        # target_index shape is [batch_size, 1], so we flatten it to [batch_size]
+        target_channel_indices = target_index.view(-1)
+
+        # Select the target channel for each item in the batch
+        # This gives us [batch_size, seq_len, embed_size]
+        target_embedded = embedded[batch_indices, :, target_channel_indices]
+
+        # Add channel dimension back: [batch_size, seq_len, 1, embed_size]
+        target_embedded = target_embedded.unsqueeze(2)
+
+        # Global residual connection if used
         if self.global_residual:
             glob_res = target_embedded[
                 :, -(self.linear_sequence_length + 1) :, :, :
@@ -394,65 +395,64 @@ class MultiStepModel(BaseModel):
                 .repeat(1, prediction_length, 1)
             )
 
-        # target_embedded: [batch_size, seq_len, num_targets, embed_size]
-        target_embedded = target_embedded.permute(
-            0, 2, 1, 3
-        )  # [batch_size, num_targets, seq_len, embed_size]
+        # Permute to [batch_size, 1, seq_len, embed_size]
+        target_embedded = target_embedded.permute(0, 2, 1, 3)
 
-        # Flatten batch and targets dimensions for processing
-        target_embedded = target_embedded.reshape(
-            batch_size * num_targets, seq_len, self.embed_size
-        )
+        # Reshape for processing through layers - we can treat this as a batch with size (batch_size)
+        # since we only have 1 target channel per batch item
+        target_embedded = target_embedded.reshape(batch_size, seq_len, self.embed_size)
 
+        # Project through input projection layer
         x = self.input_projection_layer(
             target_embedded
-        )  # [batch_size * num_targets, seq_len, token_embed_dim]
+        )  # [batch_size, seq_len, token_embed_dim]
 
-        # Pass through encoder layers (keeping the flattened shape)
+        # Pass through encoder layers
         for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)  # [batch_size * num_targets, seq_len, token_embed_dim]
-
-        # Now reshape back to separate batch and targets
-        x = x.reshape(batch_size, num_targets, seq_len, -1)
+            x = encoder_layer(x)  # [batch_size, seq_len, token_embed_dim]
 
         # Apply normalization and activation
         if self.use_gelu and self.initial_gelu is not None:
             x = self.input_projection_norm(x)
             x = self.initial_gelu(x)
 
-        # Get target-specific representations
-        batch_indices = torch.arange(batch_size, device=device).view(-1, 1)
+        # Reshape to restore batch and channel dimensions [batch_size, 1, seq_len, token_embed_dim]
+        x = x.view(batch_size, 1, seq_len, -1)
+
+        # Get target channel-specific position embeddings
+        # Select the target channel positional encoding for each item in the batch
         target_pos_embed_selected = target_pos_embed[
-            batch_indices, :, target_channels_indices
-        ]  # [batch_size, pred_len, num_targets, embed_size]
-        # But this will give [batch_size, pred_len, num_targets, embed_size] if you use advanced indexing
+            batch_indices, :, target_channel_indices
+        ]
 
-        # If needed, permute to [batch_size, num_targets, pred_len, embed_size] for consistency
-        target_pos_embed_selected = target_pos_embed_selected.permute(
-            0, 2, 1, 3
-        )  # [batch_size, num_targets, pred_len, embed_size]
+        # Add channel dimension [batch_size, pred_len, 1, embed_size]
+        target_pos_embed_selected = target_pos_embed_selected.unsqueeze(2)
 
-        # Now project
+        # Permute to [batch_size, 1, pred_len, embed_size]
+        target_pos_embed_selected = target_pos_embed_selected.permute(0, 2, 1, 3)
+
+        # Project to token embedding dimension
         target_repr = self.target_projection(
             target_pos_embed_selected
-        )  # [batch_size, num_targets, pred_len, token_embed_dim]
+        )  # [batch_size, 1, pred_len, token_embed_dim]
 
-        # Permute to [batch_size, num_targets, pred_len, token_embed_dim] if not already
-        # Now, x is [batch_size, num_targets, pred_len, token_embed_dim]
-        # So you can add and predict:
+        # Get the last prediction_length time steps from x
         x_sliced = x[
             :, :, -prediction_length:, :
-        ]  # [batch_size, num_targets, pred_len, token_embed_dim]
-        if x_sliced.shape != target_repr.shape:
-            # Try permuting target_repr
-            if x_sliced.shape == target_repr.permute(0, 2, 1, 3).shape:
-                target_repr = target_repr.permute(0, 2, 1, 3)
-            else:
-                raise ValueError(
-                    f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
-                )
-        predictions = self.final_output_layer(x_sliced + target_repr)
+        ]  # [batch_size, 1, pred_len, token_embed_dim]
 
-        # Squeeze and permute to [batch_size, pred_len, num_targets]
+        # Make sure shapes are compatible before adding
+        if x_sliced.shape != target_repr.shape:
+            raise ValueError(
+                f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
+            )
+
+        # Final prediction
+        predictions = self.final_output_layer(
+            x_sliced + target_repr
+        )  # [batch_size, 1, pred_len, 1]
+
+        # Reshape to [batch_size, pred_len, 1]
         predictions = predictions.squeeze(-1).permute(0, 2, 1)
+
         return predictions
