@@ -226,24 +226,30 @@ class TrainingPipeline:
             max_scale = output["scale_params"][0]  # [batch_size, 1, num_channels]
             min_scale = output["scale_params"][1]
             target_index = output["target_index"]  # [batch_size, 1]
-            max_targets = torch.gather(max_scale, 2, target_index).expand(
-                -1, target.shape[1], -1
-            )
-            min_targets = torch.gather(min_scale, 2, target_index).expand(
-                -1, target.shape[1], -1
-            )
+            index = target_index.unsqueeze(1).unsqueeze(2)  # [B, 1, 1]
+            max_targets = (
+                torch.gather(max_scale, 2, index)
+                .expand(-1, target.shape[1], -1)
+                .squeeze(-1)
+            )  # [B, pred_len]
+            min_targets = (
+                torch.gather(min_scale, 2, index)
+                .expand(-1, target.shape[1], -1)
+                .squeeze(-1)
+            )  # [B, pred_len]
             scaled_target = (target - min_targets) / (max_targets - min_targets)
             return scaled_target, max_targets, min_targets
         else:
             mean = output["scale_params"][0]  # [batch_size, 1, num_channels]
             std = output["scale_params"][1]
             target_index = output["target_index"]  # [batch_size, 1]
-            mean_targets = torch.gather(mean, 2, target_index).expand(
-                -1, target.shape[1], -1
-            )
-            std_targets = torch.gather(std, 2, target_index).expand(
-                -1, target.shape[1], -1
-            )
+            index = target_index.unsqueeze(1).unsqueeze(2)  # [B, 1, 1]
+            mean_targets = (
+                torch.gather(mean, 2, index).expand(-1, target.shape[1], -1).squeeze(-1)
+            )  # [B, pred_len]
+            std_targets = (
+                torch.gather(std, 2, index).expand(-1, target.shape[1], -1).squeeze(-1)
+            )  # [B, pred_len]
             scaled_target = (target - mean_targets) / std_targets
             return scaled_target, mean_targets, std_targets
 
@@ -341,7 +347,9 @@ class TrainingPipeline:
                     data_container=data, training=True, drop_enc_allow=False
                 )
                 scaled_target, *scale_params = self._scale_target(target, output)
-                loss = self.criterion(output["result"], scaled_target.half())
+                loss = self.criterion(
+                    output["result"].squeeze(-1), scaled_target.half()
+                )
 
             loss.backward()
             self.optimizer.step()
@@ -376,7 +384,7 @@ class TrainingPipeline:
                     output = self.model(data, pred_len)
                     scaled_target, *scale_params = self._scale_target(target, output)
                     val_loss = self.criterion(
-                        output["result"], scaled_target.half()
+                        output["result"].squeeze(-1), scaled_target.half()
                     ).item()
                 total_val_loss += val_loss
                 inv_scaled_output = self._inverse_scale(output["result"], scale_params)

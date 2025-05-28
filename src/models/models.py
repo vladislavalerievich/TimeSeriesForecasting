@@ -198,13 +198,16 @@ class BaseModel(nn.Module):
         # Scale target values during training
         target_scaled = None
         if training and target_values is not None:
+            assert target_values.dim() == 2, (
+                "target_values should be [batch_size, pred_len]"
+            )
             target_scaled = torch.zeros_like(target_values)
             # Get scaling parameters for each target channel
             for b in range(batch_size):
                 channel_idx = target_index[b].long()
                 median = history_scale_params[0][b, 0, channel_idx]
                 iqr = history_scale_params[1][b, 0, channel_idx]
-                target_scaled[b, :, 0] = (target_values[b, :, 0] - median) / iqr
+                target_scaled[b, :] = (target_values[b, :] - median) / iqr
 
         # Get positional embeddings for history
         if history_time_features is not None:
