@@ -13,7 +13,7 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
-from plotting.plot_multivariate_timeseries import plot_from_container
+from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.models.models import MultiStepModel
 from src.synthetic_generation.data_loaders import (
@@ -58,6 +58,7 @@ class TrainingPipeline:
         self.initial_epoch = 0
 
         logger.info("Initializing training pipeline...")
+        logger.info(f"Using device: {self.device}")
         logger.info(f"Config: {yaml.dump(config)}")
         self._setup()
 

@@ -37,12 +37,12 @@ if __name__ == "__main__":
     lmc_gen = LMCGeneratorWrapper(lmc_params)
     kernel_gen = KernelGeneratorWrapper(kernel_params)
 
-    generator_proportions = {lmc_gen: 0.75, kernel_gen: 0.25}
+    generator_proportions = {lmc_gen: 0.8, kernel_gen: 0.2}
     composer = DatasetComposer(
         generator_proportions=generator_proportions, global_seed=global_seed
     )
 
-    save_dir = "data/synthetic_val_data_lmc_75_kernel_25_batches_10_batch_size_64"
+    save_dir = "data/synthetic_val_data_lmc_80_kernel_20_batches_10_batch_size_64"
     os.makedirs(save_dir, exist_ok=True)
 
     print("--- Generating and saving 10 batches to disk ---")

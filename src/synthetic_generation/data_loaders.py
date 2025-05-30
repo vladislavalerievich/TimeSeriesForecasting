@@ -4,9 +4,13 @@ from typing import Callable, Iterator, List, Optional
 
 import torch
 from torch.utils.data import DataLoader, Dataset, IterableDataset
+from torch.serialization import add_safe_globals
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.dataset_composer import OnTheFlyDatasetGenerator
+
+# Register BatchTimeSeriesContainer as a safe global for torch.load
+add_safe_globals([BatchTimeSeriesContainer])
 
 
 class SyntheticDataset(Dataset):
