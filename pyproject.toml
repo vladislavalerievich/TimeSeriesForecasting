@@ -7,29 +7,18 @@ authors = [
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.10,<3.13"
 
 dependencies = [
+    "torch>=2.5.0",
+    "torchmetrics",
+    "triton==3.2.0",
     "numpy",
-    "torch>=2.5.0,<2.6.0",
+    "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention@main",
+    "scikit-learn",
     "matplotlib",
     "tqdm",
-    "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention@main",
     "wandb",
-    
-]
-
-[project.optional-dependencies]
-dev = [
-    # -- deploy --
-    "build",
-    # -- ci --
-    "pre-commit",
-    "pytest>=8",
-    "ruff",
-    "mypy",
-    "commitizen",    
-    "black",                # Allows mkdocstrings to do formatting...
 ]
 
 classifiers = [
@@ -47,7 +36,17 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]
 
- 
+[project.optional-dependencies]
+dev = [
+    "build",
+    "pre-commit",
+    "pytest>=8",
+    "ruff",
+    "mypy",
+    "commitizen",
+    "black",
+]
+
 [build-system]
 requires = ["setuptools>=68.2.2", "wheel>=0.41.2"]
 build-backend = "setuptools.build_meta"
