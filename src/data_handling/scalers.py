@@ -124,7 +124,7 @@ def rescale_custom_robust(predictions, scale_params, target_index):
     Args:
         predictions: Tensor of shape [batch_size, pred_len, 1]
         scale_params: Tuple of (medians, iqrs) as returned by custom_scaler_robust_multivariate
-        target_index: Tensor of shape [batch_size, 1] specifying the target channel for each batch item
+        target_index: Tensor of shape [batch_size] specifying the target channel for each batch item
 
     Returns:
         Rescaled predictions with shape [batch_size, pred_len, 1]
@@ -137,7 +137,7 @@ def rescale_custom_robust(predictions, scale_params, target_index):
 
     for b in range(batch_size):
         # Get the target channel index for this batch item
-        channel_idx = target_index[b, 0].long()
+        channel_idx = target_index[b].long()
 
         # Rescale using the appropriate parameters
         rescaled[b, :, 0] = (
@@ -154,7 +154,7 @@ def rescale_min_max(predictions, scale_params, target_index):
     Args:
         predictions: Tensor of shape [batch_size, pred_len, 1]
         scale_params: Tuple of (max_values, min_values) as returned by min_max_scaler_multivariate
-        target_index: Tensor of shape [batch_size, 1] specifying the target channel for each batch item
+        target_index: Tensor of shape [batch_size] specifying the target channel for each batch item
 
     Returns:
         Rescaled predictions with shape [batch_size, pred_len, 1]
@@ -167,7 +167,7 @@ def rescale_min_max(predictions, scale_params, target_index):
 
     for b in range(batch_size):
         # Get the target channel index for this batch item
-        channel_idx = target_index[b, 0].long()
+        channel_idx = target_index[b].long()
 
         # Rescale using the appropriate parameters
         range_value = max_values[b, 0, channel_idx] - min_values[b, 0, channel_idx]
@@ -192,10 +192,54 @@ class CustomScalingMultivariate(nn.Module):
             self.scaler = lambda x, eps: custom_scaler_robust_multivariate(
                 x, eps, clamp=clamp
             )
+            self.rescaler = rescale_custom_robust
         elif name == "min_max":
             self.scaler = min_max_scaler_multivariate
+            self.rescaler = rescale_min_max
         else:
             raise ValueError(f"Unknown scaler name: {name}")
 
     def forward(self, values, epsilon):
+        """
+        Scale input values using the configured scaler.
+
+        Args:
+            values: Input tensor of shape [batch_size, seq_len, num_channels]
+            epsilon: Small value to avoid division by zero
+
+        Returns:
+            Tuple of (scale_params, scaled_values)
+        """
+        if values is None:
+            return None, None
         return self.scaler(values, epsilon)
+
+    def inverse_transform(self, scaled_values, scale_params, target_index=None):
+        """
+        Inverse transform scaled values back to original scale.
+
+        Args:
+            scaled_values: Scaled tensor of shape [batch_size, seq_len, 1] or [batch_size, seq_len]
+            scale_params: Scaling parameters from forward pass
+            target_index: Optional tensor of shape [batch_size] specifying target channels
+
+        Returns:
+            Rescaled tensor with same shape as scaled_values
+        """
+        if scaled_values is None or scale_params is None:
+            return None
+
+        # Ensure scaled_values has shape [batch_size, seq_len, 1]
+        if scaled_values.dim() == 2:
+            scaled_values = scaled_values.unsqueeze(-1)
+
+        if target_index is None:
+            # If no target_index provided, assume we're rescaling all channels
+            target_index = torch.zeros(
+                scaled_values.shape[0], device=scaled_values.device
+            )
+        elif target_index.dim() > 1:
+            # Ensure target_index is 1D
+            target_index = target_index.squeeze(-1)
+
+        return self.rescaler(scaled_values, scale_params, target_index)

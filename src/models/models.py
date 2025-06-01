@@ -169,7 +169,7 @@ class BaseModel(nn.Module):
             drop_enc_allow: Whether to allow dropping encodings
 
         Returns:
-            Dictionary with model outputs
+            Dictionary with model outputs and scaling information
         """
         history_values = data_container.history_values
         target_values = data_container.target_values
@@ -195,59 +195,55 @@ class BaseModel(nn.Module):
         # Scale history values
         history_scale_params, history_scaled = self.scaler(history_values, self.epsilon)
 
-        # Scale target values during training
+        # Scale target values
         target_scaled = None
-        if training and target_values is not None:
+        if target_values is not None:
             assert target_values.dim() == 2, (
                 "target_values should be [batch_size, pred_len]"
             )
+            # Scale target values using the same parameters as history
             target_scaled = torch.zeros_like(target_values)
-            # Get scaling parameters for each target channel
             for b in range(batch_size):
                 channel_idx = target_index[b].long()
-                median = history_scale_params[0][b, 0, channel_idx]
-                iqr = history_scale_params[1][b, 0, channel_idx]
-                target_scaled[b, :] = (target_values[b, :] - median) / iqr
+                if self.scaler.name == "custom_robust":
+                    median = history_scale_params[0][b, 0, channel_idx]
+                    iqr = history_scale_params[1][b, 0, channel_idx]
+                    target_scaled[b, :] = (target_values[b, :] - median) / iqr
+                else:  # min_max scaler
+                    max_val = history_scale_params[0][b, 0, channel_idx]
+                    min_val = history_scale_params[1][b, 0, channel_idx]
+                    target_scaled[b, :] = (target_values[b, :] - min_val) / (
+                        max_val - min_val
+                    )
 
-        # Get positional embeddings for history
-        if history_time_features is not None:
-            history_pos_embed = self.get_positional_embeddings(
+        # Get positional embeddings
+        history_pos_embed = (
+            self.get_positional_embeddings(
                 history_time_features, reference_year, num_channels, drop_enc_allow
             )
-        else:
-            history_pos_embed = torch.zeros(
-                batch_size,
-                seq_len,
-                num_channels,
-                self.embed_size,
-                device=device,
+            if history_time_features is not None
+            else torch.zeros(
+                batch_size, seq_len, num_channels, self.embed_size, device=device
             ).to(torch.float32)
+        )
 
-        # Get positional embeddings for targets
-        if target_time_features is not None:
-            target_pos_embed = self.get_positional_embeddings(
+        target_pos_embed = (
+            self.get_positional_embeddings(
                 target_time_features, reference_year, num_channels, drop_enc_allow
             )
-        else:
-            target_pos_embed = torch.zeros(
-                batch_size,
-                pred_len,
-                num_channels,
-                self.embed_size,
-                device=device,
+            if target_time_features is not None
+            else torch.zeros(
+                batch_size, pred_len, num_channels, self.embed_size, device=device
             ).to(torch.float32)
+        )
 
-        # Vectorized channel embeddings
-        history_scaled = history_scaled.unsqueeze(
-            -1
-        )  # [batch_size, seq_len, num_channels, 1]
-        channel_embeddings = self.expand_values(
-            history_scaled
-        )  # [batch_size, seq_len, num_channels, embed_size]
+        # Process embeddings
+        history_scaled = history_scaled.unsqueeze(-1)
+        channel_embeddings = self.expand_values(history_scaled)
         channel_embeddings = channel_embeddings + history_pos_embed
         all_channels_embedded = channel_embeddings.view(batch_size, seq_len, -1)
 
-        # Forecast using the embeddings
+        # Generate predictions
         predictions = self.forecast(
             all_channels_embedded, target_pos_embed, target_index, pred_len
         )
@@ -257,14 +253,15 @@ class BaseModel(nn.Module):
             "scale_params": history_scale_params,
             "target_index": target_index,
             "target_scaled": target_scaled,
+            "target_values": target_values,  # Include original target values
         }
 
     def compute_loss(self, y_true, y_pred):
         """
-        Compute loss between predictions and pre-scaled ground truth.
+        Compute loss between predictions and scaled ground truth.
 
         Args:
-            y_true: Ground truth target values [batch_size, pred_len, 1]
+            y_true: Ground truth target values [batch_size, pred_len]
             y_pred: Dictionary containing predictions and scaling info
 
         Returns:
@@ -273,7 +270,14 @@ class BaseModel(nn.Module):
         predictions = y_pred["result"]
         target_scaled = y_pred["target_scaled"]
 
-        # Use pre-scaled target values - no need to normalize by num_targets since it's always 1
+        if target_scaled is None:
+            return torch.tensor(0.0, device=predictions.device)
+
+        # Ensure predictions and targets have same shape
+        if predictions.shape != target_scaled.shape:
+            predictions = predictions.view(target_scaled.shape)
+
+        # Compute MSE loss
         loss = nn.functional.mse_loss(predictions, target_scaled)
         return loss
 
@@ -366,7 +370,7 @@ class MultiStepModel(BaseModel):
             prediction_length: Length of prediction horizon
 
         Returns:
-            Predictions tensor [batch_size, pred_len, 1]
+            Predictions tensor [batch_size, pred_len]
         """
         batch_size, seq_len, _ = embedded.shape
 
@@ -455,7 +459,7 @@ class MultiStepModel(BaseModel):
             x_sliced + target_repr
         )  # [batch_size, 1, pred_len, 1]
 
-        # Reshape to [batch_size, pred_len, 1]
-        predictions = predictions.squeeze(-1).permute(0, 2, 1)
+        # Reshape to [batch_size, pred_len] by squeezing out the channel and feature dimensions
+        predictions = predictions.squeeze(-1).squeeze(1)
 
         return predictions

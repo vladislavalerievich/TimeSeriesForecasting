@@ -13,9 +13,9 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
-from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.models.models import MultiStepModel
+from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.synthetic_generation.data_loaders import (
     SyntheticTrainDataLoader,
     SyntheticValidationDataLoader,
@@ -120,7 +120,7 @@ class TrainingPipeline:
         # Fixed validation data loader (load all batches from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_val_data_lmc_75_kernel_25_batches_10_batch_size_64",
+            "data/synthetic_val_data_lmc_80_kernel_20_batches_10_batch_size_64",
         )
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,
@@ -293,12 +293,9 @@ class TrainingPipeline:
                     output_file=None,
                     show=False,
                 )
-                if self.config["wandb"]:
-                    wandb.log({f"val_plot_batch{batch_idx + 1}": wandb.Image(fig)})
+
+                wandb.log({f"val_plot_batch{batch_idx + 1}": wandb.Image(fig)})
                 plt.close(fig)
-                logger.info(
-                    f"Plotted validation batch {batch_idx + 1} for epoch {epoch}"
-                )
 
     def _update_metrics(
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
@@ -306,6 +303,13 @@ class TrainingPipeline:
         """Update metric calculations."""
         predictions = predictions.contiguous()
         targets = targets.contiguous()
+
+        # Ensure predictions and targets have the same shape
+        if predictions.dim() == 3 and targets.dim() == 2:
+            predictions = predictions.squeeze(-1)
+        elif predictions.dim() == 2 and targets.dim() == 3:
+            targets = targets.squeeze(-1)
+
         for metric in metrics.values():
             metric.update(predictions, targets)
 
@@ -331,6 +335,34 @@ class TrainingPipeline:
                 }
             )
 
+    def _validate_epoch(self, epoch: int) -> float:
+        """Validate model on all fixed synthetic validation batches."""
+        self.model.eval()
+        total_val_loss = 0.0
+        num_batches = 0
+
+        with torch.no_grad():
+            for batch in self.val_loader:
+                data, target = self._prepare_batch(batch)
+                pred_len = target.size(1)
+                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                    output = self.model(data, pred_len)
+                    val_loss = self.model.compute_loss(target, output).item()
+                total_val_loss += val_loss
+
+                # Inverse transform predictions for metrics
+                inv_scaled_output = self.model.scaler.inverse_transform(
+                    output["result"], output["scale_params"], output["target_index"]
+                )
+                self._update_metrics(self.val_metrics, inv_scaled_output, target)
+                num_batches += 1
+
+        avg_val_loss = total_val_loss / max(1, num_batches)
+        if self.config["wandb"]:
+            self._plot_fixed_examples(epoch, avg_val_loss)
+        logger.info(f"Epoch {epoch + 1} Validation Loss: {avg_val_loss:.4f}")
+        return avg_val_loss
+
     def _train_epoch(self, epoch: int) -> float:
         """Train for one epoch."""
         self.model.train()
@@ -344,20 +376,17 @@ class TrainingPipeline:
             data, target = self._prepare_batch(batch)
             self.optimizer.zero_grad()
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                output = self.model(
-                    data_container=data, training=True, drop_enc_allow=False
-                )
-                scaled_target, *scale_params = self._scale_target(target, output)
-                loss = self.criterion(
-                    output["result"].squeeze(-1), scaled_target.half()
-                )
+                output = self.model(data, target.size(1))
+                loss = self.model.compute_loss(target, output)
 
             loss.backward()
             self.optimizer.step()
             torch.cuda.empty_cache()
 
-            # Update metrics
-            inv_scaled_output = self._inverse_scale(output["result"], scale_params)
+            # Update metrics with inverse transformed predictions
+            inv_scaled_output = self.model.scaler.inverse_transform(
+                output["result"], output["scale_params"], output["target_index"]
+            )
             self._update_metrics(self.train_metrics, inv_scaled_output, target)
 
             running_loss += loss.item()
@@ -370,32 +399,6 @@ class TrainingPipeline:
         return epoch_loss / min(
             batch_idx + 1, self.config["num_training_iterations_per_epoch"]
         )
-
-    def _validate_epoch(self, epoch: int) -> float:
-        """Validate model on all fixed synthetic validation batches."""
-        self.model.eval()
-        total_val_loss = 0.0
-        num_batches = 0
-
-        with torch.no_grad():
-            for batch in self.val_loader:
-                data, target = self._prepare_batch(batch)
-                pred_len = target.size(1)
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data, pred_len)
-                    scaled_target, *scale_params = self._scale_target(target, output)
-                    val_loss = self.criterion(
-                        output["result"].squeeze(-1), scaled_target.half()
-                    ).item()
-                total_val_loss += val_loss
-                inv_scaled_output = self._inverse_scale(output["result"], scale_params)
-                self._update_metrics(self.val_metrics, inv_scaled_output, target)
-                num_batches += 1
-
-        avg_val_loss = total_val_loss / max(1, num_batches)
-        self._plot_fixed_examples(epoch, avg_val_loss)
-        logger.info(f"Epoch {epoch + 1} Validation Loss: {avg_val_loss:.4f}")
-        return avg_val_loss
 
     def train(self) -> None:
         """Execute the training pipeline."""

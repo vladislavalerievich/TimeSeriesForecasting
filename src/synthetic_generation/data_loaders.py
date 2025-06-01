@@ -3,8 +3,8 @@ import os
 from typing import Callable, Iterator, List, Optional
 
 import torch
-from torch.utils.data import DataLoader, Dataset, IterableDataset
 from torch.serialization import add_safe_globals
+from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.dataset_composer import OnTheFlyDatasetGenerator
@@ -30,15 +30,39 @@ class SyntheticDataset(Dataset):
         single_file : bool, optional
             If True, load from a single combined file. If False, load from individual batch files.
             (default: False)
+
+        Raises
+        ------
+        FileNotFoundError
+            If data_path does not exist.
+        ValueError
+            If no batch files are found in the specified directory (when single_file=False).
         """
         self.data_path = data_path
         self.single_file = single_file
 
+        # Verify data_path exists
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"Data path does not exist: {data_path}")
+
         if self.single_file:
+            # Verify single file exists
+            if not os.path.isfile(data_path):
+                raise FileNotFoundError(f"Single file does not exist: {data_path}")
             self.batches = torch.load(data_path)
         else:
+            # Verify directory contains batch files
+            if not os.path.isdir(data_path):
+                raise ValueError(f"Data path is not a directory: {data_path}")
+
             # Find all batch files
             batch_files = sorted(glob.glob(os.path.join(data_path, "batch_*.pt")))
+
+            if not batch_files:
+                raise ValueError(
+                    f"No batch files (batch_*.pt) found in directory: {data_path}"
+                )
+
             self.batch_files = batch_files
 
     def __len__(self) -> int:
