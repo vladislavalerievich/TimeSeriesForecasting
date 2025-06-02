@@ -1,7 +1,15 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import List, Optional
 
+import pandas as pd
 import torch
+
+
+class Term(Enum):
+    SHORT = "short"
+    MEDIUM = "medium"
+    LONG = "long"
 
 
 @dataclass
@@ -126,11 +134,19 @@ class BatchTimeSeriesContainer:
         target_values: Tensor of future observations to predict.
             Shape: [batch_size, pred_len]
         target_index: Tensor of target channel index.
-            Shape: [batch_size, 1]
-        history_time_features: Tensor of time-derived features for the history timestamps window.
-            Shape: [batch_size, seq_len, num_time_features]
-        target_time_features: Tensor of time-derived features for the prediction timestamps window.
-            Shape: [batch_size, pred_len, num_time_features]
+            Shape: [batch_size]
+        history_start: Timestamps of the first history value.
+            Shape: [batch_size]
+        target_start: Timestamps of the first target value.
+            Shape: [batch_size]
+        frequency: Frequency of the time series (e.g., 'D', 'W', 'H', '15T').
+            Scalar (str)
+        term: Term of the dataset (e.g., 'short', 'medium', 'long').
+            Scalar (Term enum)
+        past_feat_dynamic_real: Optional time-varying covariates for history.
+            Shape: [batch_size, seq_len, num_dynamic_features]
+        future_feat_dynamic_real: Optional time-varying covariates for prediction horizon.
+            Shape: [batch_size, pred_len, num_dynamic_features]
         static_features: Optional StaticFeaturesDataContainer of features constant over time.
             Shape: [batch_size, num_static_features, num_static_features_per_channel]
         history_mask: Optional boolean/float tensor indicating valid (1/True) vs padded (0/False)
@@ -144,10 +160,13 @@ class BatchTimeSeriesContainer:
     history_values: torch.Tensor
     target_values: torch.Tensor
     target_index: torch.Tensor
+    history_start: torch.Tensor  # Tensor of pd.Timestamp objects
+    target_start: torch.Tensor  # Tensor of pd.Timestamp objects
+    frequency: str
+    term: Term
 
-    history_time_features: Optional[torch.Tensor] = None
-    target_time_features: Optional[torch.Tensor] = None
-
+    past_feat_dynamic_real: Optional[torch.Tensor] = None
+    future_feat_dynamic_real: Optional[torch.Tensor] = None
     static_features: Optional[StaticFeaturesDataContainer] = None
 
     history_mask: Optional[torch.Tensor] = None
@@ -155,12 +174,23 @@ class BatchTimeSeriesContainer:
 
     def __post_init__(self):
         """Validate all tensor shapes and consistency."""
+        # --- Tensor Type Checks ---
         if not isinstance(self.history_values, torch.Tensor):
-            raise TypeError("history_values must be a Tensor")
+            raise TypeError("history_values must be a torch.Tensor")
         if not isinstance(self.target_values, torch.Tensor):
-            raise TypeError("target_values must be a Tensor")
-        if not isinstance(self.target_index, torch.Tensor):
-            raise TypeError("target_index must be a Tensor")
+            raise TypeError("target_values must be a torch.Tensor")
+        if self.target_index is not None and not isinstance(
+            self.target_index, torch.Tensor
+        ):
+            raise TypeError("target_index must be a torch.Tensor or None")
+        if not isinstance(self.history_start, torch.Tensor):
+            raise TypeError("history_start must be a torch.Tensor of pd.Timestamp")
+        if not isinstance(self.target_start, torch.Tensor):
+            raise TypeError("target_start must be a torch.Tensor of pd.Timestamp")
+        if not isinstance(self.frequency, str):
+            raise TypeError("frequency must be a str")
+        if not isinstance(self.term, Term):
+            raise TypeError("term must be a Term enum")
 
         batch_size, seq_len, num_channels = self.history_values.shape
         pred_len = self.target_values.shape[1]
@@ -170,32 +200,6 @@ class BatchTimeSeriesContainer:
             raise ValueError("Batch size mismatch between history and target_values")
         if self.target_index.shape[0] != batch_size:
             raise ValueError("Batch size mismatch between history and target_index")
-
-        # --- Optional Time Features ---
-        if self.history_time_features is not None:
-            if not isinstance(self.history_time_features, torch.Tensor):
-                raise TypeError("history_time_features must be a Tensor or None")
-            if self.history_time_features.shape[:2] != (batch_size, seq_len):
-                raise ValueError(
-                    f"Shape mismatch in history_time_features: {self.history_time_features.shape[:2]} vs {(batch_size, seq_len)}"
-                )
-
-        if self.target_time_features is not None:
-            if not isinstance(self.target_time_features, torch.Tensor):
-                raise TypeError("target_time_features must be a Tensor or None")
-            if self.target_time_features.shape[:2] != (batch_size, pred_len):
-                raise ValueError(
-                    f"Shape mismatch in target_time_features: {self.target_time_features.shape[:2]} vs {(batch_size, pred_len)}"
-                )
-
-            if self.history_time_features is not None:
-                if (
-                    self.history_time_features.shape[2]
-                    != self.target_time_features.shape[2]
-                ):
-                    raise ValueError(
-                        "Mismatch in num_time_features between history and target_time_features"
-                    )
 
         # --- Static Features Check ---
         if self.static_features is not None:
@@ -212,6 +216,24 @@ class BatchTimeSeriesContainer:
                         raise ValueError("Channel size mismatch in static_features")
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid StaticFeaturesDataContainer: {e}") from e
+
+        # --- Dynamic Features Check ---
+        if self.past_feat_dynamic_real is not None:
+            if not isinstance(self.past_feat_dynamic_real, torch.Tensor):
+                raise TypeError("past_feat_dynamic_real must be a torch.Tensor or None")
+            if self.past_feat_dynamic_real.shape[:2] != (batch_size, seq_len):
+                raise ValueError(
+                    f"past_feat_dynamic_real shape mismatch: expected [{batch_size}, {seq_len}, ...], got {self.past_feat_dynamic_real.shape}"
+                )
+        if self.future_feat_dynamic_real is not None:
+            if not isinstance(self.future_feat_dynamic_real, torch.Tensor):
+                raise TypeError(
+                    "future_feat_dynamic_real must be a torch.Tensor or None"
+                )
+            if self.future_feat_dynamic_real.shape[:2] != (batch_size, pred_len):
+                raise ValueError(
+                    f"future_feat_dynamic_real shape mismatch: expected [{batch_size}, {pred_len}, ...], got {self.future_feat_dynamic_real.shape}"
+                )
 
         # --- Optional Mask Checks ---
         if self.history_mask is not None:
@@ -232,30 +254,62 @@ class BatchTimeSeriesContainer:
                 raise ValueError(
                     f"Shape mismatch in target_mask: expected {(batch_size, pred_len)} or {self.target_values.shape}, got {self.target_mask.shape}"
                 )
+        # --- Timestamp Alignment Check ---
+        for i in range(batch_size):
+            expected_target_start = self.history_start[i] + pd.Timedelta(
+                seq_len, self.frequency
+            )
+            if self.target_start[i] != expected_target_start:
+                raise ValueError(
+                    f"Timestamp misalignment at index {i}: expected {expected_target_start}, got {self.target_start[i]}"
+                )
 
-    def to_device(self, device: torch.device) -> None:
+    def to_device(
+        self, device: torch.device, attributes: Optional[List[str]] = None
+    ) -> None:
         """
-        Move all tensors in the TimeSeriesDataContainer to the specified device in place.
+        Move specified tensors to the target device in place.
 
         Args:
-            device: The target device (e.g., 'cpu', 'cuda').
+            device: Target device (e.g., 'cpu', 'cuda').
+            attributes: Optional list of attribute names to move. If None, move all tensors.
 
         Raises:
-            TypeError: If any tensor attribute is not a torch.Tensor or if static_features
-                is not a StaticFeaturesDataContainer.
-            RuntimeError: If device transfer fails for any tensor.
+            ValueError: If an invalid attribute is specified or device transfer fails.
         """
-        # Move required tensor attributes
-        self.history_values = self.history_values.to(device)
-        self.target_values = self.target_values.to(device)
-        self.target_index = self.target_index.to(device)
-        self.history_time_features = self.history_time_features.to(device)
-        self.target_time_features = self.target_time_features.to(device)
+        all_tensors = {
+            "history_values": self.history_values,
+            "target_values": self.target_values,
+            "target_index": self.target_index,
+            "history_mask": self.history_mask,
+            "target_mask": self.target_mask,
+            "past_feat_dynamic_real": self.past_feat_dynamic_real,
+            "future_feat_dynamic_real": self.future_feat_dynamic_real,
+        }
 
-        # Move optional tensor attributes if they exist
-        if self.static_features is not None:
-            self.static_features.to_device(device)
-        if self.history_mask is not None:
-            self.history_mask = self.history_mask.to(device)
-        if self.target_mask is not None:
-            self.target_mask = self.target_mask.to(device)
+        if attributes is None:
+            attributes = [k for k, v in all_tensors.items() if v is not None]
+            if self.static_features is not None:
+                self.static_features.to_device(device)
+
+        for attr in attributes:
+            if attr not in all_tensors:
+                raise ValueError(f"Invalid attribute: {attr}")
+            if all_tensors[attr] is not None:
+                setattr(self, attr, all_tensors[attr].to(device))
+
+    @property
+    def batch_size(self) -> int:
+        return self.history_values.shape[0]
+
+    @property
+    def context_len(self) -> int:
+        return self.history_values.shape[1]
+
+    @property
+    def num_channels(self) -> int:
+        return self.history_values.shape[2]
+
+    @property
+    def forecast_len(self) -> int:
+        return self.target_values.shape[1]
