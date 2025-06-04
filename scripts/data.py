@@ -15,10 +15,10 @@
 
 import math
 import os
+from collections.abc import Iterable, Iterator
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Iterable, Iterator
 
 import datasets
 import pyarrow.compute as pc
@@ -41,6 +41,9 @@ M4_PRED_LENGTH_MAP = {
     "W": 13,
     "D": 14,
     "H": 48,
+    # new version fix:
+    "h": 48,
+    "Y": 6,
 }
 
 PRED_LENGTH_MAP = {
@@ -50,6 +53,10 @@ PRED_LENGTH_MAP = {
     "H": 48,
     "T": 48,
     "S": 60,
+    # new version fix:
+    "h": 48,
+    "s": 60,
+    "min": 48,
 }
 
 TFB_PRED_LENGTH_MAP = {
@@ -61,6 +68,11 @@ TFB_PRED_LENGTH_MAP = {
     "W": 13,
     "U": 8,
     "T": 8,
+    # new version fix:
+    "min": 8,
+    "us": 8,
+    "Y": 6,
+    "h": 48,
 }
 
 
@@ -130,6 +142,8 @@ class Dataset:
     @cached_property
     def prediction_length(self) -> int:
         freq = norm_freq_str(to_offset(self.freq).name)
+        if freq.endswith("E"):
+            freq = freq[:-1]
         pred_len = (
             M4_PRED_LENGTH_MAP[freq] if "m4" in self.name else PRED_LENGTH_MAP[freq]
         )

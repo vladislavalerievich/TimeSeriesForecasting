@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -10,6 +10,15 @@ class Term(Enum):
     SHORT = "short"
     MEDIUM = "medium"
     LONG = "long"
+
+    @property
+    def multiplier(self) -> int:
+        if self == Term.SHORT:
+            return 1
+        elif self == Term.MEDIUM:
+            return 10
+        elif self == Term.LONG:
+            return 15
 
 
 @dataclass
@@ -124,6 +133,64 @@ class StaticFeaturesDataContainer:
 
 
 @dataclass
+class GIFTTimeSeriesContainer:
+    """
+    Container for GIFT Eval time series data, specifically designed to handle GIFT Eval's structure.
+
+    Attributes:
+        item_id: Unique identifier for the time series
+        start: Start timestamp of the series
+        freq: Frequency of the time series (e.g., 'W-TUE', 'D', 'H')
+        target: Target values for the series
+        term: Term of the dataset (SHORT, MEDIUM, LONG)
+        prediction_length: Length of the prediction horizon
+        windows: Number of windows for rolling evaluation
+        metadata: Additional metadata specific to GIFT Eval
+    """
+
+    item_id: str
+    start: pd.Timestamp
+    freq: str
+    target: torch.Tensor
+    term: Term
+    prediction_length: int
+    windows: int
+    metadata: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        """Validate the container's data."""
+        if not isinstance(self.target, torch.Tensor):
+            raise TypeError("target must be a torch.Tensor")
+        if not isinstance(self.start, pd.Timestamp):
+            raise TypeError("start must be a pd.Timestamp")
+        if not isinstance(self.term, Term):
+            raise TypeError("term must be a Term enum")
+        if not isinstance(self.prediction_length, int):
+            raise TypeError("prediction_length must be an int")
+        if not isinstance(self.windows, int):
+            raise TypeError("windows must be an int")
+
+    def to_device(self, device: torch.device) -> None:
+        """Move tensors to the specified device."""
+        self.target = self.target.to(device)
+
+    @property
+    def series_length(self) -> int:
+        """Get the length of the time series."""
+        return len(self.target)
+
+    @property
+    def is_multivariate(self) -> bool:
+        """Check if the series is multivariate."""
+        return len(self.target.shape) > 1
+
+    @property
+    def num_channels(self) -> int:
+        """Get the number of channels in the series."""
+        return self.target.shape[1] if self.is_multivariate else 1
+
+
+@dataclass
 class BatchTimeSeriesContainer:
     """
     Container for a batch of multivariate time series data and their associated features.
@@ -155,6 +222,10 @@ class BatchTimeSeriesContainer:
         target_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
             target values.
             Shape: [batch_size, pred_len]
+        item_ids: Optional list of item IDs for each series in the batch.
+            Length: batch_size
+        windows: Optional number of windows for rolling evaluation.
+            Scalar (int)
     """
 
     history_values: torch.Tensor
@@ -171,6 +242,8 @@ class BatchTimeSeriesContainer:
 
     history_mask: Optional[torch.Tensor] = None
     target_mask: Optional[torch.Tensor] = None
+    item_ids: Optional[List[str]] = None
+    windows: Optional[int] = None
 
     def __post_init__(self):
         """Validate all tensor shapes and consistency."""
@@ -254,6 +327,21 @@ class BatchTimeSeriesContainer:
                 raise ValueError(
                     f"Shape mismatch in target_mask: expected {(batch_size, pred_len)} or {self.target_values.shape}, got {self.target_mask.shape}"
                 )
+
+        # --- Item IDs Check ---
+        if self.item_ids is not None:
+            if not isinstance(self.item_ids, list):
+                raise TypeError("item_ids must be a list or None")
+            if len(self.item_ids) != batch_size:
+                raise ValueError("Length of item_ids must match batch_size")
+
+        # --- Windows Check ---
+        if self.windows is not None:
+            if not isinstance(self.windows, int):
+                raise TypeError("windows must be an int or None")
+            if self.windows < 1:
+                raise ValueError("windows must be a positive integer")
+
         # --- Timestamp Alignment Check ---
         for i in range(batch_size):
             expected_target_start = self.history_start[i] + pd.Timedelta(
