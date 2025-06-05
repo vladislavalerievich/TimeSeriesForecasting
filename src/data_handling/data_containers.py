@@ -1,24 +1,9 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import torch
-
-
-class Term(Enum):
-    SHORT = "short"
-    MEDIUM = "medium"
-    LONG = "long"
-
-    @property
-    def multiplier(self) -> int:
-        if self == Term.SHORT:
-            return 1
-        elif self == Term.MEDIUM:
-            return 10
-        elif self == Term.LONG:
-            return 15
 
 
 class Frequency(Enum):
@@ -136,64 +121,6 @@ class StaticFeaturesDataContainer:
         # Move optional tensor attribute if it exists
         if self.trend_slope is not None:
             self.trend_slope = self.trend_slope.to(device)
-
-
-@dataclass
-class GIFTTimeSeriesContainer:
-    """
-    Container for GIFT Eval single time series data.
-
-    Attributes:
-        item_id: Unique identifier for the time series
-        start: Start timestamp of the series
-        freq: Frequency of the time series (e.g., 'W-TUE', 'D', 'H')
-        target: Target values for the series
-        term: Term of the dataset (SHORT, MEDIUM, LONG)
-        prediction_length: Length of the prediction horizon
-        windows: Number of windows for rolling evaluation
-        metadata: Additional metadata specific to GIFT Eval
-    """
-
-    item_id: str
-    start: np.datetime64
-    freq: Frequency
-    target: torch.Tensor
-    term: Term
-    prediction_length: int
-    windows: int
-    metadata: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        """Validate the container's data."""
-        if not isinstance(self.target, torch.Tensor):
-            raise TypeError("target must be a torch.Tensor")
-        if not isinstance(self.start, np.datetime64):
-            raise TypeError("start must be a np.datetime64")
-        if not isinstance(self.term, Term):
-            raise TypeError("term must be a Term enum")
-        if not isinstance(self.prediction_length, int):
-            raise TypeError("prediction_length must be an int")
-        if not isinstance(self.windows, int):
-            raise TypeError("windows must be an int")
-
-    def to_device(self, device: torch.device) -> None:
-        """Move tensors to the specified device."""
-        self.target = self.target.to(device)
-
-    @property
-    def series_length(self) -> int:
-        """Get the length of the time series."""
-        return len(self.target)
-
-    @property
-    def is_multivariate(self) -> bool:
-        """Check if the series is multivariate."""
-        return len(self.target.shape) > 1
-
-    @property
-    def num_channels(self) -> int:
-        """Get the number of channels in the series."""
-        return self.target.shape[1] if self.is_multivariate else 1
 
 
 @dataclass
