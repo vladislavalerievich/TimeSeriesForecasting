@@ -1,11 +1,9 @@
 from typing import Any, Dict, Optional
 
 import numpy as np
-import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
-from src.synthetic_generation.constants import DEFAULT_START_DATE
 from src.synthetic_generation.generator_params import LMCGeneratorParams
 from src.synthetic_generation.lmc_synth import LMCSynthGenerator
 
@@ -53,7 +51,6 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         self,
         generator: LMCSynthGenerator,
         batch_size: int,
-        periodicity: str,
         seed: Optional[int] = None,
     ) -> tuple:
         """
@@ -65,31 +62,28 @@ class LMCGeneratorWrapper(GeneratorWrapper):
             Initialized generator instance.
         batch_size : int
             Number of time series to generate.
-        periodicity : str
-            Time step periodicity for timestamps.
         seed : int, optional
             Random seed to use (default: None).
 
         Returns
         -------
         Tuple[np.ndarray, np.ndarray]
-            Tuple containing (batch_values, batch_timestamps).
+            Tuple containing (batch_values, batch_start).
         """
         batch_values = []
-        batch_timestamps = []
+        batch_start = []
 
         for i in range(batch_size):
             # Generate a single time series with a unique seed
             batch_seed = None if seed is None else seed + i
             result = generator.generate_time_series(
                 random_seed=batch_seed,
-                periodicity=periodicity,
             )
             batch_values.append(result["values"])
-            batch_timestamps.append(result["timestamps"])
+            batch_start.append(result["start"])
 
         # Convert to numpy arrays
-        return np.array(batch_values), np.array(batch_timestamps)
+        return np.array(batch_values), np.array(batch_start)
 
     def generate_batch(
         self,
@@ -131,7 +125,6 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         scale = params["scale"]
         weibull_shape = params["weibull_shape"]
         weibull_scale = params["weibull_scale"]
-        periodicity = params["periodicity"]
 
         total_length = history_length + target_length
 
@@ -148,14 +141,14 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         )
 
         # Generate batch of time series
-        batch_values, batch_timestamps = self._generate_time_series_batch(
-            generator, batch_size, periodicity, seed
+        batch_values, batch_start = self._generate_time_series_batch(
+            generator, batch_size, seed
         )
 
         # Format the data into a BatchTimeSeriesContainer
         return self.format_to_container(
             values=batch_values,
-            timestamps=batch_timestamps,
+            start=batch_start,
             history_length=history_length,
             target_length=target_length,
             batch_size=batch_size,

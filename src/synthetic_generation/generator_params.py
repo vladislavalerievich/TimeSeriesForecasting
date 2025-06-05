@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Tuple, Union
 
 
 @dataclass
@@ -9,9 +9,7 @@ class GeneratorParams:
     history_length: Union[int, Tuple[int, int]] = (64, 256)
     target_length: Union[int, Tuple[int, int]] = (32, 256)
     num_channels: Union[int, Tuple[int, int]] = (1, 256)
-    periodicities: Optional[List[str]] = field(
-        default_factory=lambda: ["s", "m", "h", "D", "W"]
-    )
+
     # Add additional generator-specific parameters as needed, e.g.:
     # max_kernels: Union[int, Tuple[int, int]] = (1, 5)
     # dirichlet_min: Union[float, Tuple[float, float]] = (0.1, 1.0)

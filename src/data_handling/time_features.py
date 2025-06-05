@@ -2,6 +2,63 @@ import numpy as np
 import pandas as pd
 import torch
 
+from src.data_handling.data_containers import Frequency
+from src.utils.utils import device
+
+
+def compute_batch_time_features(
+    start,
+    history_length,
+    target_length,
+    batch_size,
+    frequency,
+    include_subday=False,
+):
+    """
+    Compute time features from start timestamps and frequency.
+
+    Parameters
+    ----------
+    start : array-like, shape (batch_size,)
+        Start timestamps for each batch item.
+    history_length : int
+        Length of history sequence.
+    target_length : int
+        Length of target sequence.
+    batch_size : int
+        Batch size.
+    frequency : str or Frequency
+        Frequency of the time series (e.g., 'H' for hourly, 'D' for daily).
+    include_subday : bool, optional
+        Whether to include hour, minute, second features (default: False).
+
+    Returns
+    -------
+    tuple
+        (history_time_features, target_time_features) where each is a torch.Tensor
+        of shape (batch_size, length, n_features).
+    """
+    # Convert start to numpy array if it's not already
+    start = np.asarray(start)
+
+    # Generate timestamps for history and target sequences
+    history_timestamps = pd.date_range(
+        start=pd.Timestamp(start[0]),
+        periods=history_length,
+        freq=frequency,
+    ).astype(np.int64)
+    target_timestamps = pd.date_range(
+        start=pd.Timestamp(start[0]) + pd.Timedelta(history_length, unit=frequency),
+        periods=target_length,
+        freq=frequency,
+    ).astype(np.int64)
+
+    # Compute time features for both sequences
+    history_time_features = compute_time_features(history_timestamps, include_subday)
+    target_time_features = compute_time_features(target_timestamps, include_subday)
+
+    return history_time_features.to(device), target_time_features.to(device)
+
 
 # TODO: Move to gluonts https://github.com/awslabs/gluonts/tree/dev/src/gluonts/time_feature
 def compute_time_features(

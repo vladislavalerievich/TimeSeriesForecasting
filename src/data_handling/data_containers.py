@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
+import numpy as np
 import torch
 
 
@@ -21,14 +21,20 @@ class Term(Enum):
             return 15
 
 
+class Frequency(Enum):
+    D = "D"  # Daily
+    W = "W"  # Weekly
+    H = "H"  # Hourly
+    ME = "ME"  # Month End (replacing M)
+    S = "s"  # Seconds
+
+
 @dataclass
 class StaticFeaturesDataContainer:
     """
     Holds computed numerical static features for a batch of time series.
     Each tensor should have shape [batch_size, num_channels].
     """
-
-    frequency: torch.Tensor
 
     # --- Core Statistics ---
     mean: torch.Tensor
@@ -44,7 +50,6 @@ class StaticFeaturesDataContainer:
     def __post_init__(self):
         """Validate that all feature tensors have consistent shapes and types."""
         feature_list = [
-            self.frequency,
             self.mean,
             self.std,
             self.median,
@@ -69,7 +74,6 @@ class StaticFeaturesDataContainer:
     def get_feature_tensors(self) -> List[torch.Tensor]:
         """Returns a list of available (non-None) feature tensors."""
         feature_list = [
-            self.frequency,
             self.mean,
             self.std,
             self.median,
@@ -119,7 +123,6 @@ class StaticFeaturesDataContainer:
             RuntimeError: If device transfer fails for any tensor.
         """
         # Move required tensor attributes
-        self.frequency = self.frequency.to(device)
         self.mean = self.mean.to(device)
         self.std = self.std.to(device)
         self.median = self.median.to(device)
@@ -135,7 +138,7 @@ class StaticFeaturesDataContainer:
 @dataclass
 class GIFTTimeSeriesContainer:
     """
-    Container for GIFT Eval time series data, specifically designed to handle GIFT Eval's structure.
+    Container for GIFT Eval single time series data.
 
     Attributes:
         item_id: Unique identifier for the time series
@@ -149,8 +152,8 @@ class GIFTTimeSeriesContainer:
     """
 
     item_id: str
-    start: pd.Timestamp
-    freq: str
+    start: np.datetime64
+    freq: Frequency
     target: torch.Tensor
     term: Term
     prediction_length: int
@@ -161,8 +164,8 @@ class GIFTTimeSeriesContainer:
         """Validate the container's data."""
         if not isinstance(self.target, torch.Tensor):
             raise TypeError("target must be a torch.Tensor")
-        if not isinstance(self.start, pd.Timestamp):
-            raise TypeError("start must be a pd.Timestamp")
+        if not isinstance(self.start, np.datetime64):
+            raise TypeError("start must be a np.datetime64")
         if not isinstance(self.term, Term):
             raise TypeError("term must be a Term enum")
         if not isinstance(self.prediction_length, int):
@@ -202,14 +205,10 @@ class BatchTimeSeriesContainer:
             Shape: [batch_size, pred_len]
         target_index: Tensor of target channel index.
             Shape: [batch_size]
-        history_start: Timestamps of the first history value.
+        start: Timestamps of the first history value.
             Shape: [batch_size]
-        target_start: Timestamps of the first target value.
-            Shape: [batch_size]
-        frequency: Frequency of the time series (e.g., 'D', 'W', 'H', '15T').
-            Scalar (str)
-        term: Term of the dataset (e.g., 'short', 'medium', 'long').
-            Scalar (Term enum)
+        frequency: Frequency of the time series.
+            Type: Frequency enum (D=Daily, W=Weekly, H=Hourly, ME=Month End, S=Seconds)
         past_feat_dynamic_real: Optional time-varying covariates for history.
             Shape: [batch_size, seq_len, num_dynamic_features]
         future_feat_dynamic_real: Optional time-varying covariates for prediction horizon.
@@ -222,19 +221,13 @@ class BatchTimeSeriesContainer:
         target_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
             target values.
             Shape: [batch_size, pred_len]
-        item_ids: Optional list of item IDs for each series in the batch.
-            Length: batch_size
-        windows: Optional number of windows for rolling evaluation.
-            Scalar (int)
     """
 
     history_values: torch.Tensor
     target_values: torch.Tensor
     target_index: torch.Tensor
-    history_start: torch.Tensor  # Tensor of pd.Timestamp objects
-    target_start: torch.Tensor  # Tensor of pd.Timestamp objects
-    frequency: str
-    term: Term
+    start: np.ndarray[np.datetime64]
+    frequency: Frequency
 
     past_feat_dynamic_real: Optional[torch.Tensor] = None
     future_feat_dynamic_real: Optional[torch.Tensor] = None
@@ -242,8 +235,6 @@ class BatchTimeSeriesContainer:
 
     history_mask: Optional[torch.Tensor] = None
     target_mask: Optional[torch.Tensor] = None
-    item_ids: Optional[List[str]] = None
-    windows: Optional[int] = None
 
     def __post_init__(self):
         """Validate all tensor shapes and consistency."""
@@ -256,14 +247,12 @@ class BatchTimeSeriesContainer:
             self.target_index, torch.Tensor
         ):
             raise TypeError("target_index must be a torch.Tensor or None")
-        if not isinstance(self.history_start, torch.Tensor):
-            raise TypeError("history_start must be a torch.Tensor of pd.Timestamp")
-        if not isinstance(self.target_start, torch.Tensor):
-            raise TypeError("target_start must be a torch.Tensor of pd.Timestamp")
-        if not isinstance(self.frequency, str):
-            raise TypeError("frequency must be a str")
-        if not isinstance(self.term, Term):
-            raise TypeError("term must be a Term enum")
+        if not isinstance(self.start, np.ndarray):
+            raise TypeError("start must be a np.ndarray")
+        if not all(isinstance(s, np.datetime64) for s in self.start):
+            raise TypeError("start must be a list of np.datetime64")
+        if not isinstance(self.frequency, Frequency):
+            raise TypeError("frequency must be a Frequency enum")
 
         batch_size, seq_len, num_channels = self.history_values.shape
         pred_len = self.target_values.shape[1]
@@ -328,30 +317,6 @@ class BatchTimeSeriesContainer:
                     f"Shape mismatch in target_mask: expected {(batch_size, pred_len)} or {self.target_values.shape}, got {self.target_mask.shape}"
                 )
 
-        # --- Item IDs Check ---
-        if self.item_ids is not None:
-            if not isinstance(self.item_ids, list):
-                raise TypeError("item_ids must be a list or None")
-            if len(self.item_ids) != batch_size:
-                raise ValueError("Length of item_ids must match batch_size")
-
-        # --- Windows Check ---
-        if self.windows is not None:
-            if not isinstance(self.windows, int):
-                raise TypeError("windows must be an int or None")
-            if self.windows < 1:
-                raise ValueError("windows must be a positive integer")
-
-        # --- Timestamp Alignment Check ---
-        for i in range(batch_size):
-            expected_target_start = self.history_start[i] + pd.Timedelta(
-                seq_len, self.frequency
-            )
-            if self.target_start[i] != expected_target_start:
-                raise ValueError(
-                    f"Timestamp misalignment at index {i}: expected {expected_target_start}, got {self.target_start[i]}"
-                )
-
     def to_device(
         self, device: torch.device, attributes: Optional[List[str]] = None
     ) -> None:
@@ -391,13 +356,13 @@ class BatchTimeSeriesContainer:
         return self.history_values.shape[0]
 
     @property
-    def context_len(self) -> int:
+    def history_length(self) -> int:
         return self.history_values.shape[1]
+
+    @property
+    def target_length(self) -> int:
+        return self.target_values.shape[1]
 
     @property
     def num_channels(self) -> int:
         return self.history_values.shape[2]
-
-    @property
-    def forecast_len(self) -> int:
-        return self.target_values.shape[1]

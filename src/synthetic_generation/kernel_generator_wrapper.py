@@ -78,22 +78,22 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         Returns
         -------
         Tuple[np.ndarray, np.ndarray]
-            Tuple containing (values, timestamps).
+            Tuple containing (values, start).
         """
         generator = KernelSynthGenerator(
             length=length,
             max_kernels=max_kernels,
         )
         values = []
-        timestamps = None
+        start = None
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
             result = self._generate_univariate_time_series(generator, channel_seed)
             values.append(result["values"])
-            if timestamps is None:
-                timestamps = result["timestamps"]
+            if start is None:
+                start = result["start"]
         values = np.column_stack(values)
-        return values, timestamps
+        return values, start
 
     def _generate_time_series_batch(
         self,
@@ -122,22 +122,22 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         Returns
         -------
         Tuple[np.ndarray, np.ndarray]
-            Tuple containing (batch_values, batch_timestamps).
+            Tuple containing (batch_values, batch_start).
         """
         batch_values = []
-        batch_timestamps = []
+        batch_start = []
         for i in range(batch_size):
             batch_seed = None if seed is None else seed + i * num_channels
-            values, timestamps = self._generate_multivariate_time_series(
+            values, start = self._generate_multivariate_time_series(
                 num_channels=num_channels,
                 length=length,
                 max_kernels=max_kernels,
                 seed=batch_seed,
             )
             batch_values.append(values)
-            batch_timestamps.append(timestamps)
+            batch_start.append(start)
         batch_values = np.array(batch_values).transpose(0, 1, 2)
-        return batch_values, np.array(batch_timestamps)
+        return batch_values, np.array(batch_start)
 
     def generate_batch(
         self,
@@ -171,16 +171,17 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         num_channels = params["num_channels"]
         max_kernels = params["max_kernels"]
         total_length = history_length + target_length
-        batch_values, batch_timestamps = self._generate_time_series_batch(
+        batch_values, batch_start = self._generate_time_series_batch(
             batch_size=batch_size,
             num_channels=num_channels,
             length=total_length,
             max_kernels=max_kernels,
             seed=seed,
         )
+
         return self.format_to_container(
             values=batch_values,
-            timestamps=batch_timestamps,
+            start=batch_start,
             history_length=history_length,
             target_length=target_length,
             batch_size=batch_size,

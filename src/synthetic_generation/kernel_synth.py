@@ -13,8 +13,8 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
-from src.synthetic_generation.constants import DEFAULT_START_DATE
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
+from src.synthetic_generation.constants import DEFAULT_START_DATE
 
 
 class KernelSynthGenerator(AbstractTimeSeriesGenerator):
@@ -97,16 +97,19 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         ts = gpr.sample_y(X, n_samples=1, random_state=random_seed)
         return ts.squeeze()
 
-    def generate_time_series(
-        self, random_seed: Optional[int] = None, periodicity: str = "D"
-    ) -> Dict:
+    def generate_time_series(self, random_seed: Optional[int] = None) -> Dict:
         """
         Generate a single independent univariate time series.
+
+        Parameters
+        ----------
+        random_seed : int, optional
+            Random seed for reproducible generation.
 
         Returns
         -------
         dict
-            { 'timestamps': np.ndarray of np.datetime64, 'values': np.ndarray }
+            { 'start': np.datetime64, 'values': np.ndarray }
         """
         X = np.linspace(0, 1, self.length)
         num_kernels = np.random.randint(1, self.max_kernels + 1)
@@ -115,9 +118,9 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         try:
             ts = self._sample_from_gp_prior(composite, X, random_seed=random_seed)
         except np.linalg.LinAlgError:
-            return self.generate_series(random_seed)
-        start_time = np.datetime64(DEFAULT_START_DATE)
-        timestamps = start_time + np.arange(self.length) * np.timedelta64(
-            1, periodicity
-        )
-        return {"timestamps": timestamps, "values": ts}
+            return self.generate_time_series(random_seed)
+
+        # Create timestamps using the frequency parameter
+        start_time = np.datetime64(DEFAULT_START_DATE, "s")
+
+        return {"start": start_time, "values": ts}

@@ -12,8 +12,8 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
-from src.synthetic_generation.constants import DEFAULT_START_DATE
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
+from src.synthetic_generation.constants import DEFAULT_START_DATE
 
 
 class LMCSynthGenerator(AbstractTimeSeriesGenerator):
@@ -156,9 +156,7 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
 
         return ts
 
-    def generate_time_series(
-        self, random_seed: Optional[int] = 42, periodicity: str = "D"
-    ) -> Dict:
+    def generate_time_series(self, random_seed: Optional[int] = 42) -> Dict:
         """
         Generate a single multivariate synthetic time series.
 
@@ -166,26 +164,16 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
         ----------
         random_seed : int, optional
             Random seed for reproducibility (default: None).
-        periodicity : str, optional
-            Time step periodicity for timestamps. Options: 's' (seconds), 'm' (minutes),
-            'h' (hours), 'D' (days), 'W' (weeks), 'M' (months), 'Q' (quarters), 'Y' (years)
-            (default: 's').
 
         Returns
         -------
         dict
             Dictionary containing:
-            - 'timestamps': Array of timestamps (np.ndarray of np.datetime64)
+            - 'start': Start timestamp (np.datetime64)
             - 'values': Generated time series (np.ndarray of shape (num_channels, length))
         """
         np.random.seed(random_seed)
 
-        # Validate periodicity
-        valid_periods = ["s", "m", "h", "D", "W", "M", "Q", "Y"]
-        if periodicity not in valid_periods:
-            raise ValueError(
-                f"Periodicity must be one of {valid_periods}, got {periodicity}"
-            )
         while True:
             X = np.linspace(0, 1, self.length)
 
@@ -233,13 +221,9 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
                 ts = np.dot(weights, latent_functions)  # Shape: [num_channels, length]
                 ts = ts.T  # Transpose to [length, num_channels]
 
-                # Generate timestamps
-                start_time = np.datetime64(DEFAULT_START_DATE)
-                timestamps = start_time + np.arange(self.length) * np.timedelta64(
-                    1, periodicity
-                )
+                start_time = np.datetime64(DEFAULT_START_DATE, "s")
 
-                return {"timestamps": timestamps, "values": ts}
+                return {"start": start_time, "values": ts}
 
             except np.linalg.LinAlgError as err:
                 print("Error caught:", err)

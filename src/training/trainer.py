@@ -97,8 +97,8 @@ class TrainingPipeline:
         lmc_gen = LMCGeneratorWrapper(lmc_params)
         kernel_gen = KernelGeneratorWrapper(kernel_params)
         generator_proportions = {
-            lmc_gen: self.config.get("lmc_proportion", 0.85),
-            kernel_gen: 1.0 - self.config.get("lmc_proportion", 0.85),
+            lmc_gen: self.config.get("lmc_proportion", 0.9),
+            kernel_gen: 1.0 - self.config.get("lmc_proportion", 0.9),
         }
         composer = DatasetComposer(
             generator_proportions=generator_proportions, global_seed=self.config["seed"]
@@ -120,7 +120,7 @@ class TrainingPipeline:
         # Fixed validation data loader (load all batches from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_val_data_lmc_80_kernel_20_batches_10_batch_size_64",
+            "data/synthetic_val_data_lmc_0.9_kernel_0.1_batches_10_batch_size_384",
         )
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,

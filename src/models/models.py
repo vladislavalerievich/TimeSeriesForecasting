@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.data_handling.scalers import CustomScalingMultivariate
+from src.data_handling.time_features import compute_batch_time_features
 from src.models.blocks import (
     ConcatLayer,
     DilatedConv1dBlock,
@@ -174,8 +175,14 @@ class BaseModel(nn.Module):
         history_values = data_container.history_values
         target_values = data_container.target_values
         target_index = data_container.target_index
-        history_time_features = data_container.history_time_features
-        target_time_features = data_container.target_time_features
+        history_time_features, target_time_features = compute_batch_time_features(
+            data_container.start,
+            data_container.history_length,
+            data_container.target_length,
+            data_container.batch_size,
+            data_container.frequency,
+            include_subday=self.sub_day,
+        )
 
         batch_size, seq_len, num_channels = history_values.shape
         pred_len = target_values.shape[1] if target_values is not None else 0

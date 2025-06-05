@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import numpy as np
 import torch
 
+from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
 from src.synthetic_generation.generator_params import GeneratorParams
 
 
@@ -16,7 +17,7 @@ class AbstractTimeSeriesGenerator(ABC):
 
     @abstractmethod
     def generate_time_series(
-        self, random_seed: Optional[int] = None, periodicity: str = "D"
+        self, random_seed: Optional[int] = None, periodicity: Frequency = Frequency.D
     ) -> Dict[str, np.ndarray]:
         """
         Generate synthetic time series data.
@@ -25,8 +26,8 @@ class AbstractTimeSeriesGenerator(ABC):
         ----------
         random_seed : int, optional
             Random seed for reproducibility.
-        periodicity : str, optional
-            Time unit for timestamp generation. Examples: 's', 'm', 'h', 'D', 'W', 'M', 'Q', 'Y'.
+        periodicity : Frequency, optional
+            Time unit for timestamp generation. Defaults to Frequency.D (Daily).
 
         Returns
         -------
@@ -109,21 +110,44 @@ class GeneratorWrapper:
         history_length = self._parse_param_value(self.params.history_length)
         target_length = self._parse_param_value(self.params.target_length)
         num_channels = self._parse_param_value(self.params.num_channels)
-        periodicity = np.random.choice(self.params.periodicities)
         return {
             "history_length": history_length,
             "target_length": target_length,
             "num_channels": num_channels,
-            "periodicity": periodicity,
         }
 
-    def _split_time_series_data(
+    def format_to_container(
         self,
         values: np.ndarray,
-        timestamps: np.ndarray,
+        start: np.ndarray,
         history_length: int,
         target_length: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray, np.ndarray]:
+        batch_size: int,
+        num_channels: int,
+        frequency: Optional[Frequency] = None,
+    ) -> BatchTimeSeriesContainer:
+        """
+        Format the generated time series data into a BatchTimeSeriesContainer.
+
+        Parameters
+        ----------
+        values: np.ndarray
+            Shape: [batch_size, seq_len, num_channels]
+        start: np.ndarray of np.datetime64
+            Shape: [batch_size]
+        history_length: int
+            Length of the history window
+        target_length: int
+            Length of the target window
+        batch_size: int
+            Number of time series in the batch
+        num_channels: int
+            Number of channels in the time series
+        frequency: Optional[Frequency]
+            Frequency of the time series. If None, a random frequency is selected.
+        """
+
+        # Split values into history and future
         history_values = torch.tensor(
             values[:, :history_length, :], dtype=torch.float32
         )
@@ -131,48 +155,21 @@ class GeneratorWrapper:
             values[:, history_length : history_length + target_length, :],
             dtype=torch.float32,
         )
-        history_timestamps = timestamps[:, :history_length]
-        target_timestamps = timestamps[
-            :, history_length : history_length + target_length
-        ]
-        return history_values, future_values, history_timestamps, target_timestamps
-
-    def format_to_container(
-        self,
-        values: np.ndarray,
-        timestamps: np.ndarray,
-        history_length: int,
-        target_length: int,
-        batch_size: int,
-        num_channels: int,
-    ):
-        from src.data_handling.data_containers import BatchTimeSeriesContainer
-        from src.data_handling.time_features import compute_time_features
-
-        history_values, future_values, history_timestamps, target_timestamps = (
-            self._split_time_series_data(
-                values, timestamps, history_length, target_length
-            )
-        )
-        history_time_features = compute_time_features(
-            history_timestamps, include_subday=True
-        )
-        target_time_features = compute_time_features(
-            target_timestamps, include_subday=True
-        )
         target_index = torch.randint(0, num_channels, (batch_size,))
         target_values = torch.zeros((batch_size, target_length), dtype=torch.float32)
         for i in range(batch_size):
             target_values[i] = future_values[i, :, target_index[i]]
+
+        # Select a random frequency if none provided
+        if frequency is None:
+            frequency = np.random.choice(list(Frequency))
+
         return BatchTimeSeriesContainer(
             history_values=history_values,
             target_values=target_values,
             target_index=target_index,
-            history_time_features=history_time_features,
-            target_time_features=target_time_features,
-            static_features=None,
-            history_mask=None,
-            target_mask=None,
+            start=start,
+            frequency=frequency,
         )
 
     def generate_batch(self, batch_size: int, seed: Optional[int] = None, **kwargs):
