@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 import torch
+from pandas.tseries.frequencies import to_offset
 
-from src.data_handling.data_containers import Frequency
 from src.utils.utils import device
 
 
@@ -37,21 +37,39 @@ def compute_batch_time_features(
     tuple
         (history_time_features, target_time_features) where each is a torch.Tensor
         of shape (batch_size, length, n_features).
+
+    Notes
+    -----
+    Assumption: For multivariate time series, all channels (variables) within a single series
+    share the same timestamps and frequency. That is, the time grid is identical for all channels
+    in a given series. Time features are therefore computed per series, not per channel.
     """
     # Convert start to numpy array if it's not already
     start = np.asarray(start)
 
-    # Generate timestamps for history and target sequences
-    history_timestamps = pd.date_range(
-        start=pd.Timestamp(start[0]),
-        periods=history_length,
-        freq=frequency,
-    ).astype(np.int64)
-    target_timestamps = pd.date_range(
-        start=pd.Timestamp(start[0]) + pd.Timedelta(history_length, unit=frequency),
-        periods=target_length,
-        freq=frequency,
-    ).astype(np.int64)
+    # Generate timestamps for history and target sequences for each batch item
+    history_timestamps = np.zeros((batch_size, history_length), dtype=np.int64)
+    target_timestamps = np.zeros((batch_size, target_length), dtype=np.int64)
+
+    freq_value = frequency.value
+    offset = to_offset(freq_value)
+
+    for i in range(batch_size):
+        # Each start[i] is a np.datetime64
+        hist_range = pd.date_range(
+            start=pd.Timestamp(start[i]),
+            periods=history_length,
+            freq=freq_value,
+        )
+        # For target, start at the next time step after the last history timestamp
+        target_start = hist_range[-1] + offset
+        targ_range = pd.date_range(
+            start=target_start,
+            periods=target_length,
+            freq=freq_value,
+        )
+        history_timestamps[i, :] = hist_range.astype(np.int64)
+        target_timestamps[i, :] = targ_range.astype(np.int64)
 
     # Compute time features for both sequences
     history_time_features = compute_time_features(history_timestamps, include_subday)

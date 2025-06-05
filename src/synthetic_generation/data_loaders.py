@@ -96,7 +96,7 @@ class SyntheticDataset(Dataset):
         if self.single_file:
             return self.batches[idx]
         else:
-            return torch.load(self.batch_files[idx])
+            return torch.load(self.batch_files[idx], weights_only=False)
 
 
 class OnTheFlySyntheticDataset(IterableDataset):

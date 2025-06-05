@@ -17,6 +17,7 @@ dependencies = [
     "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention@main",
     "scikit-learn",
     "matplotlib",
+    "gluonts",
     "tqdm",
     "wandb",
 ]

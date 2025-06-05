@@ -22,11 +22,14 @@ class Term(Enum):
 
 
 class Frequency(Enum):
-    D = "D"  # Daily
+    M = "ME"  # Month End
     W = "W"  # Weekly
-    H = "H"  # Hourly
-    ME = "ME"  # Month End (replacing M)
+    D = "D"  # Daily
+    H = "h"  # Hourly
     S = "s"  # Seconds
+    T5 = "5min"  # 5 minutes
+    T10 = "10min"  # 10 minutes
+    T15 = "15min"  # 15 minutes
 
 
 @dataclass
