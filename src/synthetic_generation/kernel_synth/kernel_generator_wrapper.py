@@ -246,7 +246,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         target_values: np.ndarray,
         target_index: np.ndarray,
         start: np.ndarray,
-        frequency: Frequency = None,
+        frequency: Optional[Frequency] = None,
     ) -> BatchTimeSeriesContainer:
         """
         Format the generated time series data into a BatchTimeSeriesContainer.
@@ -267,6 +267,9 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         history_values_tensor = torch.tensor(history_values, dtype=torch.float32)
         target_values_tensor = torch.tensor(target_values, dtype=torch.float32)
         target_index_tensor = torch.tensor(target_index, dtype=torch.long)
+
+        if frequency is None:
+            frequency = np.random.choice(list(Frequency))
 
         return BatchTimeSeriesContainer(
             history_values=history_values_tensor,

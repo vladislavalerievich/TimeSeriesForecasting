@@ -1,20 +1,10 @@
 from dataclasses import dataclass
-from enum import Enum
 from typing import List, Optional
 
 import numpy as np
 import torch
 
-
-class Frequency(Enum):
-    M = "ME"  # Month End
-    W = "W"  # Weekly
-    D = "D"  # Daily
-    H = "h"  # Hourly
-    S = "s"  # Seconds
-    T5 = "5min"  # 5 minutes
-    T10 = "10min"  # 10 minutes
-    T15 = "15min"  # 15 minutes
+from src.synthetic_generation.common.constants import Frequency
 
 
 @dataclass

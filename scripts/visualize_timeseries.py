@@ -136,7 +136,7 @@ if __name__ == "__main__":
     history_length = 128
     target_length = 64
     output_dir = "outputs/plots"
-    global_seed = 42
+    global_seed = 2025
 
     logger.info(f"Saving plots to {output_dir}")
 

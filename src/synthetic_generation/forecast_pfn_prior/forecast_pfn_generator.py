@@ -5,12 +5,12 @@ import pandas as pd
 from pandas.tseries.frequencies import to_offset
 from scipy.stats import beta
 
-from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
 from src.synthetic_generation.common.constants import (
     BASE_END,
     BASE_START,
     FREQUENCY_MAPPING,
+    Frequency,
 )
 from src.synthetic_generation.forecast_pfn_prior.series_config import (
     ComponentNoise,
@@ -20,6 +20,7 @@ from src.synthetic_generation.forecast_pfn_prior.series_config import (
 from src.synthetic_generation.forecast_pfn_prior.utils import (
     get_transition_coefficients,
     sample_scale,
+    shift_axis,
     weibull_noise,
 )
 from src.synthetic_generation.generator_params import ForecastPFNGeneratorParams
@@ -72,7 +73,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         scale_config = ComponentScale(
             base=1.0,
             linear=np.random.normal(0, 0.01),
-            exp=min(1.01, np.random.normal(1, 0.005 / timescale))
+            exp=max(0.0001, min(1.01, np.random.normal(1, 0.005 / timescale)))
             if self.params.trend_exp
             else 1.0,
             a=a,
@@ -123,7 +124,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
                 ComponentScale(
                     base=1.0,
                     linear=np.random.normal(0, 0.01),
-                    exp=min(1.01, np.random.normal(1, 0.005 / timescale))
+                    exp=max(0.0001, min(1.01, np.random.normal(1, 0.005 / timescale)))
                     if self.params.trend_exp
                     else 1.0,
                     a=a,
@@ -211,11 +212,10 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         values = np.full_like(dates, series.scale.base, dtype=np.float32)
         days = (dates - dates[0]).days
         if series.scale.linear is not None:
-            values += self._shift_axis(days, series.offset.linear) * series.scale.linear
+            values += shift_axis(days, series.offset.linear) * series.scale.linear
         if series.scale.exp is not None:
-            values *= np.power(
-                series.scale.exp, self._shift_axis(days, series.offset.exp)
-            )
+            values *= np.power(series.scale.exp, shift_axis(days, series.offset.exp))
+
         return values
 
     def _make_series_seasonal(
@@ -299,11 +299,6 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
                 2 * np.pi * harmonic * dates_feature / n_total
             )
         return return_val
-
-    def _shift_axis(self, days: np.ndarray, shift: float) -> np.ndarray:
-        if shift is None:
-            return days
-        return days - shift * days[-1]
 
     def _get_random_walk_series(self, length: int, movements=[-1, 1]) -> np.ndarray:
         random_walk = [np.random.choice(movements)]

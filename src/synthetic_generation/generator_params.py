@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, Union
 
-from src.data_handling.data_containers import Frequency
+from src.synthetic_generation.common.constants import Frequency
 
 
 @dataclass
