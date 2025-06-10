@@ -28,8 +28,17 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             Dictionary containing sampled parameter values.
         """
         params = super().sample_parameters()
-        max_kernels = self.params.max_kernels
-        params.update({"max_kernels": max_kernels})
+        # Sample num_kernels
+        if isinstance(self.params.num_kernels, tuple):
+            num_kernels = self._sample_from_range(
+                min_val=self.params.num_kernels[0],
+                max_val=self.params.num_kernels[1],
+                is_int=True,
+            )
+        else:
+            num_kernels = self.params.num_kernels
+
+        params.update({"max_kernels": num_kernels})
         return params
 
     def _generate_univariate_time_series(
