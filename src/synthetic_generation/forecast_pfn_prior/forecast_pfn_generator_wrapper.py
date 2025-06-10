@@ -5,7 +5,7 @@ import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
-from src.synthetic_generation.common import generate_spikes
+from src.synthetic_generation.common.utils import generate_spikes
 from src.synthetic_generation.forecast_pfn_prior.forecast_pfn_generator import (
     ForecastPFNGenerator,
 )
@@ -17,8 +17,8 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         super().__init__(params)
         self.params: ForecastPFNGeneratorParams = params
 
-    def sample_parameters(self) -> Dict[str, Any]:
-        params = super().sample_parameters()
+    def _sample_parameters(self) -> Dict[str, Any]:
+        params = super()._sample_parameters()
         frequency = np.random.choice(list(Frequency))
         params.update(
             {
@@ -230,7 +230,7 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         if seed is not None:
             self._set_random_seeds(seed)
         if params is None:
-            params = self.sample_parameters()
+            params = self._sample_parameters()
         history_length = params["history_length"]
         target_length = params["target_length"]
         num_channels = params["num_channels"]

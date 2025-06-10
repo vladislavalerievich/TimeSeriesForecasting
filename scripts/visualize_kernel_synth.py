@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 import matplotlib.pyplot as plt
 
-from src.synthetic_generation.kernel_synth import KernelSynthGenerator
+from src.synthetic_generation.kernel_synth.kernel_synth import KernelSynthGenerator
 
 
 def plot_series(

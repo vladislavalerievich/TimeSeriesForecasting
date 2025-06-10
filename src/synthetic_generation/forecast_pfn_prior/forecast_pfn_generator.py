@@ -7,7 +7,11 @@ from scipy.stats import beta
 
 from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.constants import BASE_END, BASE_START, FREQUENCY_MAPPING
+from src.synthetic_generation.common.constants import (
+    BASE_END,
+    BASE_START,
+    FREQUENCY_MAPPING,
+)
 from src.synthetic_generation.forecast_pfn_prior.series_config import (
     ComponentNoise,
     ComponentScale,

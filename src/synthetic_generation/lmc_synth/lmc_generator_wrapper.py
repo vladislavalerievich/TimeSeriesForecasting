@@ -5,7 +5,7 @@ import numpy as np
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.generator_params import LMCGeneratorParams
-from src.synthetic_generation.lmc_synth import LMCSynthGenerator
+from src.synthetic_generation.lmc_synth.lmc_synth import LMCSynthGenerator
 
 
 class LMCGeneratorWrapper(GeneratorWrapper):
@@ -18,7 +18,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         super().__init__(params)
         self.params: LMCGeneratorParams = params
 
-    def sample_parameters(self) -> Dict[str, Any]:
+    def _sample_parameters(self) -> Dict[str, Any]:
         """
         Sample parameter values for batch generation with LMCSynthGenerator.
 
@@ -27,7 +27,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         Dict[str, Any]
             Dictionary containing sampled parameter values.
         """
-        params = super().sample_parameters()
+        params = super()._sample_parameters()
         # LMC-specific parameters
         max_kernels = self.params.max_kernels
         dirichlet_min = self.params.dirichlet_min
@@ -114,7 +114,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
 
         # Sample parameters if not provided
         if params is None:
-            params = self.sample_parameters()
+            params = self._sample_parameters()
 
         history_length = params["history_length"]
         target_length = params["target_length"]
@@ -146,7 +146,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         )
 
         # Format the data into a BatchTimeSeriesContainer
-        return self.format_to_container(
+        return self._format_to_container(
             values=batch_values,
             start=batch_start,
             history_length=history_length,

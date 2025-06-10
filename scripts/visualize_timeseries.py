@@ -17,10 +17,10 @@ from src.synthetic_generation.generator_params import (
 from src.synthetic_generation.gp_prior.gp_generator_wrapper import (
     GPGeneratorWrapper,
 )
-from src.synthetic_generation.kernel_generator_wrapper import (
+from src.synthetic_generation.kernel_synth.kernel_generator_wrapper import (
     KernelGeneratorWrapper,
 )
-from src.synthetic_generation.lmc_generator_wrapper import (
+from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
     LMCGeneratorWrapper,
 )
 

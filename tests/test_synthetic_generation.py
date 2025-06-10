@@ -11,11 +11,11 @@ from src.synthetic_generation.dataset_composer import (
     OnTheFlyDatasetGenerator,
 )
 from src.synthetic_generation.generator_params import GeneratorParams
-from src.synthetic_generation.kernel_generator_wrapper import (
+from src.synthetic_generation.kernel_synth.kernel_generator_wrapper import (
     KernelGeneratorParams,
     KernelGeneratorWrapper,
 )
-from src.synthetic_generation.lmc_generator_wrapper import (
+from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
     LMCGeneratorParams,
     LMCGeneratorWrapper,
 )

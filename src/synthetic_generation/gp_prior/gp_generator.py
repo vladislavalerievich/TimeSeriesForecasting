@@ -8,8 +8,12 @@ import torch
 from scipy.stats import beta
 
 from src.data_handling.data_containers import Frequency
-from src.synthetic_generation.common import generate_peak_spikes
-from src.synthetic_generation.constants import BASE_END, BASE_START, FREQUENCY_MAPPING
+from src.synthetic_generation.common.constants import (
+    BASE_END,
+    BASE_START,
+    FREQUENCY_MAPPING,
+)
+from src.synthetic_generation.common.utils import generate_peak_spikes
 from src.synthetic_generation.generator_params import GPGeneratorParams
 from src.synthetic_generation.gp_prior.constants import (
     KERNEL_BANK,

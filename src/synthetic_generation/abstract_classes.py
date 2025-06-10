@@ -106,7 +106,7 @@ class GeneratorWrapper:
             )
         return int(value) if is_int else value
 
-    def sample_parameters(self) -> Dict[str, Any]:
+    def _sample_parameters(self) -> Dict[str, Any]:
         history_length = self._parse_param_value(self.params.history_length)
         target_length = self._parse_param_value(self.params.target_length)
         num_channels = self._parse_param_value(self.params.num_channels)
@@ -116,7 +116,7 @@ class GeneratorWrapper:
             "num_channels": num_channels,
         }
 
-    def format_to_container(
+    def _format_to_container(
         self,
         values: np.ndarray,
         start: np.ndarray,

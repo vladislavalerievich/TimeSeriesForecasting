@@ -14,8 +14,8 @@ from sklearn.gaussian_process.kernels import (
     WhiteKernel,
 )
 
-from src.synthetic_generation.constants import DEFAULT_START_DATE
-from src.synthetic_generation.lmc_synth import LMCSynthGenerator
+from src.synthetic_generation.common.constants import DEFAULT_START_DATE
+from src.synthetic_generation.lmc_synth.lmc_synth import LMCSynthGenerator
 
 LENGTH = 1024
 KERNEL_BANK = [
