@@ -8,6 +8,24 @@ from tqdm import tqdm
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
+from src.synthetic_generation.forecast_pfn_prior.forecast_pfn_generator_wrapper import (
+    ForecastPFNGeneratorWrapper,
+)
+from src.synthetic_generation.generator_params import (
+    ForecastPFNGeneratorParams,
+    GPGeneratorParams,
+    KernelGeneratorParams,
+    LMCGeneratorParams,
+)
+from src.synthetic_generation.gp_prior.gp_generator_wrapper import (
+    GPGeneratorWrapper,
+)
+from src.synthetic_generation.kernel_synth.kernel_generator_wrapper import (
+    KernelGeneratorWrapper,
+)
+from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
+    LMCGeneratorWrapper,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -375,3 +393,118 @@ class OnTheFlyDatasetGenerator:
         self.batch_counter += 1
 
         return batch
+
+
+class DefaultSyntheticComposer:
+    """
+    Centralized class for constructing DatasetComposer with configurable generator proportions
+    and parameters for both univariate and multivariate cases.
+
+    Args:
+        seed: Random seed.
+        history_length: History length (int or tuple).
+        target_length: Target length (int or tuple).
+        num_channels: Number of channels (int or tuple).
+        generator_proportions: Optional dict mapping generator names (str) to floats. If not provided, defaults are used.
+    """
+
+    def __init__(
+        self,
+        seed: int = 42,
+        history_length=(64, 256),
+        target_length=(32, 256),
+        num_channels=(1, 8),
+        generator_proportions: dict = None,
+    ):
+        self.seed = seed
+        self.history_length = history_length
+        self.target_length = target_length
+        self.num_channels = num_channels
+
+        # Create generator params
+        self.lmc_params = LMCGeneratorParams(
+            global_seed=seed,
+            history_length=history_length,
+            target_length=target_length,
+            num_channels=num_channels,
+        )
+        self.kernel_params = KernelGeneratorParams(
+            global_seed=seed,
+            history_length=history_length,
+            target_length=target_length,
+            num_channels=num_channels,
+        )
+        self.gp_params = GPGeneratorParams(
+            global_seed=seed,
+            history_length=history_length,
+            target_length=target_length,
+            num_channels=num_channels,
+        )
+        self.forecast_pfn_params = ForecastPFNGeneratorParams(
+            global_seed=seed,
+            history_length=history_length,
+            target_length=target_length,
+            num_channels=num_channels,
+        )
+
+        # Create generator wrappers
+        self.lmc_generator = LMCGeneratorWrapper(self.lmc_params)
+        self.kernel_generator = KernelGeneratorWrapper(self.kernel_params)
+        self.gp_generator = GPGeneratorWrapper(self.gp_params)
+        self.forecast_pfn_generator = ForecastPFNGeneratorWrapper(
+            self.forecast_pfn_params
+        )
+
+        # Map string names to generator instances
+        self.generator_map = {
+            "lmc": self.lmc_generator,
+            "kernel": self.kernel_generator,
+            "gp": self.gp_generator,
+            "forecast_pfn": self.forecast_pfn_generator,
+        }
+
+        # Use custom or default proportions
+        if generator_proportions is not None:
+            self.generator_proportions = self._map_and_validate_proportions(
+                generator_proportions
+            )
+        else:
+            if self._is_univariate():
+                self.generator_proportions = {
+                    self.kernel_generator: 0.4,
+                    self.gp_generator: 0.5,
+                    self.forecast_pfn_generator: 0.1,
+                }
+            else:
+                self.generator_proportions = {
+                    self.lmc_generator: 0.65,
+                    self.kernel_generator: 0.15,
+                    self.gp_generator: 0.15,
+                    self.forecast_pfn_generator: 0.05,
+                }
+        self.validate_proportions()
+        self.composer = DatasetComposer(
+            generator_proportions=self.generator_proportions,
+            global_seed=self.seed,
+        )
+
+    def _is_univariate(self):
+        # Handles both int and tuple for num_channels
+        if isinstance(self.num_channels, int):
+            return self.num_channels == 1
+        if isinstance(self.num_channels, tuple):
+            return self.num_channels[0] == 1 and self.num_channels[1] == 1
+        return False
+
+    def _map_and_validate_proportions(self, proportions_dict):
+        mapped = {}
+        for name, val in proportions_dict.items():
+            if name not in self.generator_map:
+                raise ValueError(f"Unknown generator name: {name}")
+            mapped[self.generator_map[name]] = float(val)
+        return mapped
+
+    def validate_proportions(self):
+        total = sum(self.generator_proportions.values())
+        if not abs(total - 1.0) < 1e-6:
+            raise ValueError(f"Generator proportions must sum to 1.0, got {total}")

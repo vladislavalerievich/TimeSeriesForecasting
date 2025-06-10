@@ -195,6 +195,8 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         history_values = batch_values[:, :history_length, :]
         target_values_full = batch_values[:, history_length:, :]
 
+        history_values = np.array(history_values)
+        target_values_full = np.array(target_values_full)
         # Convert to torch tensors
         history_values_tensor = torch.tensor(history_values, dtype=torch.float32)
         target_values_tensor = torch.tensor(target_values_full, dtype=torch.float32)

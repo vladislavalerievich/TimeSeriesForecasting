@@ -107,6 +107,9 @@ class GPGeneratorWrapper(GeneratorWrapper):
         frequency: Frequency
             Frequency of the time series.
         """
+        history_values = np.array(history_values)
+        target_values = np.array(target_values)
+
         history_values_tensor = torch.tensor(history_values, dtype=torch.float32)
         target_values_tensor = torch.tensor(target_values, dtype=torch.float32)
         target_index_tensor = torch.tensor(target_index, dtype=torch.long)
