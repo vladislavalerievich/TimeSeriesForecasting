@@ -41,34 +41,6 @@ class KernelGeneratorParams(GeneratorParams):
 
 
 @dataclass
-class ForecastPFNGeneratorParams(GeneratorParams):
-    """Parameters for the ForecastPFNGenerator."""
-
-    frequency: Frequency = Frequency.D
-    trend_exp: bool = True
-    scale_noise: Tuple[float, float] = (0.6, 0.3)
-    harmonic_scale_ratio: float = 0.5
-    harmonic_rate: float = 1.0
-    period_factor: float = 1.0
-    seasonal_only: bool = False
-    trend_additional: bool = False
-    transition_ratio: float = (
-        1.0  # Probability of applying transition between two series
-    )
-    random_walk: bool = False
-    # Parameters for data augmentation
-    mixup_prob: float = 0.0  # Probability of applying mixup augmentation
-    mixup_series: int = 4  # Maximum number of series to mix in mixup
-    damp_and_spike: bool = False  # Whether to apply damping and spike augmentations
-    damping_noise_ratio: float = 0.05  # Probability of applying damping noise
-    spike_noise_ratio: float = 0.05  # Probability of applying spike noise
-    spike_signal_ratio: float = (
-        0.05  # Probability of replacing series with spike-only signal
-    )
-    spike_batch_ratio: float = 0.05  # Fraction of batch to replace with spike-only signals if spike_signal_ratio is triggered
-
-
-@dataclass
 class GPGeneratorParams(GeneratorParams):
     """
     Parameters for the Gaussian Process (GP) Prior synthetic data generator.
@@ -95,3 +67,31 @@ class GPGeneratorParams(GeneratorParams):
             "spectral_mixture_kernel": 0.0,
         }
     )
+
+
+@dataclass
+class ForecastPFNGeneratorParams(GeneratorParams):
+    """Parameters for the ForecastPFNGenerator."""
+
+    frequency: Frequency = Frequency.D
+    trend_exp: bool = True
+    scale_noise: Tuple[float, float] = (0.6, 0.3)
+    harmonic_scale_ratio: float = 0.5
+    harmonic_rate: float = 1.0
+    period_factor: float = 1.0
+    seasonal_only: bool = False
+    trend_additional: bool = False
+    transition_ratio: float = (
+        1.0  # Probability of applying transition between two series
+    )
+    random_walk: bool = False
+    # Parameters for data augmentation
+    mixup_prob: float = 0.0  # Probability of applying mixup augmentation
+    mixup_series: int = 4  # Maximum number of series to mix in mixup
+    damp_and_spike: bool = False  # Whether to apply damping and spike augmentations
+    damping_noise_ratio: float = 0.05  # Probability of applying damping noise
+    spike_noise_ratio: float = 0.05  # Probability of applying spike noise
+    spike_signal_ratio: float = (
+        0.05  # Probability of replacing series with spike-only signal
+    )
+    spike_batch_ratio: float = 0.05  # Fraction of batch to replace with spike-only signals if spike_signal_ratio is triggered
