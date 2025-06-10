@@ -55,14 +55,14 @@ def parse_args():
     parser.add_argument(
         "--history_length",
         type=str,
-        default="64,256",
+        default="256",
         help="History length range (min,max) or fixed value",
     )
 
     parser.add_argument(
         "--target_length",
         type=str,
-        default="32,256",
+        default="64",
         help="Target length range (min,max) or fixed value",
     )
 

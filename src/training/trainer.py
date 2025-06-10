@@ -5,7 +5,6 @@ import time
 import warnings
 from typing import Dict, Tuple
 
-import gpytorch
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -108,6 +107,7 @@ class TrainingPipeline:
         )
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,
+            batch_size=self.config["batch_size"],
             device=self.device,
             single_file=True,
         )
