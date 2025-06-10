@@ -7,7 +7,7 @@ from scipy.stats import beta
 
 from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.constants import BASE_END, BASE_START
+from src.synthetic_generation.constants import BASE_END, BASE_START, FREQUENCY_MAPPING
 from src.synthetic_generation.forecast_pfn_prior.series_config import (
     ComponentNoise,
     ComponentScale,
@@ -19,17 +19,6 @@ from src.synthetic_generation.forecast_pfn_prior.utils import (
     weibull_noise,
 )
 from src.synthetic_generation.generator_params import ForecastPFNGeneratorParams
-
-FREQUENCY_MAPPING = {
-    Frequency.S: ("min", "1", 1 / 1440),
-    Frequency.T5: ("min", "5", 1 / 1440),
-    Frequency.T10: ("min", "10", 1 / 1440),
-    Frequency.T15: ("min", "15", 1 / 1440),
-    Frequency.H: ("H", "", 1 / 24),
-    Frequency.D: ("D", "", 1),
-    Frequency.W: ("W", "", 7),
-    Frequency.M: ("MS", "", 30),
-}
 
 
 class ForecastPFNGenerator(AbstractTimeSeriesGenerator):

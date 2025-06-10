@@ -5,7 +5,7 @@ def weibull_noise(k=2, length=1, median=1):
     """
     Function to generate weibull noise with a fixed median
     """
-    # we set lambda so that median is a given value
+    # Lambda is chosen such that the median is a given value
     lamda = median / (np.log(2) ** (1 / k))
     return lamda * np.random.weibull(k, length)
 

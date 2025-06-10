@@ -9,8 +9,12 @@ from scipy.stats import beta
 
 from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.common import generate_peak_spikes
-from src.synthetic_generation.constants import BASE_END, BASE_START
+from src.synthetic_generation.constants import BASE_END, BASE_START, FREQUENCY_MAPPING
 from src.synthetic_generation.generator_params import GPGeneratorParams
+from src.synthetic_generation.gp_prior.constants import (
+    KERNEL_BANK,
+    KERNEL_PERIODS_BY_FREQ,
+)
 from src.synthetic_generation.gp_prior.utils import (
     create_kernel,
     extract_periodicities,
@@ -28,35 +32,6 @@ class GPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-
-KERNEL_BANK = {
-    0: ("matern_kernel", 3),
-    1: ("linear_kernel", 2),
-    2: ("rbf_kernel", 2),
-    3: ("periodic_kernel", 5),
-    4: ("polynomial_kernel", 1),
-    5: ("rational_quadratic_kernel", 1),
-    6: ("spectral_mixture_kernel", 2),
-}
-
-FREQUENCY_MAPPING = {
-    Frequency.T5: ("min", "5"),
-    Frequency.T10: ("min", "10"),
-    Frequency.T15: ("min", "15"),
-    Frequency.H: ("H", ""),
-    Frequency.D: ("D", ""),
-    Frequency.W: ("W", ""),
-    Frequency.M: ("MS", ""),
-}
-
-KERNEL_PERIODS_BY_FREQ = {
-    "min": [5, 15, 30, 60, 120, 240, 360],
-    "H": [3, 6, 12, 24, 48, 72, 168],
-    "D": [7, 14, 28, 30, 90, 180, 365],
-    "W": [2, 4, 8, 12, 24, 52],
-    "MS": [3, 4, 6, 12, 24, 36, 60],
-}
 
 
 class GPGenerator:
@@ -102,7 +77,7 @@ class GPGenerator:
             gaussians_periodic = self.gaussians_periodic
 
         # Map frequency to freq and subfreq
-        freq, subfreq = FREQUENCY_MAPPING.get(self.frequency, ("D", ""))
+        freq, subfreq, timescale = FREQUENCY_MAPPING.get(self.frequency, ("D", "", 0))
 
         # Decide if using exact frequencies
         exact_freqs = np.random.rand() < self.periods_per_freq

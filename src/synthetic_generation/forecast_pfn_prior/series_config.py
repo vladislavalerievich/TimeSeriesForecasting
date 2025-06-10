@@ -1,7 +1,3 @@
-"""
-Module containing dataclasses for synthetic data generator
-"""
-
 from dataclasses import dataclass
 
 import numpy as np

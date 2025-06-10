@@ -12,9 +12,9 @@ learning_rate: 0.0000001
 loss: mse # mae
 scaler: custom_robust
 
-batch_size: 384
-num_epochs: 20
-num_training_iterations_per_epoch: 10
+batch_size: 64
+num_epochs: 50
+num_training_iterations_per_epoch: 100
 
 BaseModelConfig:
   sin_pos_enc: false
