@@ -48,7 +48,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         if freq_key == "min":
             minute = np.random.uniform(0.0, 1.0)
             h = np.random.uniform(0.0, 0.2)
-        elif freq_key == "H":
+        elif freq_key == "h":
             minute = np.random.uniform(0.0, 0.1)
             h = np.random.uniform(0.0, 1.0)
             w = np.random.uniform(0.0, 0.4)

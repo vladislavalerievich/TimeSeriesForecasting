@@ -2,14 +2,17 @@ import argparse
 import logging
 import os
 import time
+import warnings
 from typing import Dict, Tuple
 
+import gpytorch
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchmetrics
 import yaml
+from linear_operator.utils.cholesky import NumericalWarning
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
@@ -21,22 +24,17 @@ from src.synthetic_generation.data_loaders import (
     SyntheticValidationDataLoader,
 )
 from src.synthetic_generation.dataset_composer import (
-    DatasetComposer,
+    DefaultSyntheticComposer,
     OnTheFlyDatasetGenerator,
-)
-from src.synthetic_generation.kernel_synth.kernel_generator_wrapper import (
-    KernelGeneratorParams,
-    KernelGeneratorWrapper,
-)
-from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
-    LMCGeneratorParams,
-    LMCGeneratorWrapper,
 )
 from src.utils.utils import (
     device,
     generate_model_save_name,
     seed_everything,
 )
+
+# Suppress gpytorch numerical warnings
+warnings.filterwarnings("ignore", category=NumericalWarning)
 
 # Configure logging
 logging.basicConfig(
@@ -81,28 +79,14 @@ class TrainingPipeline:
         self.config["model_save_name"] = generate_model_save_name(self.config)
         self._load_checkpoint()
 
-        # --- Synthetic Data Generation Setup ---
-        lmc_params = LMCGeneratorParams(
-            global_seed=self.config["seed"],
+        # --- Synthetic training data generation setup ---
+        composer = DefaultSyntheticComposer(
+            seed=self.config["seed"],
             history_length=self.config.get("history_length", 256),
             target_length=self.config.get("target_length", 64),
             num_channels=self.config.get("num_channels", (1, 8)),
-        )
-        kernel_params = KernelGeneratorParams(
-            global_seed=self.config["seed"],
-            history_length=self.config.get("history_length", 256),
-            target_length=self.config.get("target_length", 64),
-            num_channels=self.config.get("num_channels", (1, 8)),
-        )
-        lmc_gen = LMCGeneratorWrapper(lmc_params)
-        kernel_gen = KernelGeneratorWrapper(kernel_params)
-        generator_proportions = {
-            lmc_gen: self.config.get("lmc_proportion", 0.9),
-            kernel_gen: 1.0 - self.config.get("lmc_proportion", 0.9),
-        }
-        composer = DatasetComposer(
-            generator_proportions=generator_proportions, global_seed=self.config["seed"]
-        )
+            generator_proportions=self.config.get("generator_proportions", None),
+        ).composer
 
         # On-the-fly training data loader
         on_the_fly_gen = OnTheFlyDatasetGenerator(
@@ -120,11 +104,12 @@ class TrainingPipeline:
         # Fixed validation data loader (load all batches from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "/home/moroshav/TimeSeriesForecasting/data/synthetic_val_data_lmc_0.9_kernel_0.1_batches_10_batch_size_64",
+            "data/synthetic_validation_dataset/dataset.pt",
         )
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,
             device=self.device,
+            single_file=True,
         )
 
         # Setup loss function, metrics, wandb
@@ -461,7 +446,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-c",
         "--config",
-        default="./configs/training/train.yaml",
+        default="./configs/train.yaml",
         help="Path to config file",
     )
     args = parser.parse_args()

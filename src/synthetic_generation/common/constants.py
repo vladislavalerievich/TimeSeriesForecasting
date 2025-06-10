@@ -23,7 +23,7 @@ FREQUENCY_MAPPING = {
     Frequency.T5: ("min", "5", 1 / 1440),
     Frequency.T10: ("min", "10", 1 / 1440),
     Frequency.T15: ("min", "15", 1 / 1440),
-    Frequency.H: ("H", "", 1 / 24),
+    Frequency.H: ("h", "", 1 / 24),
     Frequency.D: ("D", "", 1),
     Frequency.W: ("W", "", 7),
     Frequency.M: ("MS", "", 30),

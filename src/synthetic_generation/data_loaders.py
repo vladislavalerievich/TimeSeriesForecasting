@@ -49,7 +49,7 @@ class SyntheticDataset(Dataset):
             # Verify single file exists
             if not os.path.isfile(data_path):
                 raise FileNotFoundError(f"Single file does not exist: {data_path}")
-            self.batches = torch.load(data_path)
+            self.batches = torch.load(data_path, weights_only=False)
         else:
             # Verify directory contains batch files
             if not os.path.isdir(data_path):

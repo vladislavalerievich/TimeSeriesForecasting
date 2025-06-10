@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 import os
 
@@ -21,7 +20,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="data/synthetic",
+        default="data/synthetic_validation_dataset",
         help="Directory to save the generated datasets",
     )
 
@@ -42,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=4,
+        default=64,
         help="Number of time series per batch",
     )
 
@@ -137,7 +136,7 @@ def main():
 
     if args.full_dataset:
         logger.info(
-            f"Generating and saving full dataset with {args.train_batches} training batches and {args.val_batches} validation batches to {args.output_dir}"
+            f"Generating and saving full dataset with {args.train_batches} training batches and {args.val_batches} validation batches with batch size {args.batch_size}"
         )
         composer.create_train_validation_datasets(
             output_dir=args.output_dir,
@@ -150,7 +149,7 @@ def main():
         logger.info(f"Saved datasets to {args.output_dir}")
     elif args.validation_dataset:
         logger.info(
-            f"Generating and saving {args.val_batches} validation batches to {args.output_dir}"
+            f"Generating and saving {args.val_batches} validation batches with batch size {args.batch_size}"
         )
         composer.save_dataset(
             output_dir=args.output_dir,
