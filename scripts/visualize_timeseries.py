@@ -92,6 +92,7 @@ def visualize_batch_sample(
     logger.info(
         f"[{generator_name}] Saved plot for sample {sample_idx} to {output_file}"
     )
+    logger.info("--------------------------------")
 
 
 def visualize_saved_batch(
@@ -134,7 +135,6 @@ if __name__ == "__main__":
     batch_size = 2
     history_length = 128
     target_length = 64
-    num_channels = 5
     output_dir = "outputs/plots"
     global_seed = 42
 
@@ -145,17 +145,25 @@ if __name__ == "__main__":
         global_seed=global_seed,
         history_length=history_length,
         target_length=target_length,
-        num_channels=num_channels,
+        num_channels=5,
     )
     lmc_gen = LMCGeneratorWrapper(lmc_params)
 
-    kernel_params = KernelGeneratorParams(
+    kernel_params_univariate = KernelGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
         target_length=target_length,
-        num_channels=num_channels,
+        num_channels=1,
     )
-    kernel_gen = KernelGeneratorWrapper(kernel_params)
+    kernel_gen_univariate = KernelGeneratorWrapper(kernel_params_univariate)
+
+    kernel_params_multivariate = KernelGeneratorParams(
+        global_seed=global_seed,
+        history_length=history_length,
+        target_length=target_length,
+        num_channels=5,
+    )
+    kernel_gen_multivariate = KernelGeneratorWrapper(kernel_params_multivariate)
 
     gp_params_univariate = GPGeneratorParams(
         global_seed=global_seed,
@@ -169,7 +177,7 @@ if __name__ == "__main__":
         global_seed=global_seed,
         history_length=history_length,
         target_length=target_length,
-        num_channels=num_channels,
+        num_channels=5,
     )
     gp_gen_multivariate = GPGeneratorWrapper(gp_params_multivariate)
 
@@ -187,7 +195,7 @@ if __name__ == "__main__":
         global_seed=global_seed,
         history_length=history_length,
         target_length=target_length,
-        num_channels=num_channels,
+        num_channels=5,
     )
 
     forecast_pfn_multivariate_gen = ForecastPFNGeneratorWrapper(
@@ -196,7 +204,12 @@ if __name__ == "__main__":
 
     # Visualize samples from all generators
     visualize_batch_sample(lmc_gen, batch_size=batch_size, output_dir=output_dir)
-    visualize_batch_sample(kernel_gen, batch_size=batch_size, output_dir=output_dir)
+    visualize_batch_sample(
+        kernel_gen_univariate, batch_size=batch_size, output_dir=output_dir
+    )
+    visualize_batch_sample(
+        kernel_gen_multivariate, batch_size=batch_size, output_dir=output_dir
+    )
     visualize_batch_sample(
         gp_gen_univariate, batch_size=batch_size, output_dir=output_dir
     )

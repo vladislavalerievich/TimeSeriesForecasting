@@ -7,7 +7,6 @@ import pandas as pd
 import torch
 from scipy.stats import beta
 
-from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.common.constants import (
     BASE_END,
     BASE_START,
