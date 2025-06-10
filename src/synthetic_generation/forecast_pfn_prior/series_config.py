@@ -25,10 +25,6 @@ class ComponentNoise:
     # shape parameter for the weibull distribution
     k: float
     median: float
-
-    # noise will be finally calculated as
-    # noise_term = (1 + scale * (noise - E(noise)))
-    # no noise can be represented by scale = 0
     scale: float
 
 

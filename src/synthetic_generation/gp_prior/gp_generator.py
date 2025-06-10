@@ -8,16 +8,14 @@ import torch
 from scipy.stats import beta
 
 from src.data_handling.data_containers import Frequency
-from src.synthetic_generation.constants import BASE_END_ORD, BASE_START_ORD
-from src.synthetic_generation.forecast_pfn_prior.generate_steps_n_spikes import (
-    generate_peak_spikes,
-)
-from src.synthetic_generation.forecast_pfn_prior.utils import (
+from src.synthetic_generation.common import generate_peak_spikes
+from src.synthetic_generation.constants import BASE_END, BASE_START
+from src.synthetic_generation.generator_params import GPGeneratorParams
+from src.synthetic_generation.gp_prior.utils import (
     create_kernel,
     extract_periodicities,
     random_binary_map,
 )
-from src.synthetic_generation.generator_params import GPGeneratorParams
 
 
 class GPModel(gpytorch.models.ExactGP):
@@ -195,7 +193,7 @@ class GPGenerator:
         # Generate start time
         start = np.datetime64(
             pd.Timestamp.fromordinal(
-                int((BASE_START_ORD - BASE_END_ORD) * beta.rvs(5, 1) + BASE_START_ORD)
+                int((BASE_START - BASE_END) * beta.rvs(5, 1) + BASE_START)
             )
         )
 

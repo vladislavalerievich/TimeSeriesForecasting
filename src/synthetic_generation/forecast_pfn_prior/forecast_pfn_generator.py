@@ -7,7 +7,7 @@ from scipy.stats import beta
 
 from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.constants import BASE_END_ORD, BASE_START_ORD
+from src.synthetic_generation.constants import BASE_END, BASE_START
 from src.synthetic_generation.forecast_pfn_prior.series_config import (
     ComponentNoise,
     ComponentScale,
@@ -73,7 +73,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
 
         if start is None:
             start = pd.Timestamp.fromordinal(
-                int((BASE_START_ORD - BASE_END_ORD) * beta.rvs(5, 1) + BASE_START_ORD)
+                int((BASE_START - BASE_END) * beta.rvs(5, 1) + BASE_START)
             )
 
         scale_config = ComponentScale(

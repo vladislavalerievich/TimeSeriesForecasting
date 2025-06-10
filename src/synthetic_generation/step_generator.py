@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 
 from src.data_handling.data_containers import TimeSeriesData
-from src.synthetic_generation.constants import BASE_END_ORD, BASE_START_ORD
+from src.synthetic_generation.constants import BASE_END, BASE_START
 
 
 def generate_step_batch(
@@ -67,11 +67,11 @@ def generate_step_batch(
 
         batch_values[i, :, 0] = values  # Assign to feature dimension 0
 
-        start_ord = np.random.randint(BASE_START_ORD, BASE_END_ORD + 1)
+        start_ord = np.random.randint(BASE_START, BASE_END + 1)
         try:
             start_date = date.fromordinal(start_ord)
         except ValueError:
-            start_date = date.fromordinal(BASE_START_ORD)
+            start_date = date.fromordinal(BASE_START)
         start_timestamp = pd.Timestamp(start_date)
         dates = pd.date_range(start=start_timestamp, periods=seq_len, freq="D")
 

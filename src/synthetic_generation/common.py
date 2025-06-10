@@ -2,62 +2,6 @@ import numpy as np
 import torch
 
 
-def generate_damping(input_size: int, p=[0.4, 0.5, 0.1]) -> torch.Tensor:
-    spacing = np.random.choice(["equal", "regular", "random"], p=p)
-    t = np.arange(0, input_size, 1).astype(float)
-
-    if spacing == "random":
-        num_steps = np.random.randint(1, 3)  # Number of damping steps
-        damping_intervals = np.sort(
-            np.random.choice(t[: -int(input_size * 0.1)], num_steps, replace=False)
-        )
-        damping_factors = np.random.uniform(0.1, 2, num_steps + 1)
-    elif spacing == "equal":
-        # Generate random damping factors and intervals
-        num_steps = np.random.randint(3, 7)  # Number of damping steps
-        damping_intervals = np.linspace(0, input_size, num_steps + 2)[
-            1:-1
-        ]  # Random time intervals
-        damping_factors = np.array(
-            [
-                np.random.uniform(0.4, 0.8) if (i % 2) == 0 else np.random.uniform(1, 2)
-                for i in range(num_steps + 1)
-            ]
-        )
-    else:
-        custom_lengths = np.random.randint(1, input_size // 2, 2)
-        damping_intervals = []
-        current_time = 0
-        while current_time < input_size:
-            for length in custom_lengths:
-                current_time += length
-                if current_time <= input_size:
-                    damping_intervals.append(current_time)
-                else:
-                    break
-        damping_intervals = np.array(damping_intervals)
-        num_steps = len(damping_intervals)
-        damping_factors = np.array(
-            [
-                np.random.uniform(0.4, 0.8) if (i % 2) == 0 else np.random.uniform(1, 2)
-                for i in range(num_steps + 1)
-            ]
-        )
-    # Create a piecewise damping function based on the random intervals and factors
-    damping = np.piecewise(
-        t,
-        [t < damping_intervals[0]]
-        + [
-            (t >= damping_intervals[i]) & (t < damping_intervals[i + 1])
-            for i in range(num_steps - 1)
-        ]
-        + [t >= damping_intervals[-1]],
-        damping_factors.tolist(),
-    )
-
-    return torch.Tensor(damping)
-
-
 def generate_spikes(
     size,
     spikes_type="choose_randomly",
@@ -83,7 +27,6 @@ def generate_spikes(
     if spikes_type == "patchy" and size < 64:
         spikes_type = "regular"
 
-    # print(spikes_type)
     if spikes_type in ["regular", "patchy"]:
         if spike_intervals is None:
             upper_bound = np.ceil(
@@ -133,8 +76,6 @@ def generate_spikes(
             np.random.uniform(0.5, 2) if random_ < 0.7 else np.random.uniform(2.5, 5)
         )
 
-        # if patchy, i want to
-        # Build-up phase
         spike_start = interval - build_up_points + 1
         for i in range(build_up_points):
             if 0 <= spike_start + i < len(spikes):

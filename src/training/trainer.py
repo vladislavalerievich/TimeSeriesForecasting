@@ -120,7 +120,7 @@ class TrainingPipeline:
         # Fixed validation data loader (load all batches from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_val_data_lmc_0.9_kernel_0.1_batches_10_batch_size_384",
+            "/home/moroshav/TimeSeriesForecasting/data/synthetic_val_data_lmc_0.9_kernel_0.1_batches_10_batch_size_64",
         )
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,
