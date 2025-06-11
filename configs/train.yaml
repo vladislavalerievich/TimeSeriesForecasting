@@ -1,6 +1,6 @@
 data_dir: ./data
 model_save_dir: ./models
-model_save_name_prefix: GatedDeltaNet_rtx_2080_allow_neg_eigval_False
+model_save_name_prefix: DPS_R1_Gluonts_GatedDeltaNet_rtx_2080_allow_neg_eigval_False
 continue_training: false
 seed: 2025
 debugging: false
@@ -18,7 +18,7 @@ scaler: custom_robust
 
 batch_size: 64
 num_epochs: 50
-num_training_iterations_per_epoch: 10
+num_training_iterations_per_epoch: 100
 
 BaseModelConfig:
   sin_pos_enc: false
