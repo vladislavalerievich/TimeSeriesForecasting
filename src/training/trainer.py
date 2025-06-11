@@ -266,18 +266,17 @@ class TrainingPipeline:
                     inv_scaled_output = self._inverse_scale(
                         output["result"], scale_params
                     )
+                pred_future = inv_scaled_output.cpu().numpy()
 
-                # Plot the first series in this batch
-                i = 0
-                pred_future = inv_scaled_output[i].cpu().numpy()
-                fig = plot_from_container(
-                    ts_data=batch,
-                    sample_idx=i,
-                    predicted_values=pred_future,
-                    title=f"Epoch {epoch} - Val Batch {batch_idx + 1} (Val Loss: {avg_val_loss:.4f})",
-                    output_file=None,
-                    show=False,
-                )
+                for i in range(5):
+                    fig = plot_from_container(
+                        ts_data=batch,
+                        sample_idx=i,
+                        predicted_values=pred_future[i],
+                        title=f"Epoch {epoch} - Val Batch {batch_idx + 1} (Val Loss: {avg_val_loss:.4f})",
+                        output_file=None,
+                        show=False,
+                    )
 
                 wandb.log({f"val_plot_batch{batch_idx + 1}": wandb.Image(fig)})
                 plt.close(fig)
