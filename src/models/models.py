@@ -3,7 +3,10 @@ import torch.nn as nn
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.data_handling.scalers import CustomScalingMultivariate
-from src.data_handling.time_features import compute_batch_time_features
+from src.data_handling.time_features import (
+    compute_batch_time_features,
+    compute_enhanced_time_features,
+)
 from src.models.blocks import (
     ConcatLayer,
     DilatedConv1dBlock,
@@ -29,6 +32,8 @@ class BaseModel(nn.Module):
         sub_day=False,
         encoding_dropout=0.0,
         handle_constants_model=False,
+        use_gluonts_features=True,
+        use_enhanced_features=False,
         **kwargs,
     ):
         super().__init__()
@@ -37,6 +42,8 @@ class BaseModel(nn.Module):
         self.sub_day = sub_day
         self.encoding_dropout = encoding_dropout
         self.handle_constants_model = handle_constants_model
+        self.use_gluonts_features = use_gluonts_features
+        self.use_enhanced_features = use_enhanced_features
 
         # Create position embeddings for time features
         if sub_day:
@@ -121,39 +128,57 @@ class BaseModel(nn.Module):
             # Generate channel-specific sinusoidal encodings
             return self.sin_pos_encoder(time_features, num_channels).to(torch.float32)
 
-        # Using custom time feature embeddings
-        year = self.tc(time_features, YEAR)
-        if reference_year is not None:
-            delta_year = torch.clamp(
-                reference_year - year, min=0, max=self.pos_year.periods
+        if self.use_gluonts_features or self.use_enhanced_features:
+            # For gluonts features, use the features directly as they are already normalized
+            # Create a linear projection from time features to embedding size
+            time_features_flat = time_features.view(batch_size * seq_len, -1)
+            if not hasattr(self, "time_feature_projection"):
+                # Create projection layer if it doesn't exist
+                self.time_feature_projection = torch.nn.Linear(
+                    time_features.shape[-1], self.embed_size
+                ).to(device)
+
+            pos_embedding = self.time_feature_projection(time_features_flat)
+            pos_embedding = pos_embedding.view(batch_size, seq_len, self.embed_size).to(
+                torch.float32
             )
-        else:
-            delta_year = torch.zeros_like(year)
 
-        if self.sub_day:
-            pos_embedding = self.concat_pos(
-                [
-                    self.pos_second(self.tc(time_features, SECOND)),
-                    self.pos_minute(self.tc(time_features, MINUTE)),
-                    self.pos_hour(self.tc(time_features, HOUR)),
-                    self.pos_year(delta_year),
-                    self.pos_month(self.tc(time_features, MONTH)),
-                    self.pos_day(self.tc(time_features, DAY)),
-                    self.pos_dow(self.tc(time_features, DOW)),
-                ]
-            ).to(torch.float32)
+            # Expand to channel dimension
+            return pos_embedding.unsqueeze(2).expand(-1, -1, num_channels, -1)
         else:
-            pos_embedding = self.concat_pos(
-                [
-                    self.pos_year(delta_year),
-                    self.pos_month(self.tc(time_features, MONTH)),
-                    self.pos_day(self.tc(time_features, DAY)),
-                    self.pos_dow(self.tc(time_features, DOW)),
-                ]
-            ).to(torch.float32)
+            # Using legacy custom time feature embeddings
+            year = self.tc(time_features, YEAR)
+            if reference_year is not None:
+                delta_year = torch.clamp(
+                    reference_year - year, min=0, max=self.pos_year.periods
+                )
+            else:
+                delta_year = torch.zeros_like(year)
 
-        # Expand to channel dimension
-        return pos_embedding.unsqueeze(2).expand(-1, -1, num_channels, -1)
+            if self.sub_day:
+                pos_embedding = self.concat_pos(
+                    [
+                        self.pos_second(self.tc(time_features, SECOND)),
+                        self.pos_minute(self.tc(time_features, MINUTE)),
+                        self.pos_hour(self.tc(time_features, HOUR)),
+                        self.pos_year(delta_year),
+                        self.pos_month(self.tc(time_features, MONTH)),
+                        self.pos_day(self.tc(time_features, DAY)),
+                        self.pos_dow(self.tc(time_features, DOW)),
+                    ]
+                ).to(torch.float32)
+            else:
+                pos_embedding = self.concat_pos(
+                    [
+                        self.pos_year(delta_year),
+                        self.pos_month(self.tc(time_features, MONTH)),
+                        self.pos_day(self.tc(time_features, DAY)),
+                        self.pos_dow(self.tc(time_features, DOW)),
+                    ]
+                ).to(torch.float32)
+
+            # Expand to channel dimension
+            return pos_embedding.unsqueeze(2).expand(-1, -1, num_channels, -1)
 
     def forward(
         self,
@@ -175,14 +200,42 @@ class BaseModel(nn.Module):
         history_values = data_container.history_values
         target_values = data_container.target_values
         target_index = data_container.target_index
-        history_time_features, target_time_features = compute_batch_time_features(
-            data_container.start,
-            data_container.history_length,
-            data_container.target_length,
-            data_container.batch_size,
-            data_container.frequency,
-            include_subday=self.sub_day,
-        )
+        # Compute time features based on configuration
+        if self.use_enhanced_features:
+            # Use enhanced features with seasonality and cyclical encoding
+            history_time_features, target_time_features = (
+                compute_enhanced_time_features(
+                    data_container.start,
+                    data_container.history_length,
+                    data_container.target_length,
+                    data_container.batch_size,
+                    data_container.frequency,
+                    include_seasonality=True,
+                    include_cyclical_encoding=True,
+                )
+            )
+        elif self.use_gluonts_features:
+            # Use gluonts-style normalized features
+            history_time_features, target_time_features = compute_batch_time_features(
+                data_container.start,
+                data_container.history_length,
+                data_container.target_length,
+                data_container.batch_size,
+                data_container.frequency,
+                use_gluonts_features=True,
+                use_normalized_features=True,
+            )
+        else:
+            # Use legacy features for backward compatibility
+            history_time_features, target_time_features = compute_batch_time_features(
+                data_container.start,
+                data_container.history_length,
+                data_container.target_length,
+                data_container.batch_size,
+                data_container.frequency,
+                use_gluonts_features=False,
+                use_normalized_features=False,
+            )
 
         batch_size, seq_len, num_channels = history_values.shape
         pred_len = target_values.shape[1] if target_values is not None else 0
@@ -193,8 +246,10 @@ class BaseModel(nn.Module):
             noise = torch.randn_like(history_values) * 0.1 * is_constant.unsqueeze(1)
             history_values = history_values + noise
 
-        # Get year reference
-        if history_time_features is not None:
+        # Get year reference (only for legacy features)
+        if history_time_features is not None and not (
+            self.use_gluonts_features or self.use_enhanced_features
+        ):
             reference_year = self.tc(history_time_features, YEAR)[:, -1:]
         else:
             reference_year = None
