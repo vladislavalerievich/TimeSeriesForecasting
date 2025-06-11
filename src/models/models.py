@@ -45,6 +45,9 @@ class BaseModel(nn.Module):
         self.use_gluonts_features = use_gluonts_features
         self.use_enhanced_features = use_enhanced_features
 
+        if self.use_gluonts_features or self.use_enhanced_features:
+            self.time_feature_projection = nn.ModuleDict()
+
         # Create position embeddings for time features
         if sub_day:
             self.pos_second = PositionExpansion(60, 2)
@@ -132,13 +135,16 @@ class BaseModel(nn.Module):
             # For gluonts features, use the features directly as they are already normalized
             # Create a linear projection from time features to embedding size
             time_features_flat = time_features.view(batch_size * seq_len, -1)
-            if not hasattr(self, "time_feature_projection"):
-                # Create projection layer if it doesn't exist
-                self.time_feature_projection = torch.nn.Linear(
-                    time_features.shape[-1], self.embed_size
-                ).to(device)
+            in_features = time_features.shape[-1]
 
-            pos_embedding = self.time_feature_projection(time_features_flat)
+            # Use a dictionary of layers to handle variable input size
+            if str(in_features) not in self.time_feature_projection:
+                self.time_feature_projection[str(in_features)] = torch.nn.Linear(
+                    in_features, self.embed_size
+                ).to(time_features.device)
+
+            projection_layer = self.time_feature_projection[str(in_features)]
+            pos_embedding = projection_layer(time_features_flat)
             pos_embedding = pos_embedding.view(batch_size, seq_len, self.embed_size).to(
                 torch.float32
             )

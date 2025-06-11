@@ -1,6 +1,6 @@
 data_dir: ./data
 model_save_dir: ./models
-model_save_name_prefix: Gluonts_claudeGatedDeltaNet_rtx_2080_allow_neg_eigval_False
+model_save_name_prefix: Gluonts_CLDE_GatedDeltaNet_rtx_2080_allow_neg_eigval_False
 continue_training: false
 seed: 2025
 debugging: false

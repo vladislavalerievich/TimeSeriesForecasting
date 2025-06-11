@@ -1,3 +1,4 @@
+import warnings
 from typing import Any, Callable, Dict, List
 
 import numpy as np
@@ -8,6 +9,13 @@ from pandas.tseries.frequencies import to_offset
 
 from src.synthetic_generation.common.constants import Frequency
 from src.utils.utils import device
+
+# Suppress the specific FutureWarning from pandas for 'M' frequency
+warnings.filterwarnings(
+    "ignore",
+    message=".*'M' is deprecated and will be removed in a future version.*",
+    category=FutureWarning,
+)
 
 # ===== GLUONTS TIME FEATURE FUNCTIONS =====
 # Imported and adapted from gluonts.time_feature._base
