@@ -4,7 +4,7 @@ model_save_name_prefix: DPS_R1_Gluonts_GatedDeltaNet_rtx_2080_allow_neg_eigval_F
 continue_training: false
 seed: 2025
 debugging: false
-wandb: false # whether to log to wandb for testing
+wandb: true # whether to log to wandb for testing
 
 # Data generation parameters
 history_length: 256

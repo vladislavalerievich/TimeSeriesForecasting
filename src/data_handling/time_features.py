@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import torch
@@ -7,11 +9,15 @@ from pandas.tseries.frequencies import to_offset
 from src.synthetic_generation.common.constants import Frequency
 from src.utils.utils import device
 
+# Suppress FutureWarnings from gluonts and pandas
+warnings.filterwarnings("ignore", category=FutureWarning, module="gluonts")
+warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
+
 
 def map_frequency_to_gluonts(frequency: Frequency) -> str:
     """Map custom Frequency enum to GluonTS-compatible frequency string"""
     mapping = {
-        Frequency.M: "ME",  # MonthEnd
+        Frequency.M: "M",  # MonthEnd
         Frequency.W: "W",  # Weekly
         Frequency.D: "D",  # Daily
         Frequency.H: "h",  # Hourly
