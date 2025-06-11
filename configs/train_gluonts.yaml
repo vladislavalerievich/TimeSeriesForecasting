@@ -1,0 +1,68 @@
+# Example configuration for training with GluonTS time features
+seed: 42
+wandb: true
+
+# Data configuration
+batch_size: 32
+history_length: 256
+target_length: 64
+num_channels: [1, 8]
+
+# Model configuration with GluonTS features
+scaler: "custom_robust"
+
+BaseModelConfig:
+  epsilon: 1e-3
+  scaler: "custom_robust"
+  sin_pos_enc: false
+  sin_pos_const: 10000.0
+  sub_day: true  # Keep for backward compatibility, but gluonts features will be used
+  encoding_dropout: 0.1
+  handle_constants_model: true
+  use_gluonts_features: true      # Enable GluonTS normalized features
+  use_enhanced_features: false    # Set to true for seasonality + cyclical encoding
+
+MultiStepModel:
+  num_encoder_layers: 6
+  hidden_dim: 256
+  token_embed_dim: 1024
+  use_gelu: true
+  use_input_projection_norm: true
+  use_global_residual: true
+  linear_sequence_length: 4
+  use_dilated_conv: true
+  dilated_conv_kernel_size: 3
+  dilated_conv_max_dilation: 4
+
+EncoderConfig:
+  encoder_type: "transformer"
+  d_model: 1024
+  nhead: 16
+  num_layers: 1
+  dim_feedforward: 2048
+  dropout: 0.1
+  activation: "gelu"
+  layer_norm_eps: 1e-5
+  batch_first: true
+  norm_first: true
+
+# Training configuration
+num_epochs: 50
+initial_lr: 5e-4
+learning_rate: 1e-4
+lr_scheduler: "cosine"
+loss: "mse"
+
+# Training iterations
+num_training_iterations_per_epoch: 500
+
+# Data generation configuration
+generator_proportions:
+  kernel: 1.0
+
+# Model saving
+model_save_dir: "./saved_models"
+continue_training: false
+
+# Validation data
+val_data_path: "data/synthetic_validation_dataset/dataset.pt" 

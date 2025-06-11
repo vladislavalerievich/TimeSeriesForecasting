@@ -229,7 +229,7 @@ def plot_from_container(
     if predicted_values is not None:
         if isinstance(predicted_values, torch.Tensor):
             predicted_values = predicted_values.detach().cpu().numpy()
-        if predicted_values.ndim == 3:
+        if predicted_values.ndim >= 2:
             predicted_values = predicted_values[sample_idx]
     return plot_multivariate_timeseries(
         history_values=history_values,

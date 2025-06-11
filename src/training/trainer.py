@@ -261,25 +261,32 @@ class TrainingPipeline:
             for batch_idx, batch in enumerate(self.val_loader):
                 batch.to_device(self.device)
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(batch, batch.target_values.size(1))
+                    output = self.model(batch)
                     _, *scale_params = self._scale_target(batch.target_values, output)
                     inv_scaled_output = self._inverse_scale(
                         output["result"], scale_params
                     )
                 pred_future = inv_scaled_output.cpu().numpy()
 
-                for i in range(5):
+                for i in range(min(5, batch.batch_size)):
                     fig = plot_from_container(
                         ts_data=batch,
                         sample_idx=i,
-                        predicted_values=pred_future[i],
-                        title=f"Epoch {epoch} - Val Batch {batch_idx + 1} (Val Loss: {avg_val_loss:.4f})",
+                        predicted_values=pred_future,
+                        title=f"Epoch {epoch} - Val Batch {batch_idx + 1}, Sample {i + 1} (Val Loss: {avg_val_loss:.4f})",
                         output_file=None,
                         show=False,
                     )
 
-                wandb.log({f"val_plot_batch{batch_idx + 1}": wandb.Image(fig)})
-                plt.close(fig)
+                    if self.config["wandb"]:
+                        wandb.log(
+                            {
+                                f"val_plot_batch{batch_idx + 1}_sample{i + 1}": wandb.Image(
+                                    fig
+                                )
+                            }
+                        )
+                    plt.close(fig)
 
     def _update_metrics(
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
@@ -328,9 +335,8 @@ class TrainingPipeline:
         with torch.no_grad():
             for batch in self.val_loader:
                 data, target = self._prepare_batch(batch)
-                pred_len = target.size(1)
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data, pred_len)
+                    output = self.model(data)
                     val_loss = self.model.compute_loss(target, output).item()
                 total_val_loss += val_loss
 
@@ -360,7 +366,7 @@ class TrainingPipeline:
             data, target = self._prepare_batch(batch)
             self.optimizer.zero_grad()
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                output = self.model(data, target.size(1))
+                output = self.model(data, training=True, drop_enc_allow=True)
                 loss = self.model.compute_loss(target, output)
 
             loss.backward()
