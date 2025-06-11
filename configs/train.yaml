@@ -18,7 +18,7 @@ scaler: custom_robust
 
 batch_size: 64
 num_epochs: 50
-num_training_iterations_per_epoch: 10
+num_training_iterations_per_epoch: 100
 
 BaseModelConfig:
   sin_pos_enc: false

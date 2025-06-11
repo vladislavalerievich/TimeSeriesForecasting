@@ -258,7 +258,7 @@ class TrainingPipeline:
     def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
         """Plot selected series from every validation batch and log to WandB."""
         # Selected indices to plot
-        plot_indices = [1, 3, 5, 7, 9]
+        plot_indices = [0, 63]
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
