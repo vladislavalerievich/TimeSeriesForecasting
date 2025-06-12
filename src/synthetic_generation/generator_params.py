@@ -11,7 +11,7 @@ class GeneratorParams:
     global_seed: int = 42
     distribution_type: str = "uniform"
     history_length: Union[int, Tuple[int, int]] = (64, 256)
-    target_length: Union[int, Tuple[int, int]] = (32, 256)
+    target_length: Union[int, Tuple[int, int]] = (32, 128)
     num_channels: Union[int, Tuple[int, int]] = (1, 256)
 
     def update(self, **kwargs):
@@ -19,6 +19,21 @@ class GeneratorParams:
         for k, v in kwargs.items():
             if hasattr(self, k):
                 setattr(self, k, v)
+
+    def post_init(self):
+        """Validate that history_length is greater than target_length."""
+        # Normalize to tuples for consistent comparison
+        hist_min, hist_max = self._normalize_range(self.history_length)
+        targ_min, targ_max = self._normalize_range(self.target_length)
+
+        if hist_min < targ_min or hist_max < targ_max:
+            raise ValueError("history_length must be greater than target_length")
+
+    def _normalize_range(self, value: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+        """Convert int or tuple to (min, max) tuple."""
+        if isinstance(value, int):
+            return (value, value)
+        return value
 
 
 @dataclass
