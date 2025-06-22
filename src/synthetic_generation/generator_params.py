@@ -18,7 +18,7 @@ class GeneratorParams:
         default_factory=lambda: [6, 1024]
     )
     num_channels: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [1, 7]
+        default_factory=lambda: [1, 2, 7]
     )
 
     def update(self, **kwargs):

@@ -59,7 +59,12 @@ class GeneratorWrapper:
         self._validate_input_parameters()
 
     def _set_random_seeds(self, seed: int) -> None:
-        self.rng = np.random.default_rng(seed)
+        # For parameter sampling, we want diversity across batches even with similar seeds
+        # Use a hash of the generator class name to ensure different generators get different parameter sequences
+        param_seed = seed + hash(self.__class__.__name__) % 2**31
+        self.rng = np.random.default_rng(param_seed)
+
+        # Set global numpy and torch seeds for deterministic behavior in underlying generators
         np.random.seed(seed)
         torch.manual_seed(seed)
 
