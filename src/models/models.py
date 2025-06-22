@@ -173,7 +173,7 @@ class BaseModel(nn.Module):
             Dictionary with model outputs and scaling information
         """
         history_values = data_container.history_values
-        target_values = data_container.target_values
+        target_values = data_container.future_values
         target_index = data_container.target_index
         history_time_features, target_time_features = compute_batch_time_features(
             data_container.start,

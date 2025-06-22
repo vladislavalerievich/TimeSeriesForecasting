@@ -8,7 +8,7 @@ wandb: false # whether to log to wandb for testing
 
 # Data generation parameters
 history_length: 256
-target_length: 64
+future_length: 64
 
 lr_scheduler: cosine
 initial_lr: 0.00001
@@ -51,3 +51,8 @@ EncoderConfig:
   dilated_conv_kernel_size: 5  
   dilated_conv_max_dilation: 3
   block_expansion: 2.0
+
+# Model parameters
+model_name: "path/to/your/model"
+model_path: "models/model.pt"
+num_channels: 1

@@ -9,8 +9,7 @@ import torch
 class Frequency(Enum):
     A = "A"  # Annual
     Q = "Q"  # Quarterly
-    ME = "ME"  # Month End
-    M = "ME"  # Month End (alias)
+    M = "M"  # Monthly
     W = "W"  # Weekly
     D = "D"  # Daily
     H = "h"  # Hourly
@@ -135,45 +134,39 @@ class BatchTimeSeriesContainer:
     Attributes:
         history_values: Tensor of historical observations.
             Shape: [batch_size, seq_len, num_channels]
-        target_values: Tensor of future observations to predict.
+        future_values: Tensor of future observations to predict.
             Shape: [batch_size, pred_len, num_channels]
         start: Timestamps of the first history value.
             Shape: [batch_size]
         frequency: Frequency of the time series.
             Type: Frequency enum (D=Daily, W=Weekly, H=Hourly, ME=Month End, S=Seconds)
-        past_feat_dynamic_real: Optional time-varying covariates for history.
-            Shape: [batch_size, seq_len, num_dynamic_features]
-        future_feat_dynamic_real: Optional time-varying covariates for prediction horizon.
-            Shape: [batch_size, pred_len, num_dynamic_features]
         static_features: Optional StaticFeaturesDataContainer of features constant over time.
             Shape: [batch_size, num_static_features, num_static_features_per_channel]
         history_mask: Optional boolean/float tensor indicating valid (1/True) vs padded (0/False)
             entries in history_values/history_time_features.
             Shape: [batch_size, seq_len]
-        target_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
-            target values.
+        future_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
+            future values.
             Shape: [batch_size, pred_len]
     """
 
     history_values: torch.Tensor
-    target_values: torch.Tensor
+    future_values: torch.Tensor
     start: np.ndarray[np.datetime64]
     frequency: Frequency
 
-    past_feat_dynamic_real: Optional[torch.Tensor] = None
-    future_feat_dynamic_real: Optional[torch.Tensor] = None
     static_features: Optional[StaticFeaturesDataContainer] = None
 
     history_mask: Optional[torch.Tensor] = None
-    target_mask: Optional[torch.Tensor] = None
+    future_mask: Optional[torch.Tensor] = None
 
     def __post_init__(self):
         """Validate all tensor shapes and consistency."""
         # --- Tensor Type Checks ---
         if not isinstance(self.history_values, torch.Tensor):
             raise TypeError("history_values must be a torch.Tensor")
-        if not isinstance(self.target_values, torch.Tensor):
-            raise TypeError("target_values must be a torch.Tensor")
+        if not isinstance(self.future_values, torch.Tensor):
+            raise TypeError("future_values must be a torch.Tensor")
         if not isinstance(self.start, np.ndarray):
             raise TypeError("start must be a np.ndarray")
         if not all(isinstance(s, np.datetime64) for s in self.start):
@@ -182,13 +175,13 @@ class BatchTimeSeriesContainer:
             raise TypeError("frequency must be a Frequency enum")
 
         batch_size, seq_len, num_channels = self.history_values.shape
-        pred_len = self.target_values.shape[1]
+        pred_len = self.future_values.shape[1]
 
         # --- Core Shape Checks ---
-        if self.target_values.shape[0] != batch_size:
-            raise ValueError("Batch size mismatch between history and target_values")
-        if self.target_values.shape[2] != num_channels:
-            raise ValueError("Channel size mismatch between history and target_values")
+        if self.future_values.shape[0] != batch_size:
+            raise ValueError("Batch size mismatch between history and future_values")
+        if self.future_values.shape[2] != num_channels:
+            raise ValueError("Channel size mismatch between history and future_values")
 
         # --- Static Features Check ---
         if self.static_features is not None:
@@ -206,24 +199,6 @@ class BatchTimeSeriesContainer:
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid StaticFeaturesDataContainer: {e}") from e
 
-        # --- Dynamic Features Check ---
-        if self.past_feat_dynamic_real is not None:
-            if not isinstance(self.past_feat_dynamic_real, torch.Tensor):
-                raise TypeError("past_feat_dynamic_real must be a torch.Tensor or None")
-            if self.past_feat_dynamic_real.shape[:2] != (batch_size, seq_len):
-                raise ValueError(
-                    f"past_feat_dynamic_real shape mismatch: expected [{batch_size}, {seq_len}, ...], got {self.past_feat_dynamic_real.shape}"
-                )
-        if self.future_feat_dynamic_real is not None:
-            if not isinstance(self.future_feat_dynamic_real, torch.Tensor):
-                raise TypeError(
-                    "future_feat_dynamic_real must be a torch.Tensor or None"
-                )
-            if self.future_feat_dynamic_real.shape[:2] != (batch_size, pred_len):
-                raise ValueError(
-                    f"future_feat_dynamic_real shape mismatch: expected [{batch_size}, {pred_len}, ...], got {self.future_feat_dynamic_real.shape}"
-                )
-
         # --- Optional Mask Checks ---
         if self.history_mask is not None:
             if not isinstance(self.history_mask, torch.Tensor):
@@ -233,15 +208,15 @@ class BatchTimeSeriesContainer:
                     f"Shape mismatch in history_mask: {self.history_mask.shape[:2]} vs {(batch_size, seq_len)}"
                 )
 
-        if self.target_mask is not None:
-            if not isinstance(self.target_mask, torch.Tensor):
-                raise TypeError("target_mask must be a Tensor or None")
+        if self.future_mask is not None:
+            if not isinstance(self.future_mask, torch.Tensor):
+                raise TypeError("future_mask must be a Tensor or None")
             if not (
-                self.target_mask.shape == (batch_size, pred_len)
-                or self.target_mask.shape == self.target_values.shape
+                self.future_mask.shape == (batch_size, pred_len)
+                or self.future_mask.shape == self.future_values.shape
             ):
                 raise ValueError(
-                    f"Shape mismatch in target_mask: expected {(batch_size, pred_len)} or {self.target_values.shape}, got {self.target_mask.shape}"
+                    f"Shape mismatch in future_mask: expected {(batch_size, pred_len)} or {self.future_values.shape}, got {self.future_mask.shape}"
                 )
 
     def to_device(
@@ -259,11 +234,9 @@ class BatchTimeSeriesContainer:
         """
         all_tensors = {
             "history_values": self.history_values,
-            "target_values": self.target_values,
+            "future_values": self.future_values,
             "history_mask": self.history_mask,
-            "target_mask": self.target_mask,
-            "past_feat_dynamic_real": self.past_feat_dynamic_real,
-            "future_feat_dynamic_real": self.future_feat_dynamic_real,
+            "future_mask": self.future_mask,
         }
 
         if attributes is None:
@@ -286,8 +259,8 @@ class BatchTimeSeriesContainer:
         return self.history_values.shape[1]
 
     @property
-    def target_length(self) -> int:
-        return self.target_values.shape[1]
+    def future_length(self) -> int:
+        return self.future_values.shape[1]
 
     @property
     def num_channels(self) -> int:

@@ -53,7 +53,7 @@ def test_time_series_data_container(num_channels, use_static_features, use_masks
     # Create container
     container = BatchTimeSeriesContainer(
         history_values=history_values,
-        target_values=target_values,
+        future_values=target_values,
         target_channels_indices=target_channels_indices,
         history_time_features=history_time_features,
         target_time_features=target_time_features,
@@ -66,7 +66,7 @@ def test_time_series_data_container(num_channels, use_static_features, use_masks
 
     # Validate base tensors
     assert container.history_values.shape == (batch_size, seq_len, num_channels)
-    assert container.target_values.shape == (batch_size, pred_len, num_targets)
+    assert container.future_values.shape == (batch_size, pred_len, num_targets)
     assert container.target_channels_indices.shape == (batch_size, num_targets)
 
     # Validate optional fields

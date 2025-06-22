@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -65,7 +65,7 @@ class GeneratorWrapper:
     def _validate_input_parameters(self) -> None:
         tuple_params = {
             "history_length": self.params.history_length,
-            "target_length": self.params.target_length,
+            "future_length": self.params.future_length,
             "num_channels": self.params.num_channels,
         }
         for param_name, param_value in tuple_params.items():
@@ -77,15 +77,14 @@ class GeneratorWrapper:
                         f"cannot exceed the maximum value ({max_val})"
                     )
 
-    def _parse_param_value(
-        self,
-        param_config: Union[int, float, Tuple[int, float], Tuple[float, float]],
-        is_int: bool = True,
-    ) -> Union[int, float]:
-        if isinstance(param_config, (int, float)):
-            return int(param_config) if is_int else float(param_config)
-        min_val, max_val = param_config
-        return self._sample_from_range(min_val, max_val, is_int)
+    def _parse_param_value(self, param: Union[int, Tuple[int, int], List[int]]) -> int:
+        if isinstance(param, int):
+            return param
+        if isinstance(param, list):
+            return self.rng.choice(param)
+        if isinstance(param, tuple):
+            return self.rng.randint(low=param[0], high=param[1], size=1)[0]
+        raise ValueError(f"Unsupported param type: {type(param)}")
 
     def _sample_from_range(
         self,
@@ -108,11 +107,11 @@ class GeneratorWrapper:
 
     def _sample_parameters(self) -> Dict[str, Any]:
         history_length = self._parse_param_value(self.params.history_length)
-        target_length = self._parse_param_value(self.params.target_length)
+        future_length = self._parse_param_value(self.params.future_length)
         num_channels = self._parse_param_value(self.params.num_channels)
         return {
             "history_length": history_length,
-            "target_length": target_length,
+            "future_length": future_length,
             "num_channels": num_channels,
         }
 
@@ -121,9 +120,7 @@ class GeneratorWrapper:
         values: np.ndarray,
         start: np.ndarray,
         history_length: int,
-        target_length: int,
-        batch_size: int,
-        num_channels: int,
+        future_length: int,
         frequency: Optional[Frequency] = None,
     ) -> BatchTimeSeriesContainer:
         """
@@ -137,12 +134,8 @@ class GeneratorWrapper:
             Shape: [batch_size]
         history_length: int
             Length of the history window
-        target_length: int
-            Length of the target window
-        batch_size: int
-            Number of time series in the batch
-        num_channels: int
-            Number of channels in the time series
+        future_length: int
+            Length of the future window
         frequency: Optional[Frequency]
             Frequency of the time series. If None, a random frequency is selected.
         """
@@ -152,13 +145,9 @@ class GeneratorWrapper:
             values[:, :history_length, :], dtype=torch.float32
         )
         future_values = torch.tensor(
-            values[:, history_length : history_length + target_length, :],
+            values[:, history_length : history_length + future_length, :],
             dtype=torch.float32,
         )
-        target_index = torch.randint(0, num_channels, (batch_size,))
-        target_values = torch.zeros((batch_size, target_length), dtype=torch.float32)
-        for i in range(batch_size):
-            target_values[i] = future_values[i, :, target_index[i]]
 
         # Select a random frequency if none provided
         if frequency is None:
@@ -166,8 +155,7 @@ class GeneratorWrapper:
 
         return BatchTimeSeriesContainer(
             history_values=history_values,
-            target_values=target_values,
-            target_index=target_index,
+            future_values=future_values,
             start=start,
             frequency=frequency,
         )

@@ -36,7 +36,7 @@ def visualize_batch_sample(
     batch_size: int = 2,
     output_dir: str = "outputs/plots",
     sample_idx: int = 0,
-    add_artificial_predictions: bool = True,
+    add_artificial_predictions: bool = False,
 ) -> None:
     """
     Visualize a sample from a batch of synthetic multivariate time series from any generator.
@@ -60,16 +60,16 @@ def visualize_batch_sample(
         f"[{generator_name}] Batch history values shape: {batch.history_values.shape}"
     )
     logger.info(
-        f"[{generator_name}] Batch target values shape: {batch.target_values.shape}"
+        f"[{generator_name}] Batch future values shape: {batch.future_values.shape}"
     )
 
     # Create artificial predictions if requested
     predicted_values = None
     if add_artificial_predictions:
-        predicted_values = batch.target_values[
+        predicted_values = batch.future_values[
             sample_idx
         ].detach().cpu().numpy() + np.random.normal(
-            0, 0.2, batch.target_values[sample_idx].shape
+            0, 0.2, batch.future_values[sample_idx].shape
         )
 
     # Generate output filename based on generator name and parameters
@@ -134,7 +134,7 @@ if __name__ == "__main__":
     # Configuration
     batch_size = 2
     history_length = 128
-    target_length = 64
+    future_length = 64
     output_dir = "outputs/plots"
     global_seed = 2025
 
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     lmc_params = LMCGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=5,
     )
     lmc_gen = LMCGeneratorWrapper(lmc_params)
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     kernel_params_univariate = KernelGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=1,
     )
     kernel_gen_univariate = KernelGeneratorWrapper(kernel_params_univariate)
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     kernel_params_multivariate = KernelGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=5,
     )
     kernel_gen_multivariate = KernelGeneratorWrapper(kernel_params_multivariate)
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     gp_params_univariate = GPGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=1,
     )
     gp_gen_univariate = GPGeneratorWrapper(gp_params_univariate)
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     gp_params_multivariate = GPGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=5,
     )
     gp_gen_multivariate = GPGeneratorWrapper(gp_params_multivariate)
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     forecast_pfn_univariate_params = ForecastPFNGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=1,
     )
     forecast_pfn_univariate_gen = ForecastPFNGeneratorWrapper(
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     forecast_pfn_multivariate_params = ForecastPFNGeneratorParams(
         global_seed=global_seed,
         history_length=history_length,
-        target_length=target_length,
+        future_length=future_length,
         num_channels=5,
     )
 

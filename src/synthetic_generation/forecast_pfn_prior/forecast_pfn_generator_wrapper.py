@@ -181,48 +181,6 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
         return batch_values
 
-    def _format_to_container(
-        self,
-        batch_values: np.ndarray,
-        batch_start: np.ndarray,
-        history_length: int,
-        target_length: int,
-        batch_size: int,
-        num_channels: int,
-        frequency: Frequency,
-    ) -> BatchTimeSeriesContainer:
-        # Explicitly split into history and target to ensure correct shapes
-        history_values = batch_values[:, :history_length, :]
-        target_values_full = batch_values[:, history_length:, :]
-
-        history_values = np.array(history_values)
-        target_values_full = np.array(target_values_full)
-        # Convert to torch tensors
-        history_values_tensor = torch.tensor(history_values, dtype=torch.float32)
-        target_values_tensor = torch.tensor(target_values_full, dtype=torch.float32)
-
-        # Select a random target_index for each sample in the batch
-        target_index_tensor = torch.randint(
-            0, num_channels, (batch_size,), dtype=torch.long
-        )
-
-        # Extract target_values for the selected target_index
-        target_values_selected = torch.zeros(
-            batch_size, target_length, dtype=torch.float32
-        )
-        for i in range(batch_size):
-            target_values_selected[i, :] = target_values_tensor[
-                i, :, target_index_tensor[i]
-            ]
-
-        return BatchTimeSeriesContainer(
-            history_values=history_values_tensor,
-            target_values=target_values_selected,
-            target_index=target_index_tensor,
-            start=np.array(batch_start),
-            frequency=frequency,
-        )
-
     def generate_batch(
         self,
         batch_size: int,
@@ -234,9 +192,9 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         if params is None:
             params = self._sample_parameters()
         history_length = params["history_length"]
-        target_length = params["target_length"]
+        future_length = params["future_length"]
         num_channels = params["num_channels"]
-        total_length = history_length + target_length
+        total_length = history_length + future_length
         batch_values = []
         batch_start = []
         for i in range(batch_size):
@@ -277,11 +235,9 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         )
 
         return self._format_to_container(
-            batch_values=batch_values,
-            batch_start=np.array(batch_start),
+            values=batch_values,
+            start=np.array(batch_start),
             history_length=history_length,
-            target_length=target_length,
-            batch_size=batch_size,
-            num_channels=num_channels,
+            future_length=future_length,
             frequency=params["frequency"],
         )

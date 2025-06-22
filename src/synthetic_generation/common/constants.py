@@ -11,8 +11,7 @@ BASE_END = DEFAULT_END_DATE.toordinal() + 1
 FREQUENCY_MAPPING = {
     Frequency.A: ("A", "", 12),
     Frequency.Q: ("Q", "", 4),
-    Frequency.M: ("MS", "", 30),
-    Frequency.ME: ("MS", "", 30),
+    Frequency.M: ("M", "", 30),
     Frequency.W: ("W", "", 7),
     Frequency.D: ("D", "", 1),
     Frequency.H: ("h", "", 1 / 24),

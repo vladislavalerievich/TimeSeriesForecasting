@@ -155,9 +155,9 @@ class MultiStepModelWrapper:
             "Q-DEC": Frequency.Q,
             "Q": Frequency.Q,
             # Monthly frequencies
-            "MS": Frequency.ME,
-            "M": Frequency.ME,
-            "ME": Frequency.ME,
+            "MS": Frequency.M,
+            "ME": Frequency.M,
+            "M": Frequency.M,
             # Weekly frequencies
             "W-MON": Frequency.W,
             "W-TUE": Frequency.W,
@@ -242,7 +242,7 @@ class MultiStepModelWrapper:
             frequency = self.get_frequency_enum(freq)
 
             for dim_idx in range(num_dims):
-                target_values = torch.zeros(
+                future_values = torch.zeros(
                     (1, self.prediction_length), dtype=torch.float32
                 ).to(self.device)
 
@@ -250,7 +250,7 @@ class MultiStepModelWrapper:
 
                 batch = BatchTimeSeriesContainer(
                     history_values=history_values,
-                    target_values=target_values,
+                    future_values=future_values,
                     target_index=target_index,
                     start=[start],
                     frequency=frequency,

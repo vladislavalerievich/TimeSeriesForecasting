@@ -1,13 +1,16 @@
+import logging
 import os
 
 import pytest
 
+from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.data_loaders import (
     SyntheticTrainDataLoader,
     SyntheticValidationDataLoader,
 )
 from src.synthetic_generation.dataset_composer import (
     DatasetComposer,
+    DefaultSyntheticComposer,
     OnTheFlyDatasetGenerator,
 )
 from src.synthetic_generation.generator_params import GeneratorParams
@@ -19,6 +22,10 @@ from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
     LMCGeneratorParams,
     LMCGeneratorWrapper,
 )
+from tests.utils import get_temp_dir
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # --- Fixtures ---
@@ -152,3 +159,40 @@ def test_empty_validation_loader(tmp_path):
     os.makedirs(out_dir, exist_ok=True)
     loader = SyntheticValidationDataLoader(data_path=str(out_dir))
     assert len(loader) == 0
+
+
+def test_parameter_sampling_logic():
+    # Test integer sampling
+    params = {"history_length": 10, "future_length": 5, "num_channels": 1}
+    gen_params = GeneratorParams(**params)
+    wrapper = GeneratorWrapper(gen_params)
+    sampled = wrapper._sample_parameters()
+    assert sampled["history_length"] == 10
+    assert sampled["future_length"] == 5
+    assert sampled["num_channels"] == 1
+
+    # Test tuple sampling
+    params = {
+        "history_length": (10, 20),
+        "future_length": (1, 5),
+        "num_channels": (1, 3),
+    }
+    gen_params = GeneratorParams(**params)
+    wrapper = GeneratorWrapper(gen_params)
+    sampled = wrapper._sample_parameters()
+    assert 10 <= sampled["history_length"] <= 20
+    assert 1 <= sampled["future_length"] <= 5
+    assert 1 <= sampled["num_channels"] <= 3
+
+    # Test list sampling
+    params = {
+        "history_length": [10, 20, 30],
+        "future_length": [1, 2, 3],
+        "num_channels": [1, 7],
+    }
+    gen_params = GeneratorParams(**params)
+    wrapper = GeneratorWrapper(gen_params)
+    sampled = wrapper._sample_parameters()
+    assert sampled["history_length"] in [10, 20, 30]
+    assert sampled["future_length"] in [1, 2, 3]
+    assert sampled["num_channels"] in [1, 7]

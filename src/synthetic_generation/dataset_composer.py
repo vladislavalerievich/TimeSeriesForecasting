@@ -13,9 +13,13 @@ from src.synthetic_generation.forecast_pfn_prior.forecast_pfn_generator_wrapper 
 )
 from src.synthetic_generation.generator_params import (
     ForecastPFNGeneratorParams,
+    GeneratorParams,
     GPGeneratorParams,
     KernelGeneratorParams,
     LMCGeneratorParams,
+    LongRangeGeneratorParams,
+    MediumRangeGeneratorParams,
+    ShortRangeGeneratorParams,
 )
 from src.synthetic_generation.gp_prior.gp_generator_wrapper import (
     GPGeneratorWrapper,
@@ -32,6 +36,77 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+class MultiRangeDatasetComposer:
+    """
+    Orchestrates multiple DatasetComposer instances, each for a different forecast range.
+
+    This meta-composer selects a specific range (e.g., short, medium, long) based on
+    pre-defined proportions, and then delegates batch generation to the corresponding
+    DatasetComposer.
+    """
+
+    def __init__(
+        self,
+        range_composers: Dict[str, "DatasetComposer"],
+        range_proportions: Dict[str, float],
+        global_seed: int = 42,
+    ):
+        """
+        Initializes the meta-composer.
+
+        Args:
+            range_composers: A dict mapping range names (e.g., "short") to their
+                pre-configured DatasetComposer instances.
+            range_proportions: A dict mapping range names to their sampling proportion.
+            global_seed: A global random seed for reproducibility.
+        """
+        self.range_composers = range_composers
+        self.range_proportions = range_proportions
+        self.global_seed = global_seed
+
+        self._validate_proportions()
+        np.random.seed(self.global_seed)
+
+    def _validate_proportions(self):
+        # Validate that the ranges in proportions and composers match
+        if set(self.range_proportions.keys()) != set(self.range_composers.keys()):
+            raise ValueError(
+                "Mismatch between keys in range_proportions and range_composers."
+            )
+        # Validate that proportions sum to 1.0
+        total = sum(self.range_proportions.values())
+        if not np.isclose(total, 1.0):
+            raise ValueError(f"Range proportions must sum to 1.0, but got {total}")
+
+    def generate_batch(
+        self,
+        batch_size: int,
+        seed: Optional[int] = None,
+    ) -> Tuple[BatchTimeSeriesContainer, str]:
+        """
+        Generates a single batch by first selecting a range, then a generator.
+
+        The two-step process is:
+        1. Choose a forecast range (e.g., "short") based on `range_proportions`.
+        2. Delegate to the corresponding DatasetComposer, which then chooses a
+           generator type (e.g., "LMC") based on its internal proportions.
+        """
+        if seed is not None:
+            np.random.seed(seed)
+
+        # Select a range based on proportions
+        ranges = list(self.range_proportions.keys())
+        proportions = list(self.range_proportions.values())
+        selected_range = np.random.choice(ranges, p=proportions)
+        selected_composer = self.range_composers[selected_range]
+
+        # Delegate batch generation to the chosen composer
+        batch, generator_name = selected_composer.generate_batch(batch_size, seed)
+
+        # Return the batch and an augmented generator name indicating the range
+        return batch, f"{generator_name}_{selected_range}"
 
 
 class DatasetComposer:
@@ -397,114 +472,126 @@ class OnTheFlyDatasetGenerator:
 
 class DefaultSyntheticComposer:
     """
-    Centralized class for constructing DatasetComposer with configurable generator proportions
-    and parameters for both univariate and multivariate cases.
-
-    Args:
-        seed: Random seed.
-        history_length: History length (int or tuple).
-        target_length: Target length (int or tuple).
-        num_channels: Number of channels (int or tuple).
-        generator_proportions: Optional dict mapping generator names (str) to floats. If not provided, defaults are used.
+    Centralized class for constructing a hierarchical DatasetComposer with configurable
+    proportions for forecast ranges and generator types.
     """
 
     def __init__(
         self,
         seed: int = 42,
-        history_length=(64, 256),
-        target_length=(32, 256),
-        num_channels=(1, 8),
-        generator_proportions: dict = None,
+        range_proportions: Optional[Dict[str, float]] = None,
+        generator_proportions: Optional[Dict[str, Dict[str, float]]] = None,
     ):
+        """
+        Builds the hierarchical composer.
+
+        This constructor creates a specific DatasetComposer for each forecast range,
+        then uses MultiRangeDatasetComposer to manage the final mix.
+
+        Args:
+            seed: A global random seed.
+            range_proportions: Proportions for sampling from ranges (short, medium, long).
+            generator_proportions: A nested dict defining the mix of generator types
+                (lmc, gp, etc.) within each forecast range.
+        """
         self.seed = seed
-        self.history_length = history_length
-        self.target_length = target_length
-        self.num_channels = num_channels
+        self._setup_proportions(range_proportions, generator_proportions)
 
-        # Create generator params
-        self.lmc_params = LMCGeneratorParams(
-            global_seed=seed,
-            history_length=history_length,
-            target_length=target_length,
-            num_channels=num_channels,
-        )
-        self.kernel_params = KernelGeneratorParams(
-            global_seed=seed,
-            history_length=history_length,
-            target_length=target_length,
-            num_channels=num_channels,
-        )
-        self.gp_params = GPGeneratorParams(
-            global_seed=seed,
-            history_length=history_length,
-            target_length=target_length,
-            num_channels=num_channels,
-        )
-        self.forecast_pfn_params = ForecastPFNGeneratorParams(
-            global_seed=seed,
-            history_length=history_length,
-            target_length=target_length,
-            num_channels=num_channels,
-        )
-
-        # Create generator wrappers
-        self.lmc_generator = LMCGeneratorWrapper(self.lmc_params)
-        self.kernel_generator = KernelGeneratorWrapper(self.kernel_params)
-        self.gp_generator = GPGeneratorWrapper(self.gp_params)
-        self.forecast_pfn_generator = ForecastPFNGeneratorWrapper(
-            self.forecast_pfn_params
-        )
-
-        # Map string names to generator instances
-        self.generator_map = {
-            "lmc": self.lmc_generator,
-            "kernel": self.kernel_generator,
-            "gp": self.gp_generator,
-            "forecast_pfn": self.forecast_pfn_generator,
+        range_param_map = {
+            "short": ShortRangeGeneratorParams,
+            "medium": MediumRangeGeneratorParams,
+            "long": LongRangeGeneratorParams,
         }
 
-        # Use custom or default proportions
-        if generator_proportions is not None:
-            self.generator_proportions = self._map_and_validate_proportions(
-                generator_proportions
-            )
-        else:
-            if self._is_univariate():
-                self.generator_proportions = {
-                    self.kernel_generator: 0.4,
-                    self.gp_generator: 0.5,
-                    self.forecast_pfn_generator: 0.1,
-                }
-            else:
-                self.generator_proportions = {
-                    self.lmc_generator: 0.65,
-                    self.kernel_generator: 0.15,
-                    self.gp_generator: 0.15,
-                    self.forecast_pfn_generator: 0.05,
-                }
-        self.validate_proportions()
-        self.composer = DatasetComposer(
-            generator_proportions=self.generator_proportions,
+        self.range_composers = {}
+        for range_name, params_class in range_param_map.items():
+            range_gen_props = self.generator_proportions.get(range_name)
+            if range_gen_props:
+                composer = self._create_range_composer(
+                    params_class, range_gen_props, self.seed
+                )
+                if composer:
+                    self.range_composers[range_name] = composer
+
+        self.composer = MultiRangeDatasetComposer(
+            range_composers=self.range_composers,
+            range_proportions=self.range_proportions,
             global_seed=self.seed,
         )
 
-    def _is_univariate(self):
-        # Handles both int and tuple for num_channels
-        if isinstance(self.num_channels, int):
-            return self.num_channels == 1
-        if isinstance(self.num_channels, tuple):
-            return self.num_channels[0] == 1 and self.num_channels[1] == 1
-        return False
+    def _setup_proportions(self, range_proportions, generator_proportions):
+        default_range_proportions = {"short": 0.34, "medium": 0.33, "long": 0.33}
+        default_generator_proportions = {
+            "short": {"kernel": 0.5, "gp": 0.4, "forecast_pfn": 0.1},
+            "medium": {"lmc": 0.3, "kernel": 0.3, "gp": 0.3, "forecast_pfn": 0.1},
+            "long": {"lmc": 0.6, "gp": 0.3, "forecast_pfn": 0.1},
+        }
+        self.range_proportions = range_proportions or default_range_proportions
+        self.generator_proportions = (
+            generator_proportions or default_generator_proportions
+        )
 
-    def _map_and_validate_proportions(self, proportions_dict):
-        mapped = {}
-        for name, val in proportions_dict.items():
-            if name not in self.generator_map:
-                raise ValueError(f"Unknown generator name: {name}")
-            mapped[self.generator_map[name]] = float(val)
-        return mapped
+    def _create_range_composer(
+        self,
+        params_class: GeneratorParams,
+        proportions: Dict[str, float],
+        seed: int,
+    ) -> Optional[DatasetComposer]:
+        """
+        Creates a single-range DatasetComposer for a specific forecast range.
 
-    def validate_proportions(self):
-        total = sum(self.generator_proportions.values())
-        if not abs(total - 1.0) < 1e-6:
-            raise ValueError(f"Generator proportions must sum to 1.0, got {total}")
+        Under the hood, this method dynamically combines parameters. It takes a
+        range-specific parameter class (e.g., ShortRangeGeneratorParams) and merges
+        its values with the generator-specific parameter classes (e.g., LMCGeneratorParams)
+        at instantiation time.
+
+        Args:
+            params_class: The dataclass defining the forecast range (e.g., ShortRangeGeneratorParams).
+            proportions: The mix of generators to use for this specific range.
+            seed: A random seed.
+
+        Returns:
+            A fully configured DatasetComposer for a single forecast range.
+        """
+        if not proportions:
+            return None
+
+        generator_map = {
+            "lmc": (LMCGeneratorWrapper, LMCGeneratorParams),
+            "kernel": (KernelGeneratorWrapper, KernelGeneratorParams),
+            "gp": (GPGeneratorWrapper, GPGeneratorParams),
+            "forecast_pfn": (
+                ForecastPFNGeneratorWrapper,
+                ForecastPFNGeneratorParams,
+            ),
+        }
+
+        wrappers = {}
+        base_params = params_class(global_seed=seed).__dict__
+
+        for name, (wrapper_class, gen_param_class) in generator_map.items():
+            if name in proportions:
+                # Combine base range params with specific generator params
+                combined_params = gen_param_class(**base_params)
+                wrappers[name] = wrapper_class(combined_params)
+
+        if not wrappers:
+            return None
+
+        # Map proportions from string names to generator instances and normalize
+        total_prop = sum(proportions.values())
+        mapped_proportions = {
+            wrappers[name]: prob / total_prop
+            for name, prob in proportions.items()
+            if name in wrappers
+        }
+
+        return DatasetComposer(
+            generator_proportions=mapped_proportions, global_seed=seed
+        )
+
+    def get_composer(self) -> MultiRangeDatasetComposer:
+        return self.composer
+
+    def generate_batch(self, batch_size: int, seed: Optional[int] = None):
+        return self.composer.generate_batch(batch_size, seed)

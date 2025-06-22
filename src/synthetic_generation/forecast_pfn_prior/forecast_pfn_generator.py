@@ -45,6 +45,13 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
 
         # Seasonal component weights based on frequency
         a, m, w, h, minute = 0.0, 0.0, 0.0, 0.0, 0.0
+        if freq_key == "s":
+            minute = np.random.uniform(0.0, 1.0)
+            h = np.random.uniform(0.0, 0.2)
+        elif freq_key == "T1":
+            minute = np.random.uniform(0.0, 0.1)
+            h = np.random.uniform(0.0, 1.0)
+            w = np.random.uniform(0.0, 0.4)
         if freq_key == "min":
             minute = np.random.uniform(0.0, 1.0)
             h = np.random.uniform(0.0, 0.2)
@@ -59,9 +66,15 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         elif freq_key == "W":
             m = np.random.uniform(0.0, 0.3)
             a = np.random.uniform(0.0, 0.8)
-        elif freq_key == "MS":
+        elif freq_key == "M":
             w = np.random.uniform(0.0, 0.1)
             a = np.random.uniform(0.0, 1.0)
+        elif freq_key == "Q":
+            w = np.random.uniform(0.0, 0.1)
+            a = np.random.uniform(0.0, 1.0)
+        elif freq_key == "A":
+            w = np.random.uniform(0.0, 0.2)
+            a = np.random.uniform(0.0, 1)
         else:
             raise NotImplementedError(f"Frequency {freq} not supported")
 

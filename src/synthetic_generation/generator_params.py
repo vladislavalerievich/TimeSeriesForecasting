@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 from src.synthetic_generation.common.constants import Frequency
 
@@ -10,9 +10,15 @@ class GeneratorParams:
 
     global_seed: int = 42
     distribution_type: str = "uniform"
-    history_length: Union[int, Tuple[int, int]] = (64, 256)
-    target_length: Union[int, Tuple[int, int]] = (32, 128)
-    num_channels: Union[int, Tuple[int, int]] = (1, 256)
+    history_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [32, 1024]
+    )
+    future_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [6, 1024]
+    )
+    num_channels: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [1, 7]
+    )
 
     def update(self, **kwargs):
         """Update parameters from keyword arguments."""
@@ -21,19 +27,68 @@ class GeneratorParams:
                 setattr(self, k, v)
 
     def post_init(self):
-        """Validate that history_length is greater than target_length."""
+        """Validate that history_length is greater than future_length."""
         # Normalize to tuples for consistent comparison
         hist_min, hist_max = self._normalize_range(self.history_length)
-        targ_min, targ_max = self._normalize_range(self.target_length)
+        fut_min, fut_max = self._normalize_range(self.future_length)
 
-        if hist_min < targ_min or hist_max < targ_max:
-            raise ValueError("history_length must be greater than target_length")
+        if hist_min < fut_min or hist_max < fut_max:
+            raise ValueError("history_length must be greater than future_length")
 
-    def _normalize_range(self, value: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    def _normalize_range(
+        self, value: Union[int, Tuple[int, int], List[int]]
+    ) -> Tuple[int, int]:
         """Convert int or tuple to (min, max) tuple."""
         if isinstance(value, int):
             return (value, value)
+        if isinstance(value, list):
+            return (min(value), max(value))
         return value
+
+
+@dataclass
+class ShortRangeGeneratorParams(GeneratorParams):
+    """Parameters for short-range forecasting."""
+
+    history_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [64, 96, 128]
+    )
+    future_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [
+            8,
+            12,
+            13,
+            14,
+            18,
+            30,
+            48,
+            60,
+        ]
+    )
+
+
+@dataclass
+class MediumRangeGeneratorParams(GeneratorParams):
+    """Parameters for medium-range forecasting."""
+
+    history_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [128, 256, 512, 720]
+    )
+    future_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [60, 80, 120, 180]
+    )
+
+
+@dataclass
+class LongRangeGeneratorParams(GeneratorParams):
+    """Parameters for long-range forecasting."""
+
+    history_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [720, 1024]
+    )
+    future_length: Union[int, Tuple[int, int], List[int]] = field(
+        default_factory=lambda: [180, 480, 720, 900]
+    )
 
 
 @dataclass
@@ -64,7 +119,7 @@ class GPGeneratorParams(GeneratorParams):
     frequency: Frequency = Frequency.D
     max_kernels: int = 6
     likelihood_noise_level: float = 0.4
-    noise_level: str = "random"  # Options: ["random", "high", "moderate", "low"]
+    noise_level: str = "low"  # Options: ["random", "high", "moderate", "low"]
     use_original_gp: bool = False
     gaussians_periodic: bool = True
     peak_spike_ratio: float = 0.1

@@ -117,7 +117,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
             params = self._sample_parameters()
 
         history_length = params["history_length"]
-        target_length = params["target_length"]
+        future_length = params["future_length"]
         num_channels = params["num_channels"]
         max_kernels = params["max_kernels"]
         dirichlet_min = params["dirichlet_min"]
@@ -126,7 +126,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         weibull_shape = params["weibull_shape"]
         weibull_scale = params["weibull_scale"]
 
-        total_length = history_length + target_length
+        total_length = history_length + future_length
 
         # Initialize LMCSynthGenerator with the specified parameters
         generator = LMCSynthGenerator(
@@ -145,12 +145,9 @@ class LMCGeneratorWrapper(GeneratorWrapper):
             generator, batch_size, seed
         )
 
-        # Format the data into a BatchTimeSeriesContainer
         return self._format_to_container(
             values=batch_values,
             start=batch_start,
             history_length=history_length,
-            target_length=target_length,
-            batch_size=batch_size,
-            num_channels=num_channels,
+            future_length=future_length,
         )

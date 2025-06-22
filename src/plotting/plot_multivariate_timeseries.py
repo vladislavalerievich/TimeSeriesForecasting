@@ -8,8 +8,7 @@ from matplotlib.figure import Figure
 
 def plot_multivariate_timeseries(
     history_values: np.ndarray,
-    target_values: Optional[np.ndarray] = None,
-    target_index: Optional[int] = None,
+    future_values: Optional[np.ndarray] = None,
     predicted_values: Optional[np.ndarray] = None,
     max_channels: int = 10,
     figsize: Tuple[int, int] = (12, 6),
@@ -19,22 +18,19 @@ def plot_multivariate_timeseries(
     show: bool = False,
 ) -> Figure:
     """
-    Plot a single channel of a multivariate time series with history and optional targets/predictions.
-    Only the channel specified by target_index is highlighted, but up to max_channels channels are shown in the background.
+    Plot multivariate time series with history and optional future values and predictions.
+    All channels are plotted up to max_channels.
 
     Parameters
     ----------
     history_values : np.ndarray
-        Historical values with shape [seq_len, num_channels]
-    target_values : np.ndarray, optional
-        Target values with shape [pred_len, num_targets]
-    target_index : int, optional
-        Index of the target channel to plot
+        Historical values with shape [seq_len, num_channels].
+    future_values : np.ndarray, optional
+        Future values with shape [pred_len, num_channels].
     predicted_values : np.ndarray, optional
-        Model's predicted values with shape [pred_len, num_targets]
+        Model's predicted values with shape [pred_len, num_channels].
     max_channels : int
-        Maximum number of channels to plot, if the number of channels is greater than max_channels,
-        the plot will be truncated, but the target channel will still be plotted.
+        Maximum number of channels to plot.
     figsize : Tuple[int, int]
         Figure size in inches.
     title : str
@@ -53,128 +49,81 @@ def plot_multivariate_timeseries(
     """
     # Validate and prepare inputs
     history_values = np.asarray(history_values)
+    if history_values.ndim == 1:
+        history_values = history_values.reshape(-1, 1)
     num_channels = history_values.shape[1]
-    if target_index is None:
-        raise ValueError(
-            "target_index must be provided to specify which channel to plot"
-        )
-    if isinstance(target_index, np.ndarray):
-        target_index = int(target_index.item())
 
     # Set up time values
     history_len = history_values.shape[0]
     history_time = np.arange(history_len)
 
-    # Set up target time if available
-    target_time = None
-    if target_values is not None:
-        target_values = np.asarray(target_values)
-        target_len = target_values.shape[0]
-        target_time = np.arange(history_len, history_len + target_len)
+    # Set up future time if available
+    future_time = None
+    if future_values is not None:
+        future_values = np.asarray(future_values)
+        if future_values.ndim == 1:
+            future_values = future_values.reshape(-1, 1)
+        future_len = future_values.shape[0]
+        future_time = np.arange(history_len, history_len + future_len)
 
-    # Handle predicted_values dimensions
     if predicted_values is not None:
         predicted_values = np.asarray(predicted_values)
         if predicted_values.ndim == 1:
-            predicted_values = predicted_values[:, None]
-        elif predicted_values.ndim == 0:
-            predicted_values = predicted_values[None, None]
-        if predicted_values.shape[0] != (
-            target_values.shape[0]
-            if target_values is not None
-            else predicted_values.shape[0]
-        ):
-            predicted_values = predicted_values.T
-
-    # Determine which channels to plot
-    selected_channels = list(range(min(num_channels, max_channels)))
-    if target_index not in selected_channels:
-        selected_channels.append(target_index)
-    selected_channels = sorted(set(selected_channels))
+            predicted_values = predicted_values.reshape(-1, 1)
 
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Plot background channels (not the target channel)
-    for ch in selected_channels:
-        if ch == target_index:
-            continue
-        y_hist = history_values[:, ch]
+    # Plot each channel
+    channels_to_plot = min(num_channels, max_channels)
+    for ch in range(channels_to_plot):
+        # Plot history
         ax.plot(
             history_time,
-            y_hist.reshape(-1),
+            history_values[:, ch],
             color=f"C{ch % 10}",
             linestyle="-",
-            alpha=0.3,
-            label=f"Ch{ch}" if ch < max_channels else f"Ch{ch} (extra)",
+            label=f"Ch{ch} History" if ch < 5 else None,  # Avoid too many labels
         )
-        # Optionally plot targets for background channels if available
-        if (
-            target_values is not None
-            and target_values.ndim == 2
-            and ch < target_values.shape[1]
-        ):
-            y_target = target_values[:, ch]
+
+        # Plot future values
+        if future_values is not None and ch < future_values.shape[1]:
             ax.plot(
-                target_time,
-                y_target.reshape(-1),
+                future_time,
+                future_values[:, ch],
                 color=f"C{ch % 10}",
-                linestyle="-",
-                alpha=0.3,
+                linestyle="--",
+                label=f"Ch{ch} Future" if ch < 5 else None,
             )
 
-    # Plot the target channel (highlighted)
-    y_hist = history_values[:, target_index]
-    ax.plot(
-        history_time,
-        y_hist.reshape(-1),
-        color=f"C{target_index % 10}",
-        linestyle="-",
-        linewidth=2.0,
-        label=f"Ch{target_index}: True",
-    )
-    if target_values is not None:
-        y_target = target_values[:, 0] if target_values.ndim == 2 else target_values
-        ax.plot(
-            target_time,
-            y_target.reshape(-1),
-            color=f"C{target_index % 10}",
-            linestyle="-",
-            linewidth=2.0,
-            label="Target",
-        )
-    if predicted_values is not None:
-        y_pred = (
-            predicted_values[:, 0] if predicted_values.ndim == 2 else predicted_values
-        )
-        ax.plot(
-            target_time,
-            y_pred.reshape(-1),
-            color="red",
-            linestyle="--",
-            linewidth=2.0,
-            label="Prediction",
-        )
+        # Plot predicted values
+        if predicted_values is not None and ch < predicted_values.shape[1]:
+            ax.plot(
+                future_time,
+                predicted_values[:, ch],
+                color=f"C{ch % 10}",
+                linestyle=":",
+                label=f"Ch{ch} Prediction" if ch < 5 else None,
+            )
 
-    # Add history/target separator
-    if target_time is not None:
+    # Add history/future separator
+    if future_time is not None:
         ax.axvline(
             x=history_len,
             color="red",
             linestyle=":",
             alpha=0.7,
-            label="History/Target Split",
+            label="History/Future Split",
         )
         ax.axvspan(
             history_len,
-            target_time[-1],
+            future_time[-1],
             alpha=0.1,
             color="gray",
-            label="Target Region",
         )
 
     # Set title and labels
-    ax.set_title(f"{title} (Total channels: {num_channels})")
+    ax.set_title(f"{title} (Showing {channels_to_plot}/{num_channels} channels)")
     ax.set_xlabel("Time Steps")
     ax.set_ylabel("Value")
     ax.legend(loc="best")
@@ -222,10 +171,7 @@ def plot_from_container(
     """
     # Extract data for the specified sample
     history_values = ts_data.history_values[sample_idx].detach().cpu().numpy()
-    target_values = ts_data.target_values[sample_idx].detach().cpu().numpy()
-    target_index = ts_data.target_index[sample_idx].detach().cpu().numpy()
-    if np.ndim(target_index) > 0:
-        target_index = int(target_index.item())
+    future_values = ts_data.future_values[sample_idx].detach().cpu().numpy()
     if predicted_values is not None:
         if isinstance(predicted_values, torch.Tensor):
             predicted_values = predicted_values.detach().cpu().numpy()
@@ -233,8 +179,7 @@ def plot_from_container(
             predicted_values = predicted_values[sample_idx]
     return plot_multivariate_timeseries(
         history_values=history_values,
-        target_values=target_values,
-        target_index=target_index,
+        future_values=future_values,
         predicted_values=predicted_values,
         **kwargs,
     )

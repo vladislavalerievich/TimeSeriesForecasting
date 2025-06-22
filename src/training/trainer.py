@@ -253,7 +253,7 @@ class TrainingPipeline:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Prepare batch data for model input."""
         batch.to_device(self.device)
-        return batch, batch.target_values
+        return batch, batch.future_values
 
     def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
         """Plot selected series from every validation batch and log to WandB."""
