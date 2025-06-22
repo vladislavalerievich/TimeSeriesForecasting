@@ -59,6 +59,7 @@ class GeneratorWrapper:
         self._validate_input_parameters()
 
     def _set_random_seeds(self, seed: int) -> None:
+        self.rng = np.random.default_rng(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
 
@@ -83,7 +84,14 @@ class GeneratorWrapper:
         if isinstance(param, list):
             return self.rng.choice(param)
         if isinstance(param, tuple):
-            return self.rng.randint(low=param[0], high=param[1], size=1)[0]
+            min_val, max_val = param
+            if min_val > max_val:
+                raise ValueError(
+                    f"Min value {min_val} cannot be greater than max value {max_val}"
+                )
+            if min_val == max_val:
+                return min_val
+            return self.rng.integers(low=min_val, high=max_val, size=1)[0]
         raise ValueError(f"Unsupported param type: {type(param)}")
 
     def _sample_from_range(
@@ -95,10 +103,10 @@ class GeneratorWrapper:
         if min_val == max_val:
             return min_val
         if self.params.distribution_type == "uniform":
-            value = np.random.uniform(min_val, max_val)
+            value = self.rng.uniform(min_val, max_val)
         elif self.params.distribution_type == "log_uniform":
             log_min, log_max = np.log10(min_val), np.log10(max_val)
-            value = 10 ** np.random.uniform(log_min, log_max)
+            value = 10 ** self.rng.uniform(log_min, log_max)
         else:
             raise ValueError(
                 f"Unknown distribution type: {self.params.distribution_type}"
@@ -151,7 +159,7 @@ class GeneratorWrapper:
 
         # Select a random frequency if none provided
         if frequency is None:
-            frequency = np.random.choice(list(Frequency))
+            frequency = self.rng.choice(list(Frequency))
 
         return BatchTimeSeriesContainer(
             history_values=history_values,

@@ -30,15 +30,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         """
         params = super()._sample_parameters()
         # Sample num_kernels
-        if isinstance(self.params.num_kernels, tuple):
-            num_kernels = self._sample_from_range(
-                min_val=self.params.num_kernels[0],
-                max_val=self.params.num_kernels[1],
-                is_int=True,
-            )
-        else:
-            num_kernels = self.params.num_kernels
-
+        num_kernels = self._parse_param_value(self.params.num_kernels)
         params.update({"max_kernels": num_kernels})
         return params
 

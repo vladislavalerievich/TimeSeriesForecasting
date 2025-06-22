@@ -28,16 +28,22 @@ from src.synthetic_generation.generator_params import ForecastPFNGeneratorParams
 
 
 class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
-    def __init__(self, params: ForecastPFNGeneratorParams, length: int = 1024):
+    def __init__(
+        self,
+        params: ForecastPFNGeneratorParams,
+        length: int = 1024,
+        random_seed: Optional[int] = None,
+    ):
         self.params = params
         self.length = length
+        self.rng = np.random.default_rng(random_seed)
         self.frequency = params.frequency
 
     def _generate_series(
         self, start: pd.Timestamp = None, random_seed: Optional[int] = None
     ) -> Dict[str, np.ndarray]:
         if random_seed is not None:
-            np.random.seed(random_seed)
+            self.rng = np.random.default_rng(random_seed)
 
         freq_key, subfreq, timescale = FREQUENCY_MAPPING.get(
             self.frequency, ("D", "", 1)
@@ -47,45 +53,48 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         # Seasonal component weights based on frequency
         a, m, w, h, minute = 0.0, 0.0, 0.0, 0.0, 0.0
         if self.frequency == Frequency.S:
-            minute = np.random.uniform(0.0, 1.0)
-            h = np.random.uniform(0.0, 0.2)
+            minute = self.rng.uniform(0.0, 1.0)
+            h = self.rng.uniform(0.0, 0.2)
         elif self.frequency in [
             Frequency.T1,
             Frequency.T5,
             Frequency.T10,
             Frequency.T15,
         ]:
-            minute = np.random.uniform(0.0, 1.0)
-            h = np.random.uniform(0.0, 0.2)
+            minute = self.rng.uniform(0.0, 1.0)
+            h = self.rng.uniform(0.0, 0.2)
         elif self.frequency == Frequency.H:
-            minute = np.random.uniform(0.0, 0.2)
-            h = np.random.uniform(0.0, 1.0)
+            minute = self.rng.uniform(0.0, 0.2)
+            h = self.rng.uniform(0.0, 1.0)
         elif self.frequency == Frequency.D:
-            w = np.random.uniform(0.0, 1.0)
-            m = np.random.uniform(0.0, 0.2)
+            w = self.rng.uniform(0.0, 1.0)
+            m = self.rng.uniform(0.0, 0.2)
         elif self.frequency == Frequency.W:
-            m = np.random.uniform(0.0, 0.3)
-            a = np.random.uniform(0.0, 0.3)
+            m = self.rng.uniform(0.0, 0.3)
+            a = self.rng.uniform(0.0, 0.3)
         elif self.frequency == Frequency.M:
-            w = np.random.uniform(0.0, 0.1)
-            a = np.random.uniform(0.0, 0.5)
+            w = self.rng.uniform(0.0, 0.1)
+            a = self.rng.uniform(0.0, 0.5)
         elif self.frequency == Frequency.Q:
-            a = np.random.uniform(0.0, 1.0)
+            a = self.rng.uniform(0.0, 1.0)
         elif self.frequency == Frequency.A:
-            w = np.random.uniform(0.0, 0.2)
-            a = np.random.uniform(0.0, 1.0)
+            w = self.rng.uniform(0.0, 0.2)
+            a = self.rng.uniform(0.0, 1.0)
         else:
             raise NotImplementedError(f"Frequency {self.frequency} not supported")
 
         if start is None:
             start = pd.Timestamp.fromordinal(
-                int((BASE_START - BASE_END) * beta.rvs(5, 1) + BASE_START)
+                int(
+                    (BASE_START - BASE_END) * beta.rvs(5, 1, random_state=self.rng)
+                    + BASE_START
+                )
             )
 
         scale_config = ComponentScale(
             base=1.0,
-            linear=np.random.normal(0, 0.01),
-            exp=max(0.0001, min(1.01, np.random.normal(1, 0.005 / timescale)))
+            linear=self.rng.normal(0, 0.01),
+            exp=max(0.0001, min(1.01, self.rng.normal(1, 0.005 / timescale)))
             if self.params.trend_exp
             else 1.0,
             a=a,
@@ -97,19 +106,20 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
 
         offset_config = ComponentScale(
             base=0,
-            linear=np.random.uniform(-0.1, 0.5),
-            exp=np.random.uniform(-0.1, 0.5),
-            a=np.random.uniform(0.0, 1.0),
-            m=np.random.uniform(0.0, 1.0),
-            w=np.random.uniform(0.0, 1.0),
+            linear=self.rng.uniform(-0.1, 0.5),
+            exp=self.rng.uniform(-0.1, 0.5),
+            a=self.rng.uniform(0.0, 1.0),
+            m=self.rng.uniform(0.0, 1.0),
+            w=self.rng.uniform(0.0, 1.0),
         )
 
         noise_config = ComponentNoise(
-            k=np.random.uniform(1, 5),
+            k=self.rng.uniform(1, 5),
             median=1,
             scale=sample_scale(
                 low_ratio=self.params.scale_noise[0],
                 moderate_ratio=self.params.scale_noise[1],
+                rng=self.rng,
             ),
         )
 
@@ -130,13 +140,13 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         )
 
         # Generate second series for transition if enabled
-        transition = np.random.rand() < self.params.transition_ratio
+        transition = self.rng.random() < self.params.transition_ratio
         if transition:
             cfg2 = SeriesConfig(
                 ComponentScale(
                     base=1.0,
-                    linear=np.random.normal(0, 0.01),
-                    exp=max(0.0001, min(1.01, np.random.normal(1, 0.005 / timescale)))
+                    linear=self.rng.normal(0, 0.01),
+                    exp=max(0.0001, min(1.01, self.rng.normal(1, 0.005 / timescale)))
                     if self.params.trend_exp
                     else 1.0,
                     a=a,
@@ -147,18 +157,19 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
                 ),
                 ComponentScale(
                     base=0,
-                    linear=np.random.uniform(-0.1, 0.5),
-                    exp=np.random.uniform(-0.1, 0.5),
-                    a=np.random.uniform(0.0, 1.0),
-                    m=np.random.uniform(0.0, 1.0),
-                    w=np.random.uniform(0.0, 1.0),
+                    linear=self.rng.uniform(-0.1, 0.5),
+                    exp=self.rng.uniform(-0.1, 0.5),
+                    a=self.rng.uniform(0.0, 1.0),
+                    m=self.rng.uniform(0.0, 1.0),
+                    w=self.rng.uniform(0.0, 1.0),
                 ),
                 ComponentNoise(
-                    k=np.random.uniform(1, 5),
+                    k=self.rng.uniform(1, 5),
                     median=1,
                     scale=sample_scale(
                         low_ratio=self.params.scale_noise[0],
                         moderate_ratio=self.params.scale_noise[1],
+                        rng=self.rng,
                     ),
                 ),
             )
@@ -186,7 +197,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         values_seasonal = {}
 
         if random_walk:
-            values = get_random_walk_series(len(dates))
+            values = get_random_walk_series(len(dates), rng=self.rng)
         elif options["seasonal_only"]:
             values_seasonal = self._make_series_seasonal(series, dates, options)
             values = values_seasonal["seasonal"]
@@ -203,6 +214,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
                 k=series.noise_config.k,
                 median=series.noise_config.median,
                 length=len(values),
+                rng=self.rng,
             )
             noise_expected_val = series.noise_config.median
             scaled_noise_term = series.noise_config.scale * (
@@ -233,7 +245,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         self, series: SeriesConfig, dates: pd.DatetimeIndex, options: dict
     ) -> Dict:
         seasonal = 1
-        harmonic_scale = np.random.rand() < options["harmonic_scale_ratio"]
+        harmonic_scale = self.rng.random() < options["harmonic_scale_ratio"]
         harmonic_rate = options["harmonic_rate"]
         period_factor = options["period_factor"]
         seasonal_components = {}
@@ -296,8 +308,8 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         cos_coef = np.zeros(n_harmonics)
         for idx, harmonic in enumerate(harmonics):
             h = 1 if not harmonic_scale else harmonic
-            sin_coef[idx] = np.random.normal(scale=1 / h)
-            cos_coef[idx] = np.random.normal(scale=1 / h)
+            sin_coef[idx] = self.rng.normal(scale=1 / h)
+            cos_coef[idx] = self.rng.normal(scale=1 / h)
         coef_sq_sum = np.sqrt(np.sum(np.square(sin_coef)) + np.sum(np.square(cos_coef)))
         sin_coef /= coef_sq_sum
         cos_coef /= coef_sq_sum

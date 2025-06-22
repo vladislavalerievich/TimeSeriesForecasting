@@ -17,7 +17,7 @@ class GPGeneratorWrapper(GeneratorWrapper):
         params = super()._sample_parameters()
 
         # Sample frequency randomly from the frequency enum
-        frequency = np.random.choice(list(Frequency))
+        frequency = self.rng.choice(list(Frequency))
 
         params.update(
             {
@@ -59,6 +59,7 @@ class GPGeneratorWrapper(GeneratorWrapper):
             generator = GPGenerator(
                 GPGeneratorParams(**params),
                 length=length,
+                random_seed=channel_seed,
             )
             result = self._generate_univariate_time_series(generator, channel_seed)
             values.append(result["values"])

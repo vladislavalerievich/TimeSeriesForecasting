@@ -19,7 +19,7 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
     def _sample_parameters(self) -> Dict[str, Any]:
         params = super()._sample_parameters()
-        frequency = np.random.choice(list(Frequency))
+        frequency = self.rng.choice(list(Frequency))
         params.update(
             {
                 "frequency": frequency,
@@ -49,7 +49,9 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         values = []
         start = None
         generator = ForecastPFNGenerator(
-            ForecastPFNGeneratorParams(**params), length=length
+            ForecastPFNGeneratorParams(**params),
+            length=length,
+            random_seed=seed,
         )
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
@@ -70,28 +72,28 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         self, input_size: int, p: list = [0.4, 0.5, 0.1]
     ) -> np.ndarray:
         """Generate damping effect for a time series."""
-        spacing = np.random.choice(["equal", "regular", "random"], p=p)
+        spacing = self.rng.choice(["equal", "regular", "random"], p=p)
         t = np.arange(0, input_size, 1).astype(float)
 
         if spacing == "random":
-            num_steps = np.random.randint(1, 3)
+            num_steps = self.rng.integers(1, 3)
             damping_intervals = np.sort(
-                np.random.choice(t[: -int(input_size * 0.1)], num_steps, replace=False)
+                self.rng.choice(t[: -int(input_size * 0.1)], num_steps, replace=False)
             )
-            damping_factors = np.random.uniform(0.1, 2, num_steps + 1)
+            damping_factors = self.rng.uniform(0.1, 2, num_steps + 1)
         elif spacing == "equal":
-            num_steps = np.random.randint(3, 7)
+            num_steps = self.rng.integers(3, 7)
             damping_intervals = np.linspace(0, input_size, num_steps + 2)[1:-1]
             damping_factors = np.array(
                 [
-                    np.random.uniform(0.4, 0.8)
+                    self.rng.uniform(0.4, 0.8)
                     if (i % 2) == 0
-                    else np.random.uniform(1, 2)
+                    else self.rng.uniform(1, 2)
                     for i in range(num_steps + 1)
                 ]
             )
         else:
-            custom_lengths = np.random.randint(1, input_size // 2, 2)
+            custom_lengths = self.rng.integers(1, input_size // 2, 2)
             damping_intervals = []
             current_time = 0
             while current_time < input_size:
@@ -105,9 +107,9 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
             num_steps = len(damping_intervals)
             damping_factors = np.array(
                 [
-                    np.random.uniform(0.4, 0.8)
+                    self.rng.uniform(0.4, 0.8)
                     if (i % 2) == 0
-                    else np.random.uniform(1, 2)
+                    else self.rng.uniform(1, 2)
                     for i in range(num_steps + 1)
                 ]
             )
@@ -131,12 +133,12 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         batch_size = batch_values.shape[0]
 
         # Apply mixup augmentation if enabled
-        if np.random.rand() < params.get("mixup_prob", 0.0):
-            mixup_series = np.random.randint(2, params.get("mixup_series", 4) + 1)
-            mixup_indices = np.random.choice(batch_size, mixup_series, replace=False)
+        if self.rng.random() < params.get("mixup_prob", 0.0):
+            mixup_series = self.rng.integers(2, params.get("mixup_series", 4) + 1)
+            mixup_indices = self.rng.choice(batch_size, mixup_series, replace=False)
             original_vals = batch_values[mixup_indices, :, :].copy()
             for i, idx in enumerate(mixup_indices):
-                mixup_weights = np.random.rand(mixup_series)
+                mixup_weights = self.rng.random(mixup_series)
                 mixup_weights /= np.sum(mixup_weights)
                 batch_values[idx, :, :] = np.sum(
                     original_vals * mixup_weights[:, np.newaxis, np.newaxis], axis=0
@@ -144,14 +146,12 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
         # Apply damping and spike augmentations if enabled
         if params.get("damp_and_spike", False):
-            damping_ratio = np.random.uniform(
-                0, params.get("damping_noise_ratio", 0.05)
-            )
-            spike_ratio = np.random.uniform(0, params.get("spike_noise_ratio", 0.05))
-            damping_indices = np.random.choice(
+            damping_ratio = self.rng.uniform(0, params.get("damping_noise_ratio", 0.05))
+            spike_ratio = self.rng.uniform(0, params.get("spike_noise_ratio", 0.05))
+            damping_indices = self.rng.choice(
                 batch_size, int(np.ceil(batch_size * damping_ratio)), replace=False
             )
-            spike_indices = np.random.choice(
+            spike_indices = self.rng.choice(
                 batch_size, int(np.ceil(batch_size * spike_ratio)), replace=False
             )
 
@@ -172,11 +172,11 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
                         batch_values[idx, :, :] + spikes[:, np.newaxis] + 1
                     )
 
-            if np.random.rand() < params.get("spike_signal_ratio", 0.05):
-                spikey_series_ratio = np.random.uniform(
+            if self.rng.random() < params.get("spike_signal_ratio", 0.05):
+                spikey_series_ratio = self.rng.uniform(
                     0, params.get("spike_batch_ratio", 0.05)
                 )
-                spike_replace_indices = np.random.choice(
+                spike_replace_indices = self.rng.choice(
                     batch_size,
                     int(np.ceil(batch_size * spikey_series_ratio)),
                     replace=False,

@@ -1,13 +1,15 @@
 import numpy as np
 
 
-def weibull_noise(k=2, length=1, median=1):
+def weibull_noise(k=2, length=1, median=1, rng=None):
     """
     Function to generate weibull noise with a fixed median
     """
+    if rng is None:
+        rng = np.random.default_rng()
     # Lambda is chosen such that the median is a given value
     lamda = median / (np.log(2) ** (1 / k))
-    return lamda * np.random.weibull(k, length)
+    return lamda * rng.weibull(k, length)
 
 
 def shift_axis(days, shift):
@@ -16,36 +18,40 @@ def shift_axis(days, shift):
     return days - shift * days[-1]
 
 
-def get_random_walk_series(length, movements=[-1, 1]):
+def get_random_walk_series(length, movements=[-1, 1], rng=None):
     """
     Function to generate a random walk series with a specified length
     """
+    if rng is None:
+        rng = np.random.default_rng()
     random_walk = list()
-    random_walk.append(np.random.choice(movements))
+    random_walk.append(rng.choice(movements))
     for i in range(1, length):
-        movement = np.random.choice(movements)
+        movement = rng.choice(movements)
         value = random_walk[i - 1] + movement
         random_walk.append(value)
 
     return np.array(random_walk)
 
 
-def sample_scale(low_ratio=0.6, moderate_ratio=0.3):
+def sample_scale(low_ratio=0.6, moderate_ratio=0.3, rng=None):
     """
     Function to sample scale such that it follows 60-30-10 distribution
     i.e. 60% of the times it is very low, 30% of the times it is moderate and
     the rest 10% of the times it is high
     """
-    rand = np.random.rand()
+    if rng is None:
+        rng = np.random.default_rng()
+    rand = rng.random()
     # very low noise
     if rand <= low_ratio:
-        return np.random.uniform(0, 0.1)
+        return rng.uniform(0, 0.1)
     # moderate noise
     elif rand <= (low_ratio + moderate_ratio):
-        return np.random.uniform(0.2, 0.5)
+        return rng.uniform(0.2, 0.5)
     # high noise
     else:
-        return np.random.uniform(0.7, 0.9)
+        return rng.uniform(0.7, 0.9)
 
 
 def get_transition_coefficients(context_length):

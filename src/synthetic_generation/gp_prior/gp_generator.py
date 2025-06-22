@@ -42,9 +42,11 @@ class GPGenerator:
         self,
         params: GPGeneratorParams,
         length: int = 1024,
+        random_seed: Optional[int] = None,
     ):
         self.params = params
         self.length = length
+        self.rng = np.random.default_rng(random_seed)
         self.frequency = params.frequency
         self.max_kernels = params.max_kernels
         self.likelihood_noise_level = params.likelihood_noise_level
@@ -64,7 +66,7 @@ class GPGenerator:
         random_seed: Optional[int] = None,
     ) -> Dict[str, np.ndarray]:
         if random_seed is not None:
-            np.random.seed(random_seed)
+            self.rng = np.random.default_rng(random_seed)
             torch.manual_seed(random_seed)
 
         # Determine kernel_bank and gaussians_periodic
@@ -83,7 +85,7 @@ class GPGenerator:
         freq, subfreq, timescale = FREQUENCY_MAPPING.get(self.frequency, ("D", "", 0))
 
         # Decide if using exact frequencies
-        exact_freqs = np.random.rand() < self.periods_per_freq
+        exact_freqs = self.rng.random() < self.periods_per_freq
         if exact_freqs and freq in KERNEL_PERIODS_BY_FREQ:
             kernel_periods = KERNEL_PERIODS_BY_FREQ[freq]
             if subfreq:
@@ -95,10 +97,10 @@ class GPGenerator:
             kernel_periods = self.kernel_periods
 
         # Sample number of kernels
-        num_kernels = np.random.randint(1, self.max_kernels + 1)
+        num_kernels = self.rng.integers(1, self.max_kernels + 1)
         # Always expect kernel_bank as dict {int: (str, float)}
         kernel_weights = np.array([v[1] for v in kernel_bank.values()])
-        kernel_ids = np.random.choice(
+        kernel_ids = self.rng.choice(
             list(kernel_bank.keys()),
             size=num_kernels,
             p=kernel_weights / kernel_weights.sum(),
@@ -107,7 +109,7 @@ class GPGenerator:
 
         # Create composite kernel
         composite_kernel = functools.reduce(
-            lambda a, b: random_binary_map(a, b),
+            lambda a, b: random_binary_map(a, b, rng=self.rng),
             [
                 create_kernel(
                     k,
@@ -115,6 +117,7 @@ class GPGenerator:
                     int(self.max_period_ratio * self.length),
                     gaussians_periodic,
                     kernel_periods,
+                    rng=self.rng,
                 )
                 for k in kernel_names
             ],
@@ -122,7 +125,7 @@ class GPGenerator:
 
         # Set up GP model
         train_x = torch.linspace(0, 1, self.length)
-        trend = np.random.choice([True, False])
+        trend = self.rng.choice([True, False])
         mean_module = (
             gpytorch.means.LinearMean(input_size=1)
             if trend
@@ -138,7 +141,7 @@ class GPGenerator:
         # Determine noise level
         noise = {"high": 1e-1, "moderate": 1e-2, "low": 1e-3}.get(
             self.noise_level,
-            np.random.choice([1e-1, 1e-2, 1e-3], p=[0.1, 0.2, 0.7]),
+            self.rng.choice([1e-1, 1e-2, 1e-3], p=[0.1, 0.2, 0.7]),
         )
 
         # Sample from GP prior
@@ -152,11 +155,11 @@ class GPGenerator:
             # y_sample shape: (self.length,) (should be 1D)
 
         # Optionally add peak spikes
-        if np.random.rand() < self.peak_spike_ratio:
+        if self.rng.random() < self.peak_spike_ratio:
             periodicities = extract_periodicities(composite_kernel, self.length)
             if len(periodicities) > 0:
                 p = int(np.round(max(periodicities)))
-                spikes_type = np.random.choice(["regular", "patchy"], p=[0.3, 0.7])
+                spikes_type = self.rng.choice(["regular", "patchy"], p=[0.3, 0.7])
                 spikes = generate_peak_spikes(self.length, p, spikes_type=spikes_type)
                 # y_sample is 1D, so use y_sample[:p].argmax()
                 spikes_shift = (

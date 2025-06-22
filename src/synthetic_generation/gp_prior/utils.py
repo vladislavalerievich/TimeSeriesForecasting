@@ -4,8 +4,14 @@ from gpytorch.kernels import AdditiveKernel, PeriodicKernel, ProductKernel, Scal
 
 
 def custom_gaussian_sample(
-    max_period_length, kernel_periods=None, gaussian_sample=True, allow_extension=True
+    max_period_length,
+    kernel_periods=None,
+    gaussian_sample=True,
+    allow_extension=True,
+    rng=None,
 ):
+    if rng is None:
+        rng = np.random.default_rng()
     means = (
         np.array(kernel_periods)
         if kernel_periods is not None
@@ -29,13 +35,13 @@ def custom_gaussian_sample(
                 means = np.append(means, max_period_length)
 
     means = means[means <= max_period_length]
-    selected_mean = np.random.choice(means)
+    selected_mean = rng.choice(means)
 
     if gaussian_sample:
         # Define corresponding standard deviations using np.sqrt(means) * 2
         std_devs = np.sqrt(means) ** 1.2  # / (means *0.008)
         selected_std = std_devs[np.where(means == selected_mean)][0]
-        sample = np.random.normal(selected_mean, selected_std)
+        sample = rng.normal(selected_mean, selected_std)
     else:
         sample = selected_mean
 
@@ -57,13 +63,14 @@ def create_kernel(
     exact_freqs=False,
     gaussian_sample=True,
     subfreq="",
+    rng=None,
 ):
-    scale_kernel = np.random.choice([True, False])
-    lengthscale = np.random.uniform(0.1, 5.0)
+    if rng is None:
+        rng = np.random.default_rng()
+    scale_kernel = rng.choice([True, False])
+    lengthscale = rng.uniform(0.1, 5.0)
     if kernel == "linear_kernel":
-        sigma_prior = gpytorch.priors.GammaPrior(
-            np.random.uniform(1, 6), np.random.uniform(0.1, 1)
-        )
+        sigma_prior = gpytorch.priors.GammaPrior(rng.uniform(1, 6), rng.uniform(0.1, 1))
         kernel = gpytorch.kernels.LinearKernel(variance_prior=sigma_prior)
     elif kernel == "rbf_kernel":
         kernel = gpytorch.kernels.RBFKernel()
@@ -78,35 +85,36 @@ def create_kernel(
                     else kernel_periods,
                     gaussian_sample=gaussian_sample,
                     allow_extension=(kernel_counter["periodic_kernel"] > 2),
+                    rng=rng,
                 )
                 kernel_counter["periodic_kernel"] -= 1
             else:
                 period_length = custom_gaussian_sample(
-                    max_period_length, kernel_periods, gaussian_sample=True
+                    max_period_length, kernel_periods, gaussian_sample=True, rng=rng
                 )
         else:
-            period_length = np.random.randint(1, max_period_length)
+            period_length = rng.integers(1, max_period_length)
         kernel = gpytorch.kernels.PeriodicKernel()
         kernel.period_length = period_length / seq_len
         kernel.lengthscale = lengthscale
     elif kernel == "polynomial_kernel":
         offset_prior = gpytorch.priors.GammaPrior(
-            np.random.uniform(1, 4), np.random.uniform(0.1, 1)
+            rng.uniform(1, 4), rng.uniform(0.1, 1)
         )
-        degree = np.random.randint(1, max_degree)
+        degree = rng.integers(1, max_degree)
         kernel = gpytorch.kernels.PolynomialKernel(
             offset_prior=offset_prior, power=degree
         )
     elif kernel == "matern_kernel":
-        nu = np.random.choice([0.5, 1.5, 2.5])  # Roughness parameter
+        nu = rng.choice([0.5, 1.5, 2.5])  # Roughness parameter
         kernel = gpytorch.kernels.MaternKernel(nu=nu)
         kernel.lengthscale = lengthscale
     elif kernel == "rational_quadratic_kernel":
-        alpha = np.random.uniform(0.1, 10.0)  # Scale mixture parameter
+        alpha = rng.uniform(0.1, 10.0)  # Scale mixture parameter
         kernel = gpytorch.kernels.RQKernel(alpha=alpha)
         kernel.lengthscale = lengthscale
     elif kernel == "spectral_mixture_kernel":
-        num_mixtures = np.random.randint(2, 6)  # Number of spectral mixture components
+        num_mixtures = rng.integers(2, 6)  # Number of spectral mixture components
         kernel = gpytorch.kernels.SpectralMixtureKernel(num_mixtures=num_mixtures)
     else:
         raise ValueError(f"Unknown kernel: {kernel}")
@@ -134,7 +142,7 @@ def extract_periodicities(kernel, seq_len):
     return periodicities
 
 
-def random_binary_map(a: gpytorch.kernels.Kernel, b: gpytorch.kernels.Kernel):
+def random_binary_map(a: gpytorch.kernels.Kernel, b: gpytorch.kernels.Kernel, rng=None):
     """
     Applies a random binary operator (+ or *) with equal probability
     on kernels ``a`` and ``b``.
@@ -150,5 +158,7 @@ def random_binary_map(a: gpytorch.kernels.Kernel, b: gpytorch.kernels.Kernel):
     -------
         The composite kernel `a + b` or `a * b`.
     """
+    if rng is None:
+        rng = np.random.default_rng()
     binary_maps = [lambda x, y: x + y, lambda x, y: x * y]
-    return np.random.choice(binary_maps)(a, b)
+    return rng.choice(binary_maps)(a, b)

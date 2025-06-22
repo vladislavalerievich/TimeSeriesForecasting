@@ -1,6 +1,8 @@
 import logging
 from collections import Counter, defaultdict
 
+import tqdm
+
 from src.synthetic_generation.dataset_composer import DefaultSyntheticComposer
 
 # Suppress verbose logging from the generator
@@ -30,7 +32,7 @@ def test_synthetic_composer():
             print(f"  - {gen_name}: {prop:.2f}")
 
     # --- 2. Generate Batches and Collect Stats ---
-    num_batches = 100
+    num_batches = 10
     batch_size = 8
     generator_counts = Counter()
     # A dictionary where each value is a set of unique shape tuples

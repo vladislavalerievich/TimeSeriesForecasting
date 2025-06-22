@@ -65,9 +65,9 @@ class MultiRangeDatasetComposer:
         self.range_composers = range_composers
         self.range_proportions = range_proportions
         self.global_seed = global_seed
+        self.rng = np.random.default_rng(global_seed)
 
         self._validate_proportions()
-        np.random.seed(self.global_seed)
 
     def _validate_proportions(self):
         # Validate that the ranges in proportions and composers match
@@ -94,12 +94,12 @@ class MultiRangeDatasetComposer:
            generator type (e.g., "LMC") based on its internal proportions.
         """
         if seed is not None:
-            np.random.seed(seed)
+            self.rng = np.random.default_rng(seed)
 
         # Select a range based on proportions
         ranges = list(self.range_proportions.keys())
         proportions = list(self.range_proportions.values())
-        selected_range = np.random.choice(ranges, p=proportions)
+        selected_range = self.rng.choice(ranges, p=proportions)
         selected_composer = self.range_composers[selected_range]
 
         # Delegate batch generation to the chosen composer
@@ -133,12 +133,12 @@ class DatasetComposer:
         """
         self.generator_proportions = generator_proportions
         self.global_seed = global_seed
+        self.rng = np.random.default_rng(global_seed)
 
         # Validate proportions
         self._validate_proportions()
 
         # Set random seed
-        np.random.seed(self.global_seed)
         torch.manual_seed(self.global_seed)
 
     def _validate_proportions(self) -> None:
@@ -203,12 +203,12 @@ class DatasetComposer:
         """
         # Set seed if provided
         if seed is not None:
-            np.random.seed(seed)
+            self.rng = np.random.default_rng(seed)
 
         # Select generator based on proportions
         generators = list(self.generator_proportions.keys())
         proportions = list(self.generator_proportions.values())
-        selected_generator = np.random.choice(generators, p=proportions)
+        selected_generator = self.rng.choice(generators, p=proportions)
 
         # Generate batch
         batch = selected_generator.generate_batch(

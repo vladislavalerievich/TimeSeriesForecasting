@@ -29,6 +29,7 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
         scale: float = 1.0,
         weibull_shape: float = 2.0,
         weibull_scale: int = 1,
+        random_seed: Optional[int] = None,
     ):
         """
         Initialize the LMC Synthetic Data Generator.
@@ -51,6 +52,8 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
             Shape parameter for Weibull distribution (default: 2.0).
         weibull_scale : int, optional
             Scale parameter for Weibull distribution (default: 1).
+        random_seed : int, optional
+            Seed for the random number generator.
         """
         self.length = length
         self.max_kernels = max_kernels
@@ -60,6 +63,7 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
         self.scale = scale
         self.weibull_shape = weibull_shape
         self.weibull_scale = weibull_scale
+        self.rng = np.random.default_rng(random_seed)
 
         # Initialize kernel bank with adjusted periodicities based on length.
         self.kernel_bank = [
@@ -116,7 +120,7 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
             The composite kernel `a + b` or `a * b`
         """
         binary_maps = [lambda x, y: x + y, lambda x, y: x * y]
-        return np.random.choice(binary_maps)(a, b)
+        return self.rng.choice(binary_maps)(a, b)
 
     @staticmethod
     def _sample_from_gp_prior(
@@ -172,14 +176,15 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
             - 'start': Start timestamp (np.datetime64)
             - 'values': Generated time series (np.ndarray of shape (num_channels, length))
         """
-        np.random.seed(random_seed)
+        if random_seed is not None:
+            self.rng = np.random.default_rng(random_seed)
 
         while True:
             X = np.linspace(0, 1, self.length)
 
             # Sample number of latent functions from Weibull distribution
             latent_num = np.rint(
-                np.random.weibull(self.weibull_shape, size=self.length) * self.scale + 1
+                self.rng.weibull(self.weibull_shape, size=self.length) * self.scale + 1
             )
             latent_num = np.clip(
                 latent_num, max(2, self.num_channels // 20), self.num_channels
@@ -187,13 +192,13 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
             latent_num = int(latent_num[0])
 
             # Sample number of kernels for each latent function
-            kernel_numbers = np.random.randint(1, self.max_kernels + 1, size=latent_num)
+            kernel_numbers = self.rng.integers(1, self.max_kernels + 1, size=latent_num)
 
             # Sample kernels for each latent function
             latent_kernels = [
                 functools.reduce(
                     self._random_binary_map,
-                    np.random.choice(self.kernel_bank, num_kernels, replace=True),
+                    self.rng.choice(self.kernel_bank, num_kernels, replace=True),
                 )
                 for num_kernels in kernel_numbers
             ]
@@ -210,10 +215,10 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
                 )
 
                 # Sample Dirichlet parameter
-                dirichlet = np.random.uniform(self.dirichlet_min, self.dirichlet_max)
+                dirichlet = self.rng.uniform(self.dirichlet_min, self.dirichlet_max)
 
                 # Sample weights for combining latent functions
-                weights = np.random.dirichlet(
+                weights = self.rng.dirichlet(
                     dirichlet * np.ones(latent_num), size=self.num_channels
                 )
 

@@ -119,7 +119,7 @@ class GPGeneratorParams(GeneratorParams):
     frequency: Frequency = Frequency.D
     max_kernels: int = 6
     likelihood_noise_level: float = 0.4
-    noise_level: str = "low"  # Options: ["random", "high", "moderate", "low"]
+    noise_level: str = "random"  # Options: ["random", "high", "moderate", "low"]
     use_original_gp: bool = False
     gaussians_periodic: bool = True
     peak_spike_ratio: float = 0.1

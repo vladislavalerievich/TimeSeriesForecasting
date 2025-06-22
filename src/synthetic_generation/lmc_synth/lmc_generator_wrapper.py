@@ -138,6 +138,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
             scale=scale,
             weibull_shape=weibull_shape,
             weibull_scale=weibull_scale,
+            random_seed=seed,
         )
 
         # Generate batch of time series

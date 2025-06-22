@@ -28,6 +28,7 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         self,
         length: int = 1024,
         max_kernels: int = 5,
+        random_seed: Optional[int] = None,
     ):
         """
         Parameters
@@ -36,9 +37,12 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
             Number of time steps per series (default: 1024).
         max_kernels : int, optional
             Maximum number of base kernels to combine (default: 5).
+        random_seed : int, optional
+            Seed for the random number generator.
         """
         self.length = length
         self.max_kernels = max_kernels
+        self.rng = np.random.default_rng(random_seed)
         self.kernel_bank = [
             ExpSineSquared(periodicity=24 / length),  # H
             ExpSineSquared(periodicity=48 / length),  # 0.5H
@@ -80,7 +84,7 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         Randomly combine two kernels with + or *.
         """
         ops = [lambda x, y: x + y, lambda x, y: x * y]
-        return np.random.choice(ops)(a, b)
+        return self.rng.choice(ops)(a, b)
 
     def _sample_from_gp_prior(
         self,
@@ -111,9 +115,12 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         dict
             { 'start': np.datetime64, 'values': np.ndarray }
         """
+        if random_seed:
+            self.rng = np.random.default_rng(random_seed)
+
         X = np.linspace(0, 1, self.length)
-        num_kernels = np.random.randint(1, self.max_kernels + 1)
-        selected = np.random.choice(self.kernel_bank, num_kernels, replace=True)
+        num_kernels = self.rng.integers(1, self.max_kernels + 1)
+        selected = self.rng.choice(self.kernel_bank, num_kernels, replace=True)
         composite = functools.reduce(self._random_binary_map, selected)
         try:
             ts = self._sample_from_gp_prior(composite, X, random_seed=random_seed)
