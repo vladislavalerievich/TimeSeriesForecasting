@@ -8,23 +8,31 @@ BASE_END = DEFAULT_END_DATE.toordinal() + 1
 
 
 class Frequency(Enum):
-    M = "ME"  # Month End
+    A = "A"  # Annual
+    Q = "Q"  # Quarterly
+    ME = "ME"  # Month End
+    M = "ME"  # Month End (alias)
     W = "W"  # Weekly
     D = "D"  # Daily
     H = "h"  # Hourly
     S = "s"  # Seconds
+    T1 = "1min"  # 1 minute
     T5 = "5min"  # 5 minutes
     T10 = "10min"  # 10 minutes
     T15 = "15min"  # 15 minutes
 
 
 FREQUENCY_MAPPING = {
-    Frequency.S: ("min", "1", 1 / 1440),
-    Frequency.T5: ("min", "5", 1 / 1440),
-    Frequency.T10: ("min", "10", 1 / 1440),
-    Frequency.T15: ("min", "15", 1 / 1440),
-    Frequency.H: ("h", "", 1 / 24),
-    Frequency.D: ("D", "", 1),
-    Frequency.W: ("W", "", 7),
+    Frequency.A: ("A", "", 12),
+    Frequency.Q: ("Q", "", 4),
     Frequency.M: ("MS", "", 30),
+    Frequency.ME: ("MS", "", 30),
+    Frequency.W: ("W", "", 7),
+    Frequency.D: ("D", "", 1),
+    Frequency.H: ("h", "", 1 / 24),
+    Frequency.S: ("s", "", 1 / 86400),  # 24*60*60
+    Frequency.T1: ("min", "1", 1 / 1440),  # 24*60
+    Frequency.T5: ("min", "5", 1 / 288),  # 24*60/5
+    Frequency.T10: ("min", "10", 1 / 144),  # 24*60/10
+    Frequency.T15: ("min", "15", 1 / 96),  # 24*60/15
 }

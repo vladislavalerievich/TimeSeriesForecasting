@@ -1,20 +1,14 @@
 import json
+import logging
 import os
-import pprint
 import sys
+from pathlib import Path
+from typing import List
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
-from gluonts.ev.metrics import MetricCollection
-from tqdm import tqdm
-
-# Set up environment
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["GIFT_EVAL"] = "data/gift_eval"
-sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "src")))
-
 from gluonts.ev.metrics import (
     MAE,
     MAPE,
@@ -25,63 +19,277 @@ from gluonts.ev.metrics import (
     NRMSE,
     RMSE,
     SMAPE,
-    MeanWeightedSumQuantileLoss,
 )
+from gluonts.model import evaluate_model
+from gluonts.model.forecast import SampleForecast
 from gluonts.time_feature import get_seasonality
 
-from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.gift_eval.data import Dataset as GiftEvalDataset
 from src.models.models import MultiStepModel
+from src.synthetic_generation.common.constants import Frequency
 from src.utils.utils import device
+
+# Set up environment
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["GIFT_EVAL"] = "data/gift_eval"
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "src")))
 
 # Configs
 DATASET_PROPERTIES_PATH = "src/gift_eval/dataset_properties.json"
-MODEL_PATH = "models/GatedDeltaNet_rtx_2080_allow_neg_eigval_False_batch_size_64_num_epochs_150_initial_lr1e-05_learning_rate_1e-07_.pth"
-TRAIN_YAML = "configs/training/train.yaml"
+MODEL_PATH = "/home/moroshav/TimeSeriesForecasting/models/Old_GatedDeltaNet_rtx_2080_allow_neg_eigval_False_batch_size_64_num_epochs_150_initial_lr1e-05_learning_rate_1e-07_.pth"
+TRAIN_YAML = "configs/train.yaml"
 MAX_CONTEXT_LENGTH = 1024
 
 
 # SHORT_DATASETS = "m4_yearly m4_quarterly m4_monthly m4_weekly m4_daily m4_hourly electricity/15T electricity/H electricity/D electricity/W solar/10T solar/H solar/D solar/W hospital covid_deaths us_births/D us_births/M us_births/W saugeenday/D saugeenday/M saugeenday/W temperature_rain_with_missing kdd_cup_2018_with_missing/H kdd_cup_2018_with_missing/D car_parts_with_missing restaurant hierarchical_sales/D hierarchical_sales/W LOOP_SEATTLE/5T LOOP_SEATTLE/H LOOP_SEATTLE/D SZ_TAXI/15T SZ_TAXI/H M_DENSE/H M_DENSE/D ett1/15T ett1/H ett1/D ett1/W ett2/15T ett2/H ett2/D ett2/W jena_weather/10T jena_weather/H jena_weather/D bitbrains_fast_storage/5T bitbrains_fast_storage/H bitbrains_rnd/5T bitbrains_rnd/H bizitobs_application bizitobs_service bizitobs_l2c/5T bizitobs_l2c/H"
+
 # MED_LONG_DATASETS = "electricity/15T electricity/H solar/10T solar/H kdd_cup_2018_with_missing/H LOOP_SEATTLE/5T LOOP_SEATTLE/H SZ_TAXI/15T M_DENSE/H ett1/15T ett1/H ett2/15T ett2/H jena_weather/10T jena_weather/H bitbrains_fast_storage/5T bitbrains_rnd/5T bizitobs_application bizitobs_service bizitobs_l2c/5T bizitobs_l2c/H"
-SHORT_DATASETS = "m4_weekly"
+
+SHORT_DATASETS = "us_births/D us_births/M us_births/W ett1/W ett2/W saugeenday/D saugeenday/M saugeenday/W"
+
 MED_LONG_DATASETS = "bizitobs_l2c/H"
+
 ALL_DATASETS = list(set(SHORT_DATASETS.split() + MED_LONG_DATASETS.split()))
 TERMS = ["short", "medium", "long"]
 
+# Pretty names mapping (following GIFT eval standard)
+PRETTY_NAMES = {
+    "saugeenday": "saugeen",
+    "temperature_rain_with_missing": "temperature_rain",
+    "kdd_cup_2018_with_missing": "kdd_cup_2018",
+    "car_parts_with_missing": "car_parts",
+}
+
+# Metrics definition (consistent with TabPFN-TS and TiRex)
+METRICS = [
+    MSE(forecast_type="mean"),
+    MSE(forecast_type=0.5),
+    MAE(forecast_type=0.5),
+    MASE(forecast_type=0.5),
+    MAPE(forecast_type=0.5),
+    SMAPE(forecast_type=0.5),
+    MSIS(),
+    RMSE(forecast_type=0.5),
+    RMSE(forecast_type="mean"),
+    NRMSE(forecast_type=0.5),
+    ND(forecast_type=0.5),
+]
 
 # Load dataset properties
 with open(DATASET_PROPERTIES_PATH, "r") as f:
-    dataset_properties_map = json.load(f)
+    DATASET_PROPERTIES_MAP = json.load(f)
 
 # Load model config
 with open(TRAIN_YAML, "r") as f:
     config = yaml.safe_load(f)
 
-# Updated METRIC_CONFIGS using gluonts.ev.metrics
-METRIC_CONFIGS = {
-    "MSE_MEAN": (lambda: MSE(forecast_type="mean"), "MSE[mean]"),
-    "MSE": (lambda: MSE(forecast_type="0.5"), "MSE[0.5]"),
-    "MAE": (lambda: MAE(), "MAE[0.5]"),
-    "MASE": (lambda: MASE(), "MASE[0.5]"),
-    "MAPE": (lambda: MAPE(), "MAPE[0.5]"),
-    "SMAPE": (lambda: SMAPE(), "sMAPE[0.5]"),
-    "MSIS": (lambda: MSIS(), "MSIS"),
-    "RMSE_MEAN": (lambda: RMSE(forecast_type="mean"), "RMSE[mean]"),
-    "RMSE": (lambda: RMSE(forecast_type="0.5"), "RMSE[0.5]"),
-    "NRMSE_MEAN": (lambda: NRMSE(forecast_type="mean"), "NRMSE[mean]"),
-    "NRMSE": (lambda: NRMSE(forecast_type="0.5"), "NRMSE[0.5]"),
-    "ND": (lambda: ND(), "ND[0.5]"),
-    "WQTL": (
-        lambda: MeanWeightedSumQuantileLoss(
-            quantile_levels=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-        ),
-        "mean_weighted_sum_quantile_loss",
-    ),
-}
+
+# Set up logging filter to reduce noise
+class WarningFilter(logging.Filter):
+    def __init__(self, text_to_filter):
+        super().__init__()
+        self.text_to_filter = text_to_filter
+
+    def filter(self, record):
+        return self.text_to_filter not in record.getMessage()
 
 
-# Instantiate model (as in trainer.py)
+gts_logger = logging.getLogger("gluonts.model.forecast")
+gts_logger.addFilter(
+    WarningFilter("The mean prediction is not stored in the forecast data")
+)
+
+# Set up logger
+logger = logging.getLogger(__name__)
+
+
+class MultiStepModelWrapper:
+    """
+    Wrapper class following standard GIFT eval interface patterns like TabPFN-TS and TiRex
+    """
+
+    def __init__(
+        self,
+        model,
+        device,
+        max_context_length=1024,
+    ):
+        self.model = model
+        self.device = device
+        self.max_context_length = max_context_length
+        self.prediction_length = None
+        self.ds_freq = None
+
+    def set_prediction_len(self, prediction_length):
+        """Set prediction length for the current dataset"""
+        self.prediction_length = prediction_length
+
+    def set_ds_freq(self, freq):
+        """Set dataset frequency for the current dataset"""
+        self.ds_freq = freq
+
+    @property
+    def model_id(self):
+        """Model identifier for results"""
+        return "MultiStepModel"
+
+    def get_frequency_enum(self, freq_str):
+        """Map frequency string to Frequency enum"""
+        try:
+            offset = pd.tseries.frequencies.to_offset(freq_str)
+            standardized_freq = offset.name
+        except Exception:
+            # Fallback for direct frequency string
+            standardized_freq = freq_str
+
+        # Handle special cases and mappings
+        freq_map = {
+            # Annual frequencies
+            "A-DEC": Frequency.A,
+            "YE-DEC": Frequency.A,
+            "A": Frequency.A,
+            "Y": Frequency.A,
+            # Quarterly frequencies
+            "QS-DEC": Frequency.Q,
+            "Q-DEC": Frequency.Q,
+            "Q": Frequency.Q,
+            # Monthly frequencies
+            "MS": Frequency.ME,
+            "M": Frequency.ME,
+            "ME": Frequency.ME,
+            # Weekly frequencies
+            "W-MON": Frequency.W,
+            "W-TUE": Frequency.W,
+            "W-WED": Frequency.W,
+            "W-THU": Frequency.W,
+            "W-FRI": Frequency.W,
+            "W-SAT": Frequency.W,
+            "W-SUN": Frequency.W,
+            "W": Frequency.W,
+            # Daily frequencies
+            "D": Frequency.D,
+            # Hourly frequencies
+            "H": Frequency.H,
+            "h": Frequency.H,
+            # Second frequencies
+            "S": Frequency.S,
+            "s": Frequency.S,
+            # Minute frequencies
+            "min": Frequency.T1,
+        }
+
+        # Handle minute frequencies (both old and new formats)
+        if standardized_freq.endswith("T") or standardized_freq.endswith("min"):
+            if standardized_freq.endswith("min"):
+                # New format: "15min"
+                if standardized_freq == "min":
+                    return Frequency.T1
+                minutes = int(standardized_freq[:-3])  # Remove "min"
+            else:
+                # Old format: "15T"
+                minutes = int(standardized_freq[:-1])  # Remove "T"
+
+            if minutes == 5:
+                return Frequency.T5
+            elif minutes == 10:
+                return Frequency.T10
+            elif minutes == 15:
+                return Frequency.T15
+            else:
+                # Default to T1 for other minute frequencies
+                return Frequency.T1
+        elif standardized_freq in freq_map:
+            return freq_map[standardized_freq]
+        else:
+            raise NotImplementedError(
+                f"Frequency '{standardized_freq}' is not supported."
+            )
+
+    def predict(self, dataset) -> List[SampleForecast]:
+        """Generate forecasts for the given dataset"""
+        assert self.prediction_length is not None, "Prediction length must be set"
+        forecasts = []
+
+        for data_entry in dataset:
+            target = data_entry["target"]
+            start = data_entry["start"]
+            item_id = data_entry.get("item_id", "ts")
+
+            # if np.isnan(target).any():
+            #     logger.warning(
+            #         f"Target contains NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
+            #     )
+
+            assert isinstance(start, pd.Period), (
+                f"Expected pd.Period, got {type(start)}"
+            )
+            freq = start.freqstr
+
+            history = np.asarray(target, dtype=np.float32)
+
+            if history.ndim == 1:
+                history = history.reshape(1, -1)
+
+            num_dims, seq_len = history.shape
+
+            if seq_len > self.max_context_length:
+                history = history[:, -self.max_context_length :]
+                seq_len = self.max_context_length
+
+            history_values = torch.from_numpy(history.T).unsqueeze(0).to(self.device)
+
+            start_time = np.array([start.start_time], dtype="datetime64")
+            frequency = self.get_frequency_enum(freq)
+
+            for dim_idx in range(num_dims):
+                target_values = torch.zeros(
+                    (1, self.prediction_length), dtype=torch.float32
+                ).to(self.device)
+
+                target_index = torch.tensor([dim_idx], dtype=torch.long).to(self.device)
+
+                batch = BatchTimeSeriesContainer(
+                    history_values=history_values,
+                    target_values=target_values,
+                    target_index=target_index,
+                    start=start_time,
+                    frequency=frequency,
+                )
+
+                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                    with torch.no_grad():
+                        output = self.model(batch, training=False)
+                        predictions = (
+                            self.model.scaler.inverse_transform(
+                                output["result"],
+                                output["scale_params"],
+                                output["target_index"],
+                            )
+                            .cpu()
+                            .numpy()
+                        )
+                if np.isnan(predictions).any():
+                    logger.warning(
+                        f"Predictions contain NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
+                    )
+                # Reshape to (1, prediction_length) for SampleForecast
+                if predictions.ndim == 1:
+                    predictions = predictions.reshape(1, -1)
+
+            forecast_start = start + seq_len
+
+            forecast = SampleForecast(
+                samples=predictions,
+                start_date=forecast_start,
+                item_id=item_id,  # Use the item_id as provided by the dataset
+            )
+            forecasts.append(forecast)
+        return forecasts
+
+
 def load_model():
+    """Load the MultiStepModel from checkpoint"""
     model = MultiStepModel(
         base_model_config=config["BaseModelConfig"],
         encoder_config=config["EncoderConfig"],
@@ -94,284 +302,141 @@ def load_model():
     return model
 
 
-model = load_model()
+def gift_eval_dataset_iter():
+    """Iterator over all GIFT eval datasets and terms"""
+    for ds_name in ALL_DATASETS:
+        ds_key = ds_name.split("/")[0]
+        for term in TERMS:
+            # Skip medium/long terms for datasets not in MED_LONG_DATASETS
+            if term in ["medium", "long"] and ds_name not in MED_LONG_DATASETS.split():
+                continue
+
+            if "/" in ds_name:
+                ds_key = ds_name.split("/")[0]
+                ds_freq = ds_name.split("/")[1]
+                ds_key = ds_key.lower()
+                ds_key = PRETTY_NAMES.get(ds_key, ds_key)
+            else:
+                ds_key = ds_name.lower()
+                ds_key = PRETTY_NAMES.get(ds_key, ds_key)
+                ds_freq = DATASET_PROPERTIES_MAP[ds_key]["frequency"]
+
+            yield {
+                "ds_name": ds_name,
+                "ds_key": ds_key,
+                "ds_freq": ds_freq,
+                "term": term,
+            }
 
 
-def get_frequency_enum(freq_str):
-    """Map freq string to Frequency enum"""
-    freq_map = {
-        "M": Frequency.M,
-        "W": Frequency.W,
-        "D": Frequency.D,
-        "h": Frequency.H,
-        "S": Frequency.S,
-        "s": Frequency.S,
-        "5min": Frequency.T5,
-        "10min": Frequency.T10,
-        "15min": Frequency.T15,
+def evaluate_dataset(predictor, ds_name, ds_key, ds_freq, term):
+    """Evaluate a single dataset configuration"""
+    logger.info(f"Processing dataset: {ds_name} ({term})")
+    ds_config = f"{ds_key}/{ds_freq}/{term}"
+
+    # The target needs to be univariate
+    dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=False)
+
+    # Set predictor parameters using standard interface
+    predictor.set_prediction_len(dataset.prediction_length)
+    predictor.set_ds_freq(ds_freq)
+
+    # Get seasonality
+    season_length = get_seasonality(dataset.freq)
+
+    logger.info(f"Dataset size: {len(dataset.test_data)}")
+    logger.info(f"Dataset freq: {dataset.freq}")
+    logger.info(f"Dataset season_length: {season_length}")
+    logger.info(f"Dataset prediction length: {dataset.prediction_length}")
+    logger.info(f"Dataset target dim: {dataset.target_dim}")
+
+    # Evaluate using GluonTS evaluate_model
+    res = evaluate_model(
+        predictor,
+        test_data=dataset.test_data,
+        metrics=METRICS,
+        axis=None,
+        batch_size=128,
+        mask_invalid_label=True,
+        allow_nan_forecast=False,
+        seasonality=season_length,
+    )
+
+    result = {
+        "dataset": ds_config,
+        "model": predictor.model_id,
+        "eval_metrics/MSE[mean]": res["MSE[mean]"].iloc[0],
+        "eval_metrics/MSE[0.5]": res["MSE[0.5]"].iloc[0],
+        "eval_metrics/MAE[0.5]": res["MAE[0.5]"].iloc[0],
+        "eval_metrics/MASE[0.5]": res["MASE[0.5]"].iloc[0],
+        "eval_metrics/MAPE[0.5]": res["MAPE[0.5]"].iloc[0],
+        "eval_metrics/sMAPE[0.5]": res["sMAPE[0.5]"].iloc[0],
+        "eval_metrics/MSIS": res["MSIS"].iloc[0],
+        "eval_metrics/RMSE[0.5]": res["RMSE[0.5]"].iloc[0],
+        "eval_metrics/RMSE[mean]": res["RMSE[mean]"].iloc[0],
+        "eval_metrics/NRMSE[0.5]": res["NRMSE[0.5]"].iloc[0],
+        "eval_metrics/ND[0.5]": res["ND[0.5]"].iloc[0],
+        "domain": DATASET_PROPERTIES_MAP[ds_key]["domain"],
+        "num_variates": DATASET_PROPERTIES_MAP[ds_key]["num_variates"],
     }
-    return freq_map.get(freq_str, Frequency.D)
-
-
-def create_forecast_data(targets, predictions, seasonality=None, ds_name=None):
-    """
-    Create forecast data structure expected by GluonTS metrics.
-
-    Args:
-        targets: Ground truth values, shape [num_samples, prediction_length]
-        predictions: Model predictions, shape [num_samples, prediction_length]
-        seasonality: Optional seasonality for MASE/MSIS computation
-
-    Returns:
-        List of forecast dictionaries compatible with GluonTS metrics
-    """
-    forecast_data = []
-
-    for i in range(len(targets)):
-        target = targets[i]
-        pred = predictions[i]
-
-        # Check for zero labels
-        if np.any(target == 0):
-            print(
-                f"Warning: Zero values found in target at index {i} of {ds_name}, may cause issues with MAPE"
-            )
-
-        # Create forecast dictionary
-        forecast_dict = {
-            "label": target,
-            "0.5": pred,  # Median forecast
-            "mean": pred,  # Mean forecast (same as median for point forecasts)
-        }
-
-        # Add quantile forecasts (including MSIS-required quantiles)
-        quantiles = [0.025, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.975]
-        for q in quantiles:
-            forecast_dict[str(q)] = pred
-
-        # Add seasonal error if provided (for MASE/MSIS)
-        if seasonality is not None:
-            forecast_dict["seasonal_error"] = (
-                seasonality[i] if hasattr(seasonality, "__len__") else seasonality
-            )
-
-        forecast_data.append(forecast_dict)
-
-    return forecast_data
-
-
-def compute_seasonal_error(history, freq_str, prediction_length):
-    """
-    Compute seasonal error for MASE/MSIS metrics.
-
-    Args:
-        history: Historical time series data
-        freq_str: Frequency string
-        prediction_length: Length of prediction horizon
-
-    Returns:
-        Seasonal error value
-    """
-    try:
-        # Get seasonality period
-        seasonality = get_seasonality(freq_str)
-        if seasonality is None or seasonality <= 1:
-            # Use naive seasonal error (mean absolute difference)
-            if len(history) > 1:
-                return np.mean(np.abs(np.diff(history)))
-            else:
-                return 1.0
-
-        # Compute seasonal naive error
-        if len(history) >= seasonality:
-            seasonal_diffs = np.abs(history[seasonality:] - history[:-seasonality])
-            return np.mean(seasonal_diffs) if len(seasonal_diffs) > 0 else 1.0
-        else:
-            # Fallback to naive error
-            if len(history) > 1:
-                return np.mean(np.abs(np.diff(history)))
-            else:
-                return 1.0
-    except Exception as e:
-        print(f"Error computing seasonal error: {e}")
-        # Fallback to simple error measure
-        if len(history) > 1:
-            return np.mean(np.abs(np.diff(history)))
-        else:
-            return 1.0
+    return result
 
 
 def evaluate_on_gift_eval():
+    """Main evaluation function"""
+    # Set up logging
+    logging.basicConfig(level=logging.DEBUG)
+
+    # Load model
+    model = load_model()
+    predictor = MultiStepModelWrapper(
+        model, device, max_context_length=MAX_CONTEXT_LENGTH
+    )
+
     results = []
+
+    # Iterate through all datasets and terms
+    for task in gift_eval_dataset_iter():
+        try:
+            task_result = evaluate_dataset(predictor, **task)
+            results.append(task_result)
+            logger.info(f"Completed evaluation for {task['ds_name']} ({task['term']})")
+            print(task_result)
+        except Exception as e:
+            logger.error(
+                f"Error evaluating {task['ds_name']} ({task['term']}): {str(e)}"
+            )
+            continue
+
+    # Save results to CSV
     output_columns = [
         "dataset",
         "model",
-        *(col for _, col in METRIC_CONFIGS.values()),
+        "eval_metrics/MSE[mean]",
+        "eval_metrics/MSE[0.5]",
+        "eval_metrics/MAE[0.5]",
+        "eval_metrics/MASE[0.5]",
+        "eval_metrics/MAPE[0.5]",
+        "eval_metrics/sMAPE[0.5]",
+        "eval_metrics/MSIS",
+        "eval_metrics/RMSE[0.5]",
+        "eval_metrics/RMSE[mean]",
+        "eval_metrics/NRMSE[0.5]",
+        "eval_metrics/ND[0.5]",
         "domain",
         "num_variates",
     ]
 
-    for ds_name in ALL_DATASETS:
-        for term in TERMS:
-            # Only evaluate medium/long for datasets in MED_LONG_DATASETS
-            if term in ["medium", "long"] and ds_name not in MED_LONG_DATASETS.split():
-                continue
-
-            print(f"Evaluating {ds_name} ({term})")
-
-            dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=False)
-            test_data = dataset.test_data
-            prediction_length = dataset.prediction_length
-
-            predictions_list = []
-            targets_list = []
-            histories_list = []
-
-            for entry in tqdm(test_data, desc=f"{ds_name}-{term}"):
-                if isinstance(entry, tuple):
-                    entry = entry[0]
-
-                target = entry["target"]
-                start = entry["start"]
-                entry_freq = entry["freq"].replace("H", "h")
-
-                if target.ndim == 1:
-                    # Univariate case
-                    history = target[:-prediction_length]
-                    target_values = target[-prediction_length:]
-
-                    if len(history) > MAX_CONTEXT_LENGTH:
-                        history = history[-MAX_CONTEXT_LENGTH:]
-
-                    batch = BatchTimeSeriesContainer(
-                        history_values=torch.tensor(history, dtype=torch.float32)
-                        .unsqueeze(0)
-                        .unsqueeze(-1),
-                        target_values=torch.tensor(
-                            target_values, dtype=torch.float32
-                        ).unsqueeze(0),
-                        target_index=torch.tensor([0]),
-                        start=np.array([np.datetime64(start)]),
-                        frequency=get_frequency_enum(entry_freq),
-                    )
-                    batch.to_device(device)
-
-                    with torch.autocast(
-                        device_type="cuda", dtype=torch.half, enabled=True
-                    ):
-                        with torch.no_grad():
-                            output = model(batch, training=False)
-                            inv_scaled_output = model.scaler.inverse_transform(
-                                output["result"],
-                                output["scale_params"],
-                                output["target_index"],
-                            )
-                            predictions_list.append(inv_scaled_output.cpu().numpy())
-                            targets_list.append(batch.target_values.cpu().numpy())
-                            histories_list.append(history)
-
-                else:
-                    # Multivariate case
-                    num_channels = target.shape[0]
-                    full_history = target[:, :-prediction_length]
-
-                    if full_history.shape[1] > MAX_CONTEXT_LENGTH:
-                        full_history = full_history[:, -MAX_CONTEXT_LENGTH:]
-
-                    history_tensor = torch.tensor(
-                        full_history.T, dtype=torch.float32
-                    ).unsqueeze(0)
-
-                    for idx in range(num_channels):
-                        target_values = target[idx, -prediction_length:]
-                        history_values = full_history[idx, :]
-
-                        batch = BatchTimeSeriesContainer(
-                            history_values=history_tensor,
-                            target_values=torch.tensor(
-                                target_values, dtype=torch.float32
-                            ).unsqueeze(0),
-                            target_index=torch.tensor([idx]),
-                            start=np.array([np.datetime64(start)]),
-                            frequency=get_frequency_enum(entry_freq),
-                        )
-                        batch.to_device(device)
-
-                        with torch.autocast(
-                            device_type="cuda", dtype=torch.half, enabled=True
-                        ):
-                            with torch.no_grad():
-                                output = model(
-                                    batch, training=False, drop_enc_allow=False
-                                )
-                                inv_scaled_output = model.scaler.inverse_transform(
-                                    output["result"],
-                                    output["scale_params"],
-                                    output["target_index"],
-                                )
-                                predictions_list.append(inv_scaled_output.cpu().numpy())
-                                targets_list.append(batch.target_values.cpu().numpy())
-                                histories_list.append(history_values)
-
-            # Collect all predictions and targets
-            predictions_arr = np.concatenate(predictions_list, axis=0)
-            targets_arr = np.concatenate(targets_list, axis=0)
-
-            if predictions_arr.shape[-1] == 1:
-                predictions_arr = np.squeeze(predictions_arr, axis=-1)
-
-            # Compute seasonal errors for MASE/MSIS
-            seasonal_errors = []
-            for hist in histories_list:
-                seasonal_error = compute_seasonal_error(
-                    hist, entry_freq, prediction_length
-                )
-                seasonal_errors.append(seasonal_error)
-            seasonal_errors = np.array(seasonal_errors)
-
-            # Create forecast data structure
-            forecast_data = create_forecast_data(
-                targets_arr, predictions_arr, seasonal_errors, ds_name
-            )
-
-            # Build result row
-            row = {}
-            row["dataset"] = f"{ds_name}/{dataset.freq}/{term}"
-            row["model"] = "GatedDeltaNet"
-
-            # Compute metrics using GluonTS metrics
-            metrics = [
-                metric_factory()(axis=None)
-                for metric_factory, _ in METRIC_CONFIGS.values()
-            ]
-            metric_collection = MetricCollection(metrics)
-            metric_collection.update_all(forecast_data)
-            metric_values = metric_collection.get()
-
-            for metric_key, (_, col_name) in METRIC_CONFIGS.items():
-                try:
-                    value = metric_values.get(col_name)
-                    row[col_name] = float(value) if value is not None else None
-                except Exception as e:
-                    print(f"Metric {col_name} failed: {e}")
-                    row[col_name] = None
-
-            # Add domain and num_variates
-            row["domain"] = dataset_properties_map.get(ds_name, {}).get("domain", "")
-            row["num_variates"] = dataset_properties_map.get(ds_name, {}).get(
-                "num_variates", getattr(dataset, "target_dim", 1)
-            )
-
-            results.append(row)
-
-    # Save all results to CSV in the requested column order
     df = pd.DataFrame(results, columns=output_columns)
-    print("Results:")
-    pprint.pprint(df)
-    filename = "outputs/gift_eval_results.csv"
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    output_dir = Path("outputs")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = output_dir / "gift_eval_results_multistepmodel.csv"
     df.to_csv(filename, index=False)
-    print(f"Results saved to {filename}")
+
+    logger.info(f"Results saved to {filename}")
+    logger.info(f"Evaluated {len(results)} dataset configurations")
+
+    return df
 
 
 if __name__ == "__main__":

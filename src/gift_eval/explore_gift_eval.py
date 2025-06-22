@@ -1,3 +1,4 @@
+import json
 import os
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -73,6 +74,9 @@ forecast_length_by_term_val = defaultdict(Counter)  # term -> Counter
 context_length_by_term_test = defaultdict(Counter)  # term -> Counter
 forecast_length_by_term_test = defaultdict(Counter)  # term -> Counter
 
+# Track number of series per dataset
+series_counts = defaultdict(lambda: defaultdict(set))
+
 # Track which datasets were successfully processed
 processed_datasets = []
 failed_datasets = []
@@ -91,6 +95,8 @@ for ds_name in sorted(dataset_names):
         try:
             print(f"  Trying term: {term}")
             ds = Dataset(name=ds_name, term=term, to_univariate=False)
+
+            series_counts[ds.target_dim][ds_name].add(ds.prediction_length)
 
             # Get frequency from actual data
             train_data_iter = ds.training_dataset
@@ -175,7 +181,7 @@ for ds_name in sorted(dataset_names):
                 print(f"    Warning: Could not process test data: {e}")
 
             print(
-                f"  ✓ Successfully processed with term '{term}', freq: {actual_freq}, pred_len: {ds.prediction_length}"
+                f"  ✓ Successfully processed with term '{term}', freq: {actual_freq}, pred_len: {ds.prediction_length}, num_variates: {ds.target_dim}"
             )
 
         except Exception as e:
@@ -198,7 +204,7 @@ print("=" * 60)
 print("ANALYSIS RESULTS")
 print("=" * 60)
 
-print(f"\nSuccessfully processed datasets by term:")
+print("\nSuccessfully processed datasets by term:")
 for term in sorted(term_results.keys()):
     print(f"\n{term.upper()} term ({len(term_results[term])} datasets):")
     for ds_name, freq in sorted(term_results[term]):
@@ -211,22 +217,21 @@ if failed_datasets:
 
 print(f"\nUnique actual frequencies found in data: {sorted(unique_freqs_actual)}")
 
+
 # Sort counters from highest to lowest
-print(f"\nALL VALIDATION context length counts (sorted by count):")
+print("\nALL VALIDATION context length counts (sorted by count):")
 for length, count in context_length_counter_val.most_common():
     print(f"  Context Length {length}: {count} datasets")
 
-print(
-    f"\nALL FORECAST length counts (from Dataset.prediction_length, sorted by count):"
-)
+print("\nALL FORECAST length counts (from Dataset.prediction_length, sorted by count):")
 for length, count in forecast_length_counter_val.most_common():
     print(f"  Forecast Length {length}: {count} datasets")
 
-print(f"\nALL TEST context length counts (sorted by count):")
+print("\nALL TEST context length counts (sorted by count):")
 for length, count in context_length_counter_test.most_common():
     print(f"  Context Length {length}: {count} datasets")
 
-print(f"\nALL TEST forecast length counts (from test labels, sorted by count):")
+print("\nALL TEST forecast length counts (from test labels, sorted by count):")
 for length, count in forecast_length_counter_test.most_common():
     print(f"  Forecast Length {length}: {count} datasets")
 
@@ -259,13 +264,61 @@ print(f"Unique frequencies found: {len(unique_freqs_actual)}")
 
 # Show term distribution
 term_counts = Counter(term for _, term, _ in processed_datasets)
-print(f"\nTerm distribution:")
+print("\nTerm distribution:")
 for term, count in term_counts.most_common():
     print(f"  {term}: {count} datasets")
 
 print(f"Unique validation context lengths: {len(context_length_counter_val)}")
 print(f"Unique test context lengths: {len(context_length_counter_test)}")
 print(f"Unique forecast lengths: {len(forecast_length_counter_test)}")
+
+
+print("\n" + "=" * 60)
+print("DATASET SIZES (from dataset_info.json)")
+print("=" * 60)
+
+dataset_sizes = []
+
+for ds_name in sorted(dataset_names):
+    dataset_info_path = gift_eval_path / ds_name / "dataset_info.json"
+    if dataset_info_path.exists():
+        with open(dataset_info_path, "r") as f:
+            try:
+                info = json.load(f)
+                size = info.get("dataset_size")
+                name_from_json = info.get("dataset_name", ds_name)
+                if size is not None:
+                    dataset_sizes.append((name_from_json, size))
+                else:
+                    print(f"  - Could not find 'dataset_size' in {dataset_info_path}")
+            except json.JSONDecodeError:
+                print(f"  - Error decoding JSON from {dataset_info_path}")
+    else:
+        print(f"  - dataset_info.json not found for {ds_name}")
+
+# Sort datasets by size
+dataset_sizes.sort(key=lambda x: x[1])
+
+print("\nDatasets sorted by size (smallest to largest):")
+for name, size in dataset_sizes:
+    print(f"  - {name}: {size}")
+
+print("\n" + "=" * 60)
+print("NUMBER OF SERIES (target_dim) ANALYSIS")
+print("=" * 60)
+
+sorted_target_dims = sorted(series_counts.keys())
+
+for dim in sorted_target_dims:
+    type_of_series = "Univariate" if dim == 1 else "Multivariate"
+    print(
+        f"\n{type_of_series} datasets (target_dim = {dim}): {len(series_counts[dim])} datasets"
+    )
+    # Sort datasets by name
+    sorted_datasets = sorted(series_counts[dim].items(), key=lambda item: item[0])
+    for ds_name, horizons in sorted_datasets:
+        sorted_horizons = sorted(list(horizons))
+        print(f"  - {ds_name} (horizons: {sorted_horizons})")
 
 
 ds_name = "us_births/W"  # Name of the dataset
