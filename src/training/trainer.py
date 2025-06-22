@@ -28,7 +28,7 @@ from src.synthetic_generation.dataset_composer import (
 )
 from src.utils.utils import (
     device,
-    generate_model_save_name,
+    generate_descriptive_model_name,
     seed_everything,
 )
 
@@ -75,15 +75,13 @@ class TrainingPipeline:
         self._setup_optimizer()
 
         # Load checkpoint if continuing training
-        self.config["model_save_name"] = generate_model_save_name(self.config)
+        self.config["model_name"] = generate_descriptive_model_name(self.config)
         self._load_checkpoint()
 
         # --- Synthetic training data generation setup ---
         composer = DefaultSyntheticComposer(
             seed=self.config["seed"],
-            history_length=self.config.get("history_length", 256),
-            target_length=self.config.get("target_length", 64),
-            num_channels=self.config.get("num_channels", (1, 8)),
+            range_proportions=self.config.get("range_proportions", None),
             generator_proportions=self.config.get("generator_proportions", None),
         ).composer
 
@@ -166,7 +164,7 @@ class TrainingPipeline:
                 self.run = wandb.init(
                     project="TimeSeriesForecasting",
                     config=self.config,
-                    name=self.config["model_save_name"],
+                    name=self.config["model_name"],
                 )
             except Exception as e:
                 logger.error(f"WandB initialization failed: {e}")
@@ -174,9 +172,7 @@ class TrainingPipeline:
 
     def _load_checkpoint(self) -> None:
         """Load model checkpoint if available and continuing training."""
-        checkpoint_path = (
-            f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth"
-        )
+        checkpoint_path = f"{self.config['model_path']}/{self.config['model_name']}.pth"
         if self.config["continue_training"] and os.path.exists(checkpoint_path):
             logger.info(f"Loading checkpoint from: {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location=self.device)
@@ -200,7 +196,7 @@ class TrainingPipeline:
         }
         torch.save(
             ckpt,
-            f"{self.config['model_save_dir']}/{self.config['model_save_name']}.pth",
+            f"{self.config['model_path']}/{self.config['model_name']}.pth",
         )
         logger.info(f"Checkpoint saved at epoch {epoch}")
 

@@ -17,9 +17,9 @@ def seed_everything(seed: int):
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def generate_model_save_name(config):
+def generate_descriptive_model_name(config):
     return (
-        f"{config['model_save_name_prefix']}_"
+        f"{config['model_name']}_"
         f"batch_size_{config['batch_size']}_"
         f"num_epochs_{config['num_epochs']}_"
         f"initial_lr{config['initial_lr']}_"

@@ -1,14 +1,11 @@
 data_dir: ./data
-model_save_dir: ./models
-model_save_name_prefix: GatedDeltaNet_rtx_2080_allow_neg_eigval_False
+model_path: ./models
+model_name: GatedDeltaNet_rtx_2080_allow_neg_eigval_False
 continue_training: false
 seed: 2025
 debugging: false
 wandb: false # whether to log to wandb for testing
 
-# Data generation parameters
-history_length: 256
-future_length: 64
 
 lr_scheduler: cosine
 initial_lr: 0.00001
@@ -52,7 +49,26 @@ EncoderConfig:
   dilated_conv_max_dilation: 3
   block_expansion: 2.0
 
-# Model parameters
-model_name: "path/to/your/model"
-model_path: "models/model.pt"
-num_channels: 1
+
+
+range_proportions:
+  short: 0.34
+  medium: 0.33
+  long: 0.33
+
+generator_proportions:
+  short:    
+    forecast_pfn: 0.3
+    gp: 0.3
+    kernel: 0.35
+    lmc: 0.05
+  medium:
+    forecast_pfn: 0.2
+    gp: 0.2
+    kernel: 0.2
+    lmc: 0.05
+  long:   
+    forecast_pfn: 0.1
+    gp: 0.3
+    kernel: 0.05
+    lmc: 0.55

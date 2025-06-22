@@ -522,8 +522,13 @@ class DefaultSyntheticComposer:
     def _setup_proportions(self, range_proportions, generator_proportions):
         default_range_proportions = {"short": 0.34, "medium": 0.33, "long": 0.33}
         default_generator_proportions = {
-            "short": {"kernel": 0.5, "gp": 0.4, "forecast_pfn": 0.1},
-            "medium": {"lmc": 0.3, "kernel": 0.3, "gp": 0.3, "forecast_pfn": 0.1},
+            "short": {"kernel": 0.4, "gp": 0.3, "forecast_pfn": 0.3},
+            "medium": {
+                "lmc": 0.4,
+                "gp": 0.2,
+                "forecast_pfn": 0.2,
+                "kernel": 0.2,
+            },
             "long": {"lmc": 0.6, "gp": 0.3, "forecast_pfn": 0.1},
         }
         self.range_proportions = range_proportions or default_range_proportions
