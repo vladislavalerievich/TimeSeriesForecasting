@@ -32,7 +32,7 @@ def lmc_params():
     return LMCGeneratorParams(
         global_seed=123,
         history_length=8,
-        target_length=4,
+        future_length=4,
         num_channels=2,
         max_kernels=2,
         dirichlet_min=0.1,
@@ -48,7 +48,7 @@ def kernel_params():
     return KernelGeneratorParams(
         global_seed=123,
         history_length=8,
-        target_length=4,
+        future_length=4,
         num_channels=2,
         max_kernels=2,
     )
@@ -77,15 +77,14 @@ def test_generator_wrapper_sample_parameters(lmc_wrapper):
     params = lmc_wrapper.sample_parameters()
     assert set(params.keys()) >= {
         "history_length",
-        "target_length",
+        "future_length",
         "num_channels",
         "periodicity",
     }
     assert isinstance(params["history_length"], int)
-    assert isinstance(params["target_length"], int)
     assert isinstance(params["num_channels"], int)
     assert params["history_length"] > 0
-    assert params["target_length"] > 0
+    assert params["future_length"] > 0
     assert params["num_channels"] > 0
 
 
@@ -94,12 +93,11 @@ def test_lmc_kernel_generate_batch(lmc_wrapper, kernel_wrapper):
     for wrapper in [lmc_wrapper, kernel_wrapper]:
         batch = wrapper.generate_batch(batch_size=2)
         assert hasattr(batch, "history_values")
-        assert hasattr(batch, "target_values")
+        assert hasattr(batch, "future_values")
         assert batch.history_values.shape == (2, 8, 2)
-        assert batch.target_values.shape == (2, 4)
-        assert batch.target_index.shape == (2,)
+        assert batch.future_values.shape == (2, 4)
         assert batch.history_time_features.shape[0] == 2
-        assert batch.target_time_features.shape[0] == 2
+        assert batch.future_time_features.shape[0] == 2
 
 
 # --- Tests for DatasetComposer ---
@@ -122,7 +120,7 @@ def test_save_and_load_dataset(tmp_path, lmc_wrapper, kernel_wrapper):
     assert len(batches) == 3
     for batch in batches:
         assert batch.history_values.shape == (2, 8, 2)
-        assert batch.target_values.shape == (2, 4)
+        assert batch.future_values.shape == (2, 4)
 
 
 # --- On-the-fly generation and train loader ---
@@ -136,7 +134,7 @@ def test_on_the_fly_generation_and_loader(lmc_wrapper, kernel_wrapper):
     assert len(batches) == 3
     for batch in batches:
         assert batch.history_values.shape == (2, 8, 2)
-        assert batch.target_values.shape == (2, 4)
+        assert batch.future_values.shape == (2, 4)
 
 
 # --- Test that proportions are respected in DatasetComposer ---

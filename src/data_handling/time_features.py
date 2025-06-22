@@ -1,9 +1,38 @@
 import numpy as np
 import pandas as pd
 import torch
-from pandas.tseries.frequencies import to_offset
+from gluonts.time_feature import time_features_from_frequency_str
 
+from src.data_handling.data_containers import Frequency
 from src.utils.utils import device
+
+FREQUENCY_STR_MAPPING = {
+    Frequency.A: "A",  # Annual
+    Frequency.Q: "Q",  # Quarterly
+    Frequency.M: "ME",  # Monthly (Month End for pandas compatibility)
+    Frequency.W: "W",  # Weekly
+    Frequency.D: "D",  # Daily
+    Frequency.H: "h",  # Hourly
+    Frequency.S: "s",  # Seconds
+    Frequency.T1: "1min",  # 1 minute
+    Frequency.T5: "5min",  # 5 minutes
+    Frequency.T10: "10min",  # 10 minutes
+    Frequency.T15: "15min",  # 15 minutes
+}
+
+PERIOD_FREQUENCY_STR_MAPPING = {
+    Frequency.A: "A",  # Annual
+    Frequency.Q: "Q",  # Quarterly
+    Frequency.M: "M",  # Monthly
+    Frequency.W: "W",  # Weekly
+    Frequency.D: "D",  # Daily
+    Frequency.H: "h",  # Hourly
+    Frequency.S: "s",  # Seconds
+    Frequency.T1: "1min",  # 1 minute
+    Frequency.T5: "5min",  # 5 minutes
+    Frequency.T10: "10min",  # 10 minutes
+    Frequency.T15: "15min",  # 15 minutes
+}
 
 
 def compute_batch_time_features(
@@ -12,10 +41,10 @@ def compute_batch_time_features(
     target_length,
     batch_size,
     frequency,
-    include_subday=False,
+    K_max=6,
 ):
     """
-    Compute time features from start timestamps and frequency.
+    Compute time features from start timestamps and frequency using GluonTS.
 
     Parameters
     ----------
@@ -27,109 +56,63 @@ def compute_batch_time_features(
         Length of target sequence.
     batch_size : int
         Batch size.
-    frequency : str or Frequency
-        Frequency of the time series (e.g., 'H' for hourly, 'D' for daily).
-    include_subday : bool, optional
-        Whether to include hour, minute, second features (default: False).
+    frequency : Frequency
+        Frequency of the time series.
+    K_max : int, optional
+        Maximum number of time features to pad to (default: 6).
 
     Returns
     -------
     tuple
         (history_time_features, target_time_features) where each is a torch.Tensor
-        of shape (batch_size, length, n_features).
-
-    Notes
-    -----
-    Assumption: For multivariate time series, all channels (variables) within a single series
-    share the same timestamps and frequency. That is, the time grid is identical for all channels
-    in a given series. Time features are therefore computed per series, not per channel.
+        of shape (batch_size, length, K_max).
     """
-    # Convert start to numpy array if it's not already
-    start = np.asarray(start)
+    freq_str = FREQUENCY_STR_MAPPING[frequency]
+    period_freq_str = PERIOD_FREQUENCY_STR_MAPPING[frequency]
+    time_features = time_features_from_frequency_str(freq_str)
+    num_features = len(time_features)
 
-    # Generate timestamps for history and target sequences for each batch item
-    history_timestamps = np.zeros((batch_size, history_length), dtype=np.int64)
-    target_timestamps = np.zeros((batch_size, target_length), dtype=np.int64)
-
-    freq_value = frequency.value
-    offset = to_offset(freq_value)
-
+    # Generate timestamps and convert to PeriodIndex
+    history_indices = []
+    future_indices = []
     for i in range(batch_size):
-        # Each start[i] is a np.datetime64
         hist_range = pd.date_range(
-            start=pd.Timestamp(start[i]),
-            periods=history_length,
-            freq=freq_value,
+            start=start[i], periods=history_length, freq=freq_str
         )
-        # For target, start at the next time step after the last history timestamp
-        target_start = hist_range[-1] + offset
+        target_start = hist_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
         targ_range = pd.date_range(
-            start=target_start,
-            periods=target_length,
-            freq=freq_value,
+            start=target_start, periods=target_length, freq=freq_str
         )
-        history_timestamps[i, :] = hist_range.astype(np.int64)
-        target_timestamps[i, :] = targ_range.astype(np.int64)
+        history_indices.append(hist_range.to_period(period_freq_str))
+        future_indices.append(targ_range.to_period(period_freq_str))
 
-    # Compute time features for both sequences
-    history_time_features = compute_time_features(history_timestamps, include_subday)
-    target_time_features = compute_time_features(target_timestamps, include_subday)
+    # Compute features for history
+    history_features_list = []
+    for idx in history_indices:
+        features = [feat(idx) for feat in time_features]
+        features = np.stack(features, axis=-1)  # [seq_len, num_features]
+        if num_features < K_max:
+            padding = np.zeros((history_length, K_max - num_features))
+            features = np.concatenate([features, padding], axis=-1)
+        history_features_list.append(features)
+    history_time_features = np.stack(
+        history_features_list, axis=0
+    )  # [batch_size, seq_len, K_max]
 
-    return history_time_features.to(device), target_time_features.to(device)
+    # Compute features for target
+    target_features_list = []
+    for idx in future_indices:
+        features = [feat(idx) for feat in time_features]
+        features = np.stack(features, axis=-1)  # [pred_len, num_features]
+        if num_features < K_max:
+            padding = np.zeros((target_length, K_max - num_features))
+            features = np.concatenate([features, padding], axis=-1)
+        target_features_list.append(features)
+    target_time_features = np.stack(
+        target_features_list, axis=0
+    )  # [batch_size, pred_len, K_max]
 
-
-# TODO: Move to gluonts https://github.com/awslabs/gluonts/tree/dev/src/gluonts/time_feature
-def compute_time_features(
-    timestamps,
-    include_subday=False,
-):
-    """
-    Compute comprehensive time features from timestamps.
-
-    Parameters
-    ----------
-    timestamps : array-like, shape (batch_size, length)
-        2D array of timestamps.
-    include_subday : bool, optional
-        Whether to include hour, minute, second features (default: False).
-
-    Returns
-    -------
-    torch.Tensor
-        Tensor of time features with shape (batch_size, length, n_features).
-    """
-    timestamps = np.asarray(timestamps)
-    batch_size, length = timestamps.shape
-    # Flatten to 1D for vectorized processing
-    flat_timestamps = timestamps.reshape(-1)
-    ts = pd.to_datetime(flat_timestamps)
-    if include_subday:
-        features = np.stack(
-            [
-                ts.year.values,
-                ts.month.values,
-                ts.day.values,
-                ts.day_of_week.values + 1,
-                ts.day_of_year.values,
-                ts.hour.values,
-                ts.minute.values,
-                ts.second.values,
-            ],
-            axis=-1,
-        )
-    else:
-        features = np.stack(
-            [
-                ts.year.values,
-                ts.month.values,
-                ts.day.values,
-                ts.day_of_week.values + 1,
-                ts.day_of_year.values,
-            ],
-            axis=-1,
-        )
-    # Reshape back to (batch_size, length, n_features)
-    n_features = features.shape[-1]
-    features = features.reshape(batch_size, length, n_features)
-    # Convert to torch tensor (use long for integer features)
-    return torch.from_numpy(features).long()
+    return (
+        torch.from_numpy(history_time_features).float().to(device),
+        torch.from_numpy(target_time_features).float().to(device),
+    )

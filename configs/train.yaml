@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: GatedDeltaNet_rtx_2080_allow_neg_eigval_False
+model_name: Multivariate_GatedDeltaNet_
 continue_training: false
 seed: 2025
 debugging: false
@@ -13,9 +13,9 @@ learning_rate: 0.0000001
 loss: mse # mae
 scaler: custom_robust
 
-batch_size: 64
+batch_size: 8
 num_epochs: 50
-num_training_iterations_per_epoch: 100
+num_training_iterations_per_epoch: 10
 
 BaseModelConfig:
   sin_pos_enc: false
@@ -48,7 +48,6 @@ EncoderConfig:
   dilated_conv_kernel_size: 5  
   dilated_conv_max_dilation: 3
   block_expansion: 2.0
-
 
 
 range_proportions:

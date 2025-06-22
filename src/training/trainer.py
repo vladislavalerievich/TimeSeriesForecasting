@@ -200,53 +200,32 @@ class TrainingPipeline:
         )
         logger.info(f"Checkpoint saved at epoch {epoch}")
 
-    def _scale_target(
-        self, target: torch.Tensor, output: Dict
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Scale target values based on configured scaler."""
+    def _scale_target(self, target: torch.Tensor, output: Dict) -> torch.Tensor:
+        """Scale multivariate target values based on configured scaler."""
+        # target: [batch_size, pred_len, num_channels]
+        # scale_params: tuple of (param1, param2) with shape [batch_size, 1, num_channels]
+
         if self.config["scaler"] == "min_max":
             max_scale = output["scale_params"][0]  # [batch_size, 1, num_channels]
-            min_scale = output["scale_params"][1]
-            target_index = output["target_index"]  # [batch_size, 1]
-            index = target_index.unsqueeze(1).unsqueeze(2)  # [B, 1, 1]
-            max_targets = (
-                torch.gather(max_scale, 2, index)
-                .expand(-1, target.shape[1], -1)
-                .squeeze(-1)
-            )  # [B, pred_len]
-            min_targets = (
-                torch.gather(min_scale, 2, index)
-                .expand(-1, target.shape[1], -1)
-                .squeeze(-1)
-            )  # [B, pred_len]
-            scaled_target = (target - min_targets) / (max_targets - min_targets)
-            return scaled_target, max_targets, min_targets
-        else:
-            mean = output["scale_params"][0]  # [batch_size, 1, num_channels]
-            std = output["scale_params"][1]
-            target_index = output["target_index"]  # [batch_size, 1]
-            index = target_index.unsqueeze(1).unsqueeze(2)  # [B, 1, 1]
-            mean_targets = (
-                torch.gather(mean, 2, index).expand(-1, target.shape[1], -1).squeeze(-1)
-            )  # [B, pred_len]
-            std_targets = (
-                torch.gather(std, 2, index).expand(-1, target.shape[1], -1).squeeze(-1)
-            )  # [B, pred_len]
-            scaled_target = (target - mean_targets) / std_targets
-            return scaled_target, mean_targets, std_targets
+            min_scale = output["scale_params"][1]  # [batch_size, 1, num_channels]
+            # Broadcast scaling to match target shape
+            scaled_target = (target - min_scale) / (max_scale - min_scale)
+            return scaled_target
+        else:  # custom_robust
+            medians = output["scale_params"][0]  # [batch_size, 1, num_channels]
+            iqrs = output["scale_params"][1]  # [batch_size, 1, num_channels]
+            # Broadcast scaling to match target shape
+            scaled_target = (target - medians) / iqrs
+            return scaled_target
 
     def _inverse_scale(self, output: torch.Tensor, scale_params: Tuple) -> torch.Tensor:
-        """Inverse scale model predictions."""
-        if self.config["scaler"] == "min_max":
-            max_targets, min_targets = scale_params
-            return (output * (max_targets - min_targets)) + min_targets
-        else:
-            mean_targets, std_targets = scale_params
-            return (output * std_targets) + mean_targets
+        """Inverse scale multivariate model predictions using scaler's built-in method."""
+        # Use the model's scaler inverse_transform method for consistency
+        return self.model.scaler.inverse_transform(output, scale_params)
 
     def _prepare_batch(
         self, batch: BatchTimeSeriesContainer
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[BatchTimeSeriesContainer, torch.Tensor]:
         """Prepare batch data for model input."""
         batch.to_device(self.device)
         return batch, batch.future_values
@@ -260,10 +239,9 @@ class TrainingPipeline:
             for batch_idx, batch in enumerate(self.val_loader):
                 batch.to_device(self.device)
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(batch, batch.target_values.size(1))
-                    _, *scale_params = self._scale_target(batch.target_values, output)
+                    output = self.model(batch)
                     inv_scaled_output = self._inverse_scale(
-                        output["result"], scale_params
+                        output["result"], output["scale_params"]
                     )
                 pred_future = inv_scaled_output.cpu().numpy()
 
@@ -291,15 +269,21 @@ class TrainingPipeline:
     def _update_metrics(
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
     ) -> None:
-        """Update metric calculations."""
+        """Update metric calculations for multivariate data."""
         predictions = predictions.contiguous()
         targets = targets.contiguous()
 
-        # Ensure predictions and targets have the same shape
-        if predictions.dim() == 3 and targets.dim() == 2:
-            predictions = predictions.squeeze(-1)
-        elif predictions.dim() == 2 and targets.dim() == 3:
-            targets = targets.squeeze(-1)
+        # Both predictions and targets should be [batch_size, pred_len, num_channels]
+        # For metrics, we flatten the channel dimension to compute across all channels
+        if predictions.dim() == 3 and targets.dim() == 3:
+            # Flatten to [batch_size * num_channels, pred_len] for metric computation
+            batch_size, pred_len, num_channels = predictions.shape
+            predictions = predictions.view(-1, pred_len)
+            targets = targets.view(-1, pred_len)
+        elif predictions.dim() != targets.dim():
+            raise ValueError(
+                f"Prediction and target dimensions don't match: {predictions.shape} vs {targets.shape}"
+            )
 
         for metric in metrics.values():
             metric.update(predictions, targets)
@@ -335,15 +319,14 @@ class TrainingPipeline:
         with torch.no_grad():
             for batch in self.val_loader:
                 data, target = self._prepare_batch(batch)
-                pred_len = target.size(1)
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data, pred_len)
+                    output = self.model(data)
                     val_loss = self.model.compute_loss(target, output).item()
                 total_val_loss += val_loss
 
                 # Inverse transform predictions for metrics
                 inv_scaled_output = self.model.scaler.inverse_transform(
-                    output["result"], output["scale_params"], output["target_index"]
+                    output["result"], output["scale_params"]
                 )
                 self._update_metrics(self.val_metrics, inv_scaled_output, target)
                 num_batches += 1
@@ -367,7 +350,7 @@ class TrainingPipeline:
             data, target = self._prepare_batch(batch)
             self.optimizer.zero_grad()
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                output = self.model(data, target.size(1))
+                output = self.model(data)
                 loss = self.model.compute_loss(target, output)
 
             loss.backward()
@@ -376,7 +359,7 @@ class TrainingPipeline:
 
             # Update metrics with inverse transformed predictions
             inv_scaled_output = self.model.scaler.inverse_transform(
-                output["result"], output["scale_params"], output["target_index"]
+                output["result"], output["scale_params"]
             )
             self._update_metrics(self.train_metrics, inv_scaled_output, target)
 

@@ -24,10 +24,9 @@ from gluonts.model import evaluate_model
 from gluonts.model.forecast import SampleForecast
 from gluonts.time_feature import get_seasonality
 
-from src.data_handling.data_containers import BatchTimeSeriesContainer
+from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
 from src.gift_eval.data import Dataset as GiftEvalDataset
 from src.models.models import MultiStepModel
-from src.synthetic_generation.common.constants import Frequency
 from src.utils.utils import device
 
 # Set up environment
@@ -237,44 +236,45 @@ class MultiStepModelWrapper:
                 history = history[:, -self.max_context_length :]
                 seq_len = self.max_context_length
 
-            history_values = torch.from_numpy(history.T).unsqueeze(0).to(self.device)
+            # Convert to multivariate format: [batch_size, seq_len, num_channels]
+            history_values = (
+                torch.from_numpy(history.T).unsqueeze(0).to(self.device)
+            )  # [1, seq_len, num_dims]
 
             frequency = self.get_frequency_enum(freq)
 
-            for dim_idx in range(num_dims):
-                future_values = torch.zeros(
-                    (1, self.prediction_length), dtype=torch.float32
-                ).to(self.device)
+            # Create multivariate future_values: [batch_size, pred_len, num_channels]
+            future_values = torch.zeros(
+                (1, self.prediction_length, num_dims), dtype=torch.float32
+            ).to(self.device)
 
-                target_index = torch.tensor([dim_idx], dtype=torch.long).to(self.device)
+            batch = BatchTimeSeriesContainer(
+                history_values=history_values,
+                future_values=future_values,
+                start=np.array([start.to_timestamp()], dtype="datetime64[ns]"),
+                frequency=frequency,
+            )
 
-                batch = BatchTimeSeriesContainer(
-                    history_values=history_values,
-                    future_values=future_values,
-                    target_index=target_index,
-                    start=[start],
-                    frequency=frequency,
+            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                with torch.no_grad():
+                    output = self.model(batch, training=False)
+
+                    predictions = (
+                        self.model.scaler.inverse_transform(
+                            output["result"],
+                            output["scale_params"],
+                        )
+                        .cpu()
+                        .numpy()
+                    )  # [1, pred_len, num_dims]
+
+            if np.isnan(predictions).any():
+                logger.warning(
+                    f"Predictions contain NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
                 )
 
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    with torch.no_grad():
-                        output = self.model(batch, training=False)
-                        predictions = (
-                            self.model.scaler.inverse_transform(
-                                output["result"],
-                                output["scale_params"],
-                                output["target_index"],
-                            )
-                            .cpu()
-                            .numpy()
-                        )
-                if np.isnan(predictions).any():
-                    logger.warning(
-                        f"Predictions contain NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
-                    )
-                # Reshape to (1, prediction_length) for SampleForecast
-                if predictions.ndim == 1:
-                    predictions = predictions.reshape(1, -1)
+            # Remove batch dimension and transpose to match SampleForecast format: [num_dims, pred_len]
+            predictions = predictions.squeeze(0).T  # [num_dims, pred_len]
 
             forecast_start = start + seq_len
 
