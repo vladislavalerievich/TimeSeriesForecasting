@@ -16,8 +16,15 @@ class GPGeneratorWrapper(GeneratorWrapper):
     def _sample_parameters(self) -> Dict[str, Any]:
         params = super()._sample_parameters()
 
-        # Sample frequency randomly from the frequency enum
-        frequency = self.rng.choice(list(Frequency))
+        # Sample frequency from the frequency list in params if available, otherwise use default
+        if hasattr(self.params, "frequency") and self.params.frequency:
+            if isinstance(self.params.frequency, list):
+                frequency = self.rng.choice(self.params.frequency)
+            else:
+                # If it's a single frequency value, use it directly
+                frequency = self.params.frequency
+        else:
+            frequency = self.rng.choice(list(Frequency))
 
         params.update(
             {

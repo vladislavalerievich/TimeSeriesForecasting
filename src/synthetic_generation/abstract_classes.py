@@ -114,14 +114,81 @@ class GeneratorWrapper:
         return int(value) if is_int else value
 
     def _sample_parameters(self) -> Dict[str, Any]:
-        history_length = self._parse_param_value(self.params.history_length)
-        future_length = self._parse_param_value(self.params.future_length)
+        """
+        Sample parameters ensuring history_length >= future_length.
+
+        This method implements constraint-aware sampling that works robustly with:
+        - int values
+        - tuple ranges
+        - list of discrete values
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing sampled parameter values with the constraint
+            that history_length >= future_length.
+        """
+        # First, determine all possible valid combinations
+        hist_candidates = self._get_all_possible_values(self.params.history_length)
+        fut_candidates = self._get_all_possible_values(self.params.future_length)
+
+        # Create valid combinations where history_length >= future_length
+        valid_combinations = []
+        for hist in hist_candidates:
+            for fut in fut_candidates:
+                if hist >= fut:
+                    valid_combinations.append((hist, fut))
+
+        if not valid_combinations:
+            # Fallback: if no valid combinations exist, use the original method
+            # but clamp future_length to be <= history_length
+            history_length = self._parse_param_value(self.params.history_length)
+            future_length = self._parse_param_value(self.params.future_length)
+            future_length = min(future_length, history_length)
+        else:
+            # Sample from valid combinations
+            hist_idx = self.rng.integers(0, len(valid_combinations))
+            history_length, future_length = valid_combinations[hist_idx]
+
         num_channels = self._parse_param_value(self.params.num_channels)
+
         return {
             "history_length": history_length,
             "future_length": future_length,
             "num_channels": num_channels,
         }
+
+    def _get_all_possible_values(
+        self, param: Union[int, Tuple[int, int], List[int]]
+    ) -> List[int]:
+        """
+        Get all possible values for a parameter, handling int, tuple, and list types.
+
+        Parameters
+        ----------
+        param : Union[int, Tuple[int, int], List[int]]
+            Parameter specification
+
+        Returns
+        -------
+        List[int]
+            List of all possible values for this parameter
+        """
+        if isinstance(param, int):
+            return [param]
+        elif isinstance(param, list):
+            return param
+        elif isinstance(param, tuple):
+            min_val, max_val = param
+            # For tuples, we sample from a reasonable subset to avoid memory issues
+            # with very large ranges. We'll use up to 100 evenly spaced values.
+            if max_val - min_val <= 100:
+                return list(range(min_val, max_val + 1))
+            else:
+                # For large ranges, sample evenly spaced values
+                return [int(x) for x in np.linspace(min_val, max_val, 100)]
+        else:
+            raise ValueError(f"Unsupported param type: {type(param)}")
 
     def _format_to_container(
         self,

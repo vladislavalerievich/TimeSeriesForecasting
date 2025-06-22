@@ -78,6 +78,19 @@ forecast_length_by_term_test = defaultdict(Counter)  # term -> Counter
 # Track number of series per dataset
 series_counts = defaultdict(lambda: defaultdict(set))
 
+# Track context and forecast lengths per dataset per term
+dataset_lengths_by_term = defaultdict(
+    lambda: defaultdict(
+        lambda: {
+            "context_val": set(),
+            "context_test": set(),
+            "forecast_val": set(),
+            "forecast_test": set(),
+            "frequency": None,
+        }
+    )
+)
+
 # Track which datasets were successfully processed
 processed_datasets = []
 failed_datasets = []
@@ -130,6 +143,13 @@ for ds_name in sorted(dataset_names):
                 forecast_length_counter_val[forecast_len] += 1
                 forecast_length_by_term_val[term][forecast_len] += 1
 
+                # Track per dataset per term
+                dataset_lengths_by_term[term][ds_name]["context_val"].add(
+                    val_context_len
+                )
+                dataset_lengths_by_term[term][ds_name]["forecast_val"].add(forecast_len)
+                dataset_lengths_by_term[term][ds_name]["frequency"] = actual_freq
+
             except Exception as e:
                 print(f"    Warning: Could not process validation data: {e}")
 
@@ -177,6 +197,13 @@ for ds_name in sorted(dataset_names):
                 forecast_length_counter_test[forecast_len] += 1
                 context_length_by_term_test[term][context_len] += 1
                 forecast_length_by_term_test[term][forecast_len] += 1
+
+                # Track per dataset per term
+                dataset_lengths_by_term[term][ds_name]["context_test"].add(context_len)
+                dataset_lengths_by_term[term][ds_name]["forecast_test"].add(
+                    forecast_len
+                )
+                dataset_lengths_by_term[term][ds_name]["frequency"] = actual_freq
 
             except Exception as e:
                 print(f"    Warning: Could not process test data: {e}")
@@ -320,6 +347,56 @@ for dim in sorted_target_dims:
     for ds_name, horizons in sorted_datasets:
         sorted_horizons = sorted(list(horizons))
         print(f"  - {ds_name} (horizons: {sorted_horizons})")
+
+
+print("\n" + "=" * 60)
+print("DATASETS BY TERM WITH CONTEXT AND FORECAST LENGTHS")
+print("=" * 60)
+
+for term in sorted(dataset_lengths_by_term.keys()):
+    # Collect unique frequencies for this term
+    unique_freqs_for_term = set()
+    for ds_name, lengths in dataset_lengths_by_term[term].items():
+        if lengths["frequency"]:
+            unique_freqs_for_term.add(lengths["frequency"])
+
+    unique_freqs_str = (
+        ", ".join(sorted(unique_freqs_for_term)) if unique_freqs_for_term else "none"
+    )
+    print(
+        f"\n{term.upper()} TERM: {len(dataset_lengths_by_term[term])} datasets. Unique frequencies: {unique_freqs_str}"
+    )
+
+    # Sort datasets by name
+    sorted_datasets = sorted(
+        dataset_lengths_by_term[term].items(), key=lambda item: item[0]
+    )
+
+    for ds_name, lengths in sorted_datasets:
+        # Get unique lengths for this dataset
+        context_val = (
+            sorted(list(lengths["context_val"])) if lengths["context_val"] else []
+        )
+        context_test = (
+            sorted(list(lengths["context_test"])) if lengths["context_test"] else []
+        )
+        forecast_val = (
+            sorted(list(lengths["forecast_val"])) if lengths["forecast_val"] else []
+        )
+        forecast_test = (
+            sorted(list(lengths["forecast_test"])) if lengths["forecast_test"] else []
+        )
+        frequency = lengths["frequency"] if lengths["frequency"] else "unknown"
+
+        print(f"  - {ds_name} (freq: {frequency})")
+        if context_val:
+            print(f"    Context lengths (val): {context_val}")
+        if context_test:
+            print(f"    Context lengths (test): {context_test}")
+        if forecast_val:
+            print(f"    Forecast lengths (val): {forecast_val}")
+        if forecast_test:
+            print(f"    Forecast lengths (test): {forecast_test}")
 
 
 ds_name = "bizitobs_l2c/5T"  # Name of the dataset

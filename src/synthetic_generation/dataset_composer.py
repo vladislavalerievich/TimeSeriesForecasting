@@ -540,10 +540,8 @@ class DefaultSyntheticComposer:
         """
         Creates a single-range DatasetComposer for a specific forecast range.
 
-        Under the hood, this method dynamically combines parameters. It takes a
-        range-specific parameter class (e.g., ShortRangeGeneratorParams) and merges
-        its values with the generator-specific parameter classes (e.g., LMCGeneratorParams)
-        at instantiation time.
+        This method properly combines range-specific parameters (history_length, future_length)
+        with generator-specific parameters while maintaining parameter compatibility and validation.
 
         Args:
             params_class: The dataclass defining the forecast range (e.g., ShortRangeGeneratorParams).
@@ -567,22 +565,52 @@ class DefaultSyntheticComposer:
         }
 
         wrappers = {}
-        base_params = params_class(global_seed=seed).__dict__
+        # Create the range parameter instance to get the base parameters
+        range_params = params_class(global_seed=seed)
 
         for name, (wrapper_class, gen_param_class) in generator_map.items():
             if name in proportions:
-                # Combine base range params with specific generator params
-                combined_params = gen_param_class(**base_params)
-                wrappers[name] = wrapper_class(combined_params)
+                try:
+                    # Create generator-specific parameters with defaults
+                    gen_params = gen_param_class(global_seed=seed)
+
+                    # Override range-specific parameters from the range class
+                    gen_params.history_length = range_params.history_length
+                    gen_params.future_length = range_params.future_length
+                    gen_params.num_channels = range_params.num_channels
+                    gen_params.global_seed = seed
+                    gen_params.distribution_type = range_params.distribution_type
+
+                    # Override frequency list if available in range params
+                    if hasattr(range_params, "frequency") and hasattr(
+                        gen_params, "frequency"
+                    ):
+                        gen_params.frequency = range_params.frequency
+
+                    # Re-run validation after parameter updates
+                    gen_params.__post_init__()
+
+                    # Create the wrapper with the properly configured parameters
+                    wrappers[name] = wrapper_class(gen_params)
+
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create {name} generator for {params_class.__name__}: {e}"
+                    )
+                    continue
 
         if not wrappers:
+            logger.warning(f"No valid generators created for {params_class.__name__}")
             return None
 
         # Map proportions from string names to generator instances and normalize
-        total_prop = sum(proportions.values())
+        total_prop = sum(proportions[name] for name in proportions if name in wrappers)
+        if total_prop == 0:
+            return None
+
         mapped_proportions = {
-            wrappers[name]: prob / total_prop
-            for name, prob in proportions.items()
+            wrappers[name]: proportions[name] / total_prop
+            for name in proportions
             if name in wrappers
         }
 

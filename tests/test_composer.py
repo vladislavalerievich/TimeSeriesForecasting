@@ -1,8 +1,6 @@
 import logging
 from collections import Counter, defaultdict
 
-import tqdm
-
 from src.synthetic_generation.dataset_composer import DefaultSyntheticComposer
 
 # Suppress verbose logging from the generator
@@ -17,7 +15,7 @@ def test_synthetic_composer():
     1. Printing the configured generator proportions for each forecast range.
     2. Generating 100 batches and tracking their source and shapes.
     3. Printing a summary of the actual generated batches, including counts and
-       the unique (history, target, channels) dimensions for each generator.
+       the unique (history, future, channels) dimensions for each generator.
     """
     print("--- Initializing DefaultSyntheticComposer ---")
     composer = DefaultSyntheticComposer(seed=42)
@@ -47,9 +45,9 @@ def test_synthetic_composer():
 
         # Extract shape information
         history_len = batch.history_values.shape[1]
-        target_len = batch.future_values.shape[1]
+        future_len = batch.future_values.shape[1]
         num_channels = batch.history_values.shape[2]
-        shape_tuple = (history_len, target_len, num_channels)
+        shape_tuple = (history_len, future_len, num_channels)
 
         generator_shapes[generator_full_name].add(shape_tuple)
     print("Generation complete.")
@@ -77,7 +75,7 @@ def test_synthetic_composer():
         )
         for result in sorted(results_by_range[range_name], key=lambda x: x["name"]):
             print(f"  -> {result['name']} (Generated {result['count']} batches)")
-            print("     Unique (history, target, channels) shapes:")
+            print("     Unique (history, future, channels) shapes:")
             for shape in result["shapes"]:
                 print(f"       - {shape}")
 

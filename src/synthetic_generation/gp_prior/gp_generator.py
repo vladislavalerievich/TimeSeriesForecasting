@@ -144,15 +144,42 @@ class GPGenerator:
             self.rng.choice([1e-1, 1e-2, 1e-3], p=[0.1, 0.2, 0.7]),
         )
 
-        # Sample from GP prior
+        # Sample from GP prior with robust error handling
         model.eval()
-        with (
-            torch.no_grad(),
-            gpytorch.settings.fast_pred_var(),
-            gpytorch.settings.cholesky_jitter(noise),
-        ):
-            y_sample = model(train_x).sample().numpy()
-            # y_sample shape: (self.length,) (should be 1D)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with (
+                    torch.no_grad(),
+                    gpytorch.settings.fast_pred_var(),
+                    gpytorch.settings.cholesky_jitter(
+                        noise * (10**attempt)
+                    ),  # Increase jitter on retries
+                    gpytorch.settings.max_cholesky_size(
+                        2000
+                    ),  # Limit decomposition size
+                ):
+                    y_sample = model(train_x).sample().numpy()
+                    # y_sample shape: (self.length,) (should be 1D)
+                break
+            except (RuntimeError, IndexError) as e:
+                if attempt == max_retries - 1:
+                    # If all attempts fail, generate a simple fallback
+                    print(f"GP sampling failed after {max_retries} attempts: {e}")
+                    print("Generating fallback sample with simpler kernel")
+                    # Create a simple RBF kernel as fallback
+                    simple_kernel = gpytorch.kernels.RBFKernel()
+                    simple_model = GPModel(
+                        train_x, None, likelihood, mean_module, simple_kernel
+                    )
+                    simple_model.eval()
+                    with torch.no_grad():
+                        y_sample = simple_model(train_x).sample().numpy()
+                    break
+                else:
+                    print(
+                        f"GP sampling attempt {attempt + 1} failed: {e}. Retrying with higher jitter..."
+                    )
 
         # Optionally add peak spikes
         if self.rng.random() < self.peak_spike_ratio:

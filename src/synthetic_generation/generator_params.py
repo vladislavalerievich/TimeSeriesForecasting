@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Union
 
+from src.data_handling.data_containers import Frequency as DataFrequency
 from src.synthetic_generation.common.constants import Frequency
 
 
@@ -26,14 +27,17 @@ class GeneratorParams:
             if hasattr(self, k):
                 setattr(self, k, v)
 
-    def post_init(self):
-        """Validate that history_length is greater than future_length."""
+    def __post_init__(self):
+        """Validate that history_length ranges don't conflict with future_length ranges."""
         # Normalize to tuples for consistent comparison
         hist_min, hist_max = self._normalize_range(self.history_length)
         fut_min, fut_max = self._normalize_range(self.future_length)
 
-        if hist_min < fut_min or hist_max < fut_max:
-            raise ValueError("history_length must be greater than future_length")
+        # Ensure that we can generate valid combinations
+        if hist_max < fut_min:
+            raise ValueError(
+                f"Maximum history_length ({hist_max}) must be >= minimum future_length ({fut_min})"
+            )
 
     def _normalize_range(
         self, value: Union[int, Tuple[int, int], List[int]]
@@ -45,16 +49,25 @@ class GeneratorParams:
             return (min(value), max(value))
         return value
 
+    def get_compatible_ranges(self) -> Dict[str, Tuple[int, int]]:
+        """Get compatible min/max ranges for all parameters."""
+        return {
+            "history_length": self._normalize_range(self.history_length),
+            "future_length": self._normalize_range(self.future_length),
+            "num_channels": self._normalize_range(self.num_channels),
+        }
+
 
 @dataclass
 class ShortRangeGeneratorParams(GeneratorParams):
     """Parameters for short-range forecasting."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [64, 96, 128]
+        default_factory=lambda: [64, 96, 128, 256, 512, 720]
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
         default_factory=lambda: [
+            6,
             8,
             12,
             13,
@@ -65,6 +78,20 @@ class ShortRangeGeneratorParams(GeneratorParams):
             60,
         ]
     )
+    frequency: List[DataFrequency] = field(
+        default_factory=lambda: [
+            DataFrequency.S,
+            DataFrequency.T5,
+            DataFrequency.T10,
+            DataFrequency.T15,
+            DataFrequency.H,
+            DataFrequency.D,
+            DataFrequency.W,
+            DataFrequency.M,
+            DataFrequency.Q,
+            DataFrequency.A,
+        ]
+    )
 
 
 @dataclass
@@ -72,10 +99,22 @@ class MediumRangeGeneratorParams(GeneratorParams):
     """Parameters for medium-range forecasting."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [128, 256, 512, 720]
+        default_factory=lambda: [128, 256, 512, 720, 1024]
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [60, 80, 120, 180]
+        default_factory=lambda: [80, 120, 140, 180, 300, 480, 600]
+    )
+    frequency: List[DataFrequency] = field(
+        default_factory=lambda: [
+            DataFrequency.S,
+            DataFrequency.T5,
+            DataFrequency.T10,
+            DataFrequency.T15,
+            DataFrequency.H,
+            DataFrequency.D,
+            DataFrequency.W,
+            DataFrequency.M,
+        ]
     )
 
 
@@ -84,10 +123,22 @@ class LongRangeGeneratorParams(GeneratorParams):
     """Parameters for long-range forecasting."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [720, 1024]
+        default_factory=lambda: [512, 720, 1024]
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [180, 480, 720, 900]
+        default_factory=lambda: [120, 180, 195, 210, 450, 720, 900]
+    )
+    frequency: List[DataFrequency] = field(
+        default_factory=lambda: [
+            DataFrequency.S,
+            DataFrequency.T5,
+            DataFrequency.T10,
+            DataFrequency.T15,
+            DataFrequency.H,
+            DataFrequency.D,
+            DataFrequency.W,
+            DataFrequency.M,
+        ]
     )
 
 
@@ -118,7 +169,7 @@ class GPGeneratorParams(GeneratorParams):
 
     frequency: Frequency = Frequency.D
     max_kernels: int = 6
-    likelihood_noise_level: float = 0.4
+    likelihood_noise_level: float = 0.1  # Reduced for numerical stability
     noise_level: str = "random"  # Options: ["random", "high", "moderate", "low"]
     use_original_gp: bool = False
     gaussians_periodic: bool = True
@@ -126,7 +177,7 @@ class GPGeneratorParams(GeneratorParams):
     subfreq_ratio: float = 0.2
     periods_per_freq: float = 0.5
     gaussian_sampling_ratio: float = 0.2
-    max_period_ratio: float = 1.0
+    max_period_ratio: float = 0.5  # Reduced from 1.0 for stability
     kernel_periods: Tuple[int, ...] = (4, 5, 7, 21, 24, 30, 60, 120)
     kernel_bank: Dict[str, float] = field(
         default_factory=lambda: {

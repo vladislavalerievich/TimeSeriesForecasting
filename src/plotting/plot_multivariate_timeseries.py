@@ -86,21 +86,34 @@ def plot_multivariate_timeseries(
             label=f"Ch{ch} History" if ch < 5 else None,  # Avoid too many labels
         )
 
-        # Plot future values
+        # Plot future values with continuity
         if future_values is not None and ch < future_values.shape[1]:
+            # Create continuous time and values arrays to ensure visual continuity
+            # Include the last history point to connect the lines
+            continuous_time = np.concatenate([[history_len - 1], future_time])
+            continuous_values = np.concatenate(
+                [[history_values[-1, ch]], future_values[:, ch]]
+            )
+
             ax.plot(
-                future_time,
-                future_values[:, ch],
+                continuous_time,
+                continuous_values,
                 color=f"C{ch % 10}",
                 linestyle="--",
                 label=f"Ch{ch} Future" if ch < 5 else None,
             )
 
-        # Plot predicted values
+        # Plot predicted values with continuity
         if predicted_values is not None and ch < predicted_values.shape[1]:
+            # Create continuous time and values arrays to ensure visual continuity
+            continuous_time = np.concatenate([[history_len - 1], future_time])
+            continuous_values = np.concatenate(
+                [[history_values[-1, ch]], predicted_values[:, ch]]
+            )
+
             ax.plot(
-                future_time,
-                predicted_values[:, ch],
+                continuous_time,
+                continuous_values,
                 color=f"C{ch % 10}",
                 linestyle=":",
                 label=f"Ch{ch} Prediction" if ch < 5 else None,
@@ -109,14 +122,15 @@ def plot_multivariate_timeseries(
     # Add history/future separator
     if future_time is not None:
         ax.axvline(
-            x=history_len,
+            x=history_len
+            - 0.5,  # Adjust to be between the last history and first future point
             color="red",
             linestyle=":",
             alpha=0.7,
             label="History/Future Split",
         )
         ax.axvspan(
-            history_len,
+            history_len - 0.5,
             future_time[-1],
             alpha=0.1,
             color="gray",
