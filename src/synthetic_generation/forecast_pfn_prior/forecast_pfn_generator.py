@@ -18,6 +18,7 @@ from src.synthetic_generation.forecast_pfn_prior.series_config import (
     SeriesConfig,
 )
 from src.synthetic_generation.forecast_pfn_prior.utils import (
+    get_random_walk_series,
     get_transition_coefficients,
     sample_scale,
     shift_axis,
@@ -45,38 +46,36 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
 
         # Seasonal component weights based on frequency
         a, m, w, h, minute = 0.0, 0.0, 0.0, 0.0, 0.0
-        if freq_key == "s":
+        if self.frequency == Frequency.S:
             minute = np.random.uniform(0.0, 1.0)
             h = np.random.uniform(0.0, 0.2)
-        elif freq_key == "T1":
-            minute = np.random.uniform(0.0, 0.1)
-            h = np.random.uniform(0.0, 1.0)
-            w = np.random.uniform(0.0, 0.4)
-        if freq_key == "min":
+        elif self.frequency in [
+            Frequency.T1,
+            Frequency.T5,
+            Frequency.T10,
+            Frequency.T15,
+        ]:
             minute = np.random.uniform(0.0, 1.0)
             h = np.random.uniform(0.0, 0.2)
-        elif freq_key == "h":
-            minute = np.random.uniform(0.0, 0.1)
+        elif self.frequency == Frequency.H:
+            minute = np.random.uniform(0.0, 0.2)
             h = np.random.uniform(0.0, 1.0)
-            w = np.random.uniform(0.0, 0.4)
-        elif freq_key == "D":
+        elif self.frequency == Frequency.D:
             w = np.random.uniform(0.0, 1.0)
-            m = np.random.uniform(0.0, 0.4)
-            a = np.random.uniform(0.0, 0.2)
-        elif freq_key == "W":
+            m = np.random.uniform(0.0, 0.2)
+        elif self.frequency == Frequency.W:
             m = np.random.uniform(0.0, 0.3)
-            a = np.random.uniform(0.0, 0.8)
-        elif freq_key == "M":
+            a = np.random.uniform(0.0, 0.3)
+        elif self.frequency == Frequency.M:
             w = np.random.uniform(0.0, 0.1)
+            a = np.random.uniform(0.0, 0.5)
+        elif self.frequency == Frequency.Q:
             a = np.random.uniform(0.0, 1.0)
-        elif freq_key == "Q":
-            w = np.random.uniform(0.0, 0.1)
-            a = np.random.uniform(0.0, 1.0)
-        elif freq_key == "A":
+        elif self.frequency == Frequency.A:
             w = np.random.uniform(0.0, 0.2)
-            a = np.random.uniform(0.0, 1)
+            a = np.random.uniform(0.0, 1.0)
         else:
-            raise NotImplementedError(f"Frequency {freq} not supported")
+            raise NotImplementedError(f"Frequency {self.frequency} not supported")
 
         if start is None:
             start = pd.Timestamp.fromordinal(
@@ -184,9 +183,10 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         start = freq.rollback(start)
         dates = pd.date_range(start=start, periods=self.length, freq=freq)
         scaled_noise_term = 0
+        values_seasonal = {}
 
         if random_walk:
-            values = self._get_random_walk_series(len(dates))
+            values = get_random_walk_series(len(dates))
         elif options["seasonal_only"]:
             values_seasonal = self._make_series_seasonal(series, dates, options)
             values = values_seasonal["seasonal"]
@@ -214,9 +214,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
             "values": values,
             "noise": 1 + scaled_noise_term,
             "dates": dates,
-            "seasonal": values_seasonal["seasonal"]
-            if not random_walk
-            else np.ones_like(values),
+            "seasonal": values_seasonal.get("seasonal", np.ones_like(values)),
         }
 
     def _make_series_trend(
@@ -312,13 +310,6 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
                 2 * np.pi * harmonic * dates_feature / n_total
             )
         return return_val
-
-    def _get_random_walk_series(self, length: int, movements=[-1, 1]) -> np.ndarray:
-        random_walk = [np.random.choice(movements)]
-        for _ in range(1, length):
-            movement = np.random.choice(movements)
-            random_walk.append(random_walk[-1] + movement)
-        return np.array(random_walk)
 
     def generate_time_series(
         self, random_seed: Optional[int] = None, periodicity: Frequency = None

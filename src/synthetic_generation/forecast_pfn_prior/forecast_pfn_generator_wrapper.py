@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 import numpy as np
+import pandas as pd
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
@@ -47,15 +48,21 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
     ) -> tuple:
         values = []
         start = None
+        generator = ForecastPFNGenerator(
+            ForecastPFNGeneratorParams(**params), length=length
+        )
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
-            generator = ForecastPFNGenerator(
-                ForecastPFNGeneratorParams(**params), length=length
-            )
             result = self._generate_univariate_time_series(generator, channel_seed)
             values.append(result["values"])
             if start is None:
                 start = result["start"]
+                # Update the generator's start time to ensure all channels in a multivariate series have the same start time
+                generator_params = generator.params
+                generator = ForecastPFNGenerator(generator_params, length=length)
+                generator._generate_series(
+                    start=pd.Timestamp(start), random_seed=channel_seed
+                )
         values = np.column_stack(values) if num_channels > 1 else np.array(values[0])
         return values, start
 
