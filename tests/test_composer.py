@@ -1,10 +1,13 @@
 import logging
+import time
 from collections import Counter, defaultdict
 
 from src.synthetic_generation.dataset_composer import DefaultSyntheticComposer
 
-# Suppress verbose logging from the generator
-logging.basicConfig(level=logging.WARNING)
+# Configure logging to show timing warnings
+logging.basicConfig(
+    level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 
 def test_synthetic_composer():
@@ -18,7 +21,10 @@ def test_synthetic_composer():
        the unique (history, future, channels) dimensions for each generator.
     """
     print("--- Initializing DefaultSyntheticComposer ---")
+    init_start = time.time()
     composer = DefaultSyntheticComposer(seed=42)
+    init_time = time.time() - init_start
+    print(f"Initialization took {init_time:.4f}s")
 
     # --- 1. Print Configured Proportions ---
     print("\n--- Configured Proportions ---")
@@ -35,12 +41,25 @@ def test_synthetic_composer():
     generator_counts = Counter()
     # A dictionary where each value is a set of unique shape tuples
     generator_shapes = defaultdict(set)
+    batch_times = []
 
     print(f"\n--- Generating {num_batches} batches of size {batch_size} ---")
+    generation_start = time.time()
+
     for i in range(num_batches):
+        batch_start = time.time()
+        print(f"Generating batch {i + 1}/{num_batches}...")
+
         batch, generator_full_name = composer.generate_batch(
             batch_size=batch_size, seed=42 + i
         )
+
+        batch_time = time.time() - batch_start
+        batch_times.append(batch_time)
+        print(
+            f"  -> Batch {i + 1} completed in {batch_time:.4f}s using {generator_full_name}"
+        )
+
         generator_counts[generator_full_name] += 1
 
         # Extract shape information
@@ -50,7 +69,12 @@ def test_synthetic_composer():
         shape_tuple = (history_len, future_len, num_channels)
 
         generator_shapes[generator_full_name].add(shape_tuple)
-    print("Generation complete.")
+
+    total_generation_time = time.time() - generation_start
+    print(f"Total generation took {total_generation_time:.4f}s")
+    print(f"Average batch time: {sum(batch_times) / len(batch_times):.4f}s")
+    print(f"Min batch time: {min(batch_times):.4f}s")
+    print(f"Max batch time: {max(batch_times):.4f}s")
 
     # --- 3. Process and Print Generation Results ---
     print("\n--- Generation Results ---")
@@ -81,4 +105,7 @@ def test_synthetic_composer():
 
 
 if __name__ == "__main__":
+    overall_start = time.time()
     test_synthetic_composer()
+    overall_time = time.time() - overall_start
+    print(f"\n=== OVERALL TEST TIME: {overall_time:.4f}s ===")

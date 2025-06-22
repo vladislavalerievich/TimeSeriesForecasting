@@ -31,7 +31,9 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         params = super()._sample_parameters()
         # Sample num_kernels
         num_kernels = self._parse_param_value(self.params.num_kernels)
-        params.update({"max_kernels": num_kernels})
+        params.update(
+            {"max_kernels": num_kernels, "use_gpytorch": self.params.use_gpytorch}
+        )
         return params
 
     def _generate_univariate_time_series(
@@ -61,6 +63,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         num_channels: int,
         length: int,
         max_kernels: int,
+        use_gpytorch: bool,
         seed: Optional[int] = None,
     ) -> tuple:
         """
@@ -74,6 +77,8 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             Length of the time series.
         max_kernels : int
             Maximum number of kernels for generation.
+        use_gpytorch : bool
+            Whether to use GPyTorch for generation.
         seed : int, optional
             Random seed for generation (default: None).
 
@@ -89,6 +94,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             generator = KernelSynthGenerator(
                 length=length,
                 max_kernels=max_kernels,
+                use_gpytorch=use_gpytorch,
             )
             result = self._generate_univariate_time_series(generator, channel_seed)
 
@@ -130,6 +136,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         future_length = params["future_length"]
         num_channels = params["num_channels"]
         max_kernels = params["max_kernels"]
+        use_gpytorch = params["use_gpytorch"]
         total_length = history_length + future_length
         batch_values = []
         batch_start = []
@@ -140,6 +147,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
                 num_channels=num_channels,
                 length=total_length,
                 max_kernels=max_kernels,
+                use_gpytorch=use_gpytorch,
                 seed=batch_seed,
             )
             # Ensure shape for values: (seq_len, num_channels)

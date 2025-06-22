@@ -159,6 +159,7 @@ class KernelGeneratorParams(GeneratorParams):
     """Parameters for the KernelSynthGenerator."""
 
     num_kernels: Union[int, Tuple[int, int]] = 5
+    use_gpytorch: bool = True
 
 
 @dataclass

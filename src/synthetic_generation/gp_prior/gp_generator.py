@@ -153,8 +153,8 @@ class GPGenerator:
                     torch.no_grad(),
                     gpytorch.settings.fast_pred_var(),
                     gpytorch.settings.cholesky_jitter(
-                        noise * (10**attempt)
-                    ),  # Increase jitter on retries
+                        max(noise * (10**attempt), 1e-4)
+                    ),  # Increase jitter on retries, with a minimum floor
                     gpytorch.settings.max_cholesky_size(
                         2000
                     ),  # Limit decomposition size
