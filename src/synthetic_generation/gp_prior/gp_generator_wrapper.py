@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional
 
 import numpy as np
-import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
 from src.synthetic_generation.abstract_classes import GeneratorWrapper

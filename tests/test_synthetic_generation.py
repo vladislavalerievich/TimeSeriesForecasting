@@ -10,7 +10,6 @@ from src.synthetic_generation.data_loaders import (
 )
 from src.synthetic_generation.dataset_composer import (
     DatasetComposer,
-    DefaultSyntheticComposer,
     OnTheFlyDatasetGenerator,
 )
 from src.synthetic_generation.generator_params import GeneratorParams
@@ -22,7 +21,6 @@ from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
     LMCGeneratorParams,
     LMCGeneratorWrapper,
 )
-from tests.utils import get_temp_dir
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
