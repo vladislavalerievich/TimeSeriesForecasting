@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import pandas as pd
 from gluonts.dataset.util import to_pandas
 
 from src.gift_eval.data import Dataset
@@ -321,7 +322,7 @@ for dim in sorted_target_dims:
         print(f"  - {ds_name} (horizons: {sorted_horizons})")
 
 
-ds_name = "us_births/W"  # Name of the dataset
+ds_name = "bizitobs_l2c/5T"  # Name of the dataset
 to_univariate = False  # Whether to convert the data to univariate
 term = "medium"  # Term of the dataset
 
@@ -333,22 +334,51 @@ dataset = Dataset(name=ds_name, term=term, to_univariate=to_univariate)
 print("Dataset frequency: ", dataset.freq)
 print("Prediction length: ", dataset.prediction_length)
 print("Number of windows in the rolling evaluation: ", dataset.windows)
-
+print("Number of series in the dataset: ", len(dataset.training_dataset))
 
 train_data_iter = dataset.training_dataset  # Get the training data iterator
 
 train_data = next(iter(train_data_iter))
 print("Keys in the training data: ", train_data.keys())
 
+if "past_feat_dynamic_real" in train_data:
+    print(
+        "Shape of past_feat_dynamic_real: ",
+        train_data["past_feat_dynamic_real"].shape,
+    )
+    print(
+        "Sample of past_feat_dynamic_real: ",
+        train_data["past_feat_dynamic_real"][:, :5],
+    )
+else:
+    print("past_feat_dynamic_real not found in this dataset.")
+
 print("Item id: ", train_data["item_id"])
 print("Start Date: ", train_data["start"])
 print("Frequency: ", train_data["freq"])
+print("Target shape: ", train_data["target"].shape)
 
+if train_data["target"].ndim > 1:
+    # Multivariate case: create a DataFrame
+    train_df = pd.DataFrame(
+        train_data["target"].T,
+        index=pd.period_range(
+            start=train_data["start"],
+            periods=train_data["target"].shape[1],
+            freq=train_data["freq"],
+        ),
+    )
+    train_df.plot()
+else:
+    # Univariate case: use to_pandas
+    train_series = to_pandas(train_data)
+    train_series.plot()
 
-train_series = to_pandas(train_data)
-train_series.plot()
 plt.grid(which="both")
-plt.legend(["train series"], loc="upper left")
+plt.legend(
+    [f"train series dim {i}" for i in range(train_data["target"].shape[0])],
+    loc="upper left",
+)
 plt.show()
 
 
@@ -360,17 +390,6 @@ print("Keys in the validation data: ", val_data.keys())
 print("Item id: ", val_data["item_id"])
 print("Start Date: ", val_data["start"])
 print("Frequency: ", val_data["freq"])
-
-val_series = to_pandas(val_data)
-val_series.plot()
-plt.grid(which="both")
-# Add a vertical axis for where the train series ends
-plt.axvline(
-    x=train_series.index[-1], color="r", linestyle="--", label="End of train series"
-)
-plt.legend(["val series", "end of train series"], loc="upper left")
-plt.show()
-
 
 test_split_iter = dataset.test_data
 test_data = next(iter(test_split_iter))
@@ -391,9 +410,3 @@ print("\n\nForecast Item id: ", label["item_id"])
 print("Forecast Start Date: ", label["start"])
 print("Forecast Frequency: ", label["freq"])
 print("Forecast Length: ", len(label["target"]))
-
-test_series = to_pandas(test_data[1])
-test_series.plot()
-plt.grid(which="both")
-plt.legend("test series", loc="upper left")
-plt.show()

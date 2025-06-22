@@ -239,7 +239,6 @@ class MultiStepModelWrapper:
 
             history_values = torch.from_numpy(history.T).unsqueeze(0).to(self.device)
 
-            start_time = np.array([start.start_time], dtype="datetime64")
             frequency = self.get_frequency_enum(freq)
 
             for dim_idx in range(num_dims):
@@ -253,7 +252,7 @@ class MultiStepModelWrapper:
                     history_values=history_values,
                     target_values=target_values,
                     target_index=target_index,
-                    start=start_time,
+                    start=[start],
                     frequency=frequency,
                 )
 

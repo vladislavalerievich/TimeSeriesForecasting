@@ -1,25 +1,11 @@
 from datetime import date, timedelta
-from enum import Enum
+
+from src.data_handling.data_containers import Frequency
 
 DEFAULT_END_DATE = date.today()  # Use current date to define a range
 DEFAULT_START_DATE = DEFAULT_END_DATE - timedelta(days=20 * 365)  #  20 years back
 BASE_START = DEFAULT_START_DATE.toordinal()
 BASE_END = DEFAULT_END_DATE.toordinal() + 1
-
-
-class Frequency(Enum):
-    A = "A"  # Annual
-    Q = "Q"  # Quarterly
-    ME = "ME"  # Month End
-    M = "ME"  # Month End (alias)
-    W = "W"  # Weekly
-    D = "D"  # Daily
-    H = "h"  # Hourly
-    S = "s"  # Seconds
-    T1 = "1min"  # 1 minute
-    T5 = "5min"  # 5 minutes
-    T10 = "10min"  # 10 minutes
-    T15 = "15min"  # 15 minutes
 
 
 FREQUENCY_MAPPING = {

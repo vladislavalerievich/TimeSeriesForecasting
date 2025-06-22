@@ -1,10 +1,24 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import List, Optional
 
 import numpy as np
 import torch
 
-from src.synthetic_generation.common.constants import Frequency
+
+class Frequency(Enum):
+    A = "A"  # Annual
+    Q = "Q"  # Quarterly
+    ME = "ME"  # Month End
+    M = "ME"  # Month End (alias)
+    W = "W"  # Weekly
+    D = "D"  # Daily
+    H = "h"  # Hourly
+    S = "s"  # Seconds
+    T1 = "1min"  # 1 minute
+    T5 = "5min"  # 5 minutes
+    T10 = "10min"  # 10 minutes
+    T15 = "15min"  # 15 minutes
 
 
 @dataclass
@@ -122,9 +136,7 @@ class BatchTimeSeriesContainer:
         history_values: Tensor of historical observations.
             Shape: [batch_size, seq_len, num_channels]
         target_values: Tensor of future observations to predict.
-            Shape: [batch_size, pred_len]
-        target_index: Tensor of target channel index.
-            Shape: [batch_size]
+            Shape: [batch_size, pred_len, num_channels]
         start: Timestamps of the first history value.
             Shape: [batch_size]
         frequency: Frequency of the time series.
@@ -145,7 +157,6 @@ class BatchTimeSeriesContainer:
 
     history_values: torch.Tensor
     target_values: torch.Tensor
-    target_index: torch.Tensor
     start: np.ndarray[np.datetime64]
     frequency: Frequency
 
@@ -163,10 +174,6 @@ class BatchTimeSeriesContainer:
             raise TypeError("history_values must be a torch.Tensor")
         if not isinstance(self.target_values, torch.Tensor):
             raise TypeError("target_values must be a torch.Tensor")
-        if self.target_index is not None and not isinstance(
-            self.target_index, torch.Tensor
-        ):
-            raise TypeError("target_index must be a torch.Tensor or None")
         if not isinstance(self.start, np.ndarray):
             raise TypeError("start must be a np.ndarray")
         if not all(isinstance(s, np.datetime64) for s in self.start):
@@ -180,8 +187,8 @@ class BatchTimeSeriesContainer:
         # --- Core Shape Checks ---
         if self.target_values.shape[0] != batch_size:
             raise ValueError("Batch size mismatch between history and target_values")
-        if self.target_index.shape[0] != batch_size:
-            raise ValueError("Batch size mismatch between history and target_index")
+        if self.target_values.shape[2] != num_channels:
+            raise ValueError("Channel size mismatch between history and target_values")
 
         # --- Static Features Check ---
         if self.static_features is not None:
@@ -253,7 +260,6 @@ class BatchTimeSeriesContainer:
         all_tensors = {
             "history_values": self.history_values,
             "target_values": self.target_values,
-            "target_index": self.target_index,
             "history_mask": self.history_mask,
             "target_mask": self.target_mask,
             "past_feat_dynamic_real": self.past_feat_dynamic_real,
