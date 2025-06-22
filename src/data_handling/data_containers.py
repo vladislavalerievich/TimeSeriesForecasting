@@ -7,7 +7,7 @@ import torch
 
 
 class Frequency(Enum):
-    A = "A"  # Annual
+    A = "A"  # Annual TODO maybe replacing with A ="YE"
     Q = "Q"  # Quarterly
     M = "M"  # Monthly
     W = "W"  # Weekly

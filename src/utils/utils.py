@@ -25,11 +25,3 @@ def generate_descriptive_model_name(config):
         f"initial_lr{config['initial_lr']}_"
         f"learning_rate_{config['learning_rate']}_"
     )
-
-
-def avoid_constant_inputs(inputs, outputs):
-    idx_const_in = torch.nonzero(
-        torch.all(inputs == inputs[:, 0].unsqueeze(1), dim=1)
-    ).squeeze(1)
-    if idx_const_in.size(0) > 0:
-        inputs[idx_const_in, 0] += np.random.uniform(0.1, 1)

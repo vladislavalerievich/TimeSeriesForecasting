@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 
@@ -53,24 +54,16 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--history_length",
+        "--range_proportions",
         type=str,
-        default="256",
-        help="History length range (min,max) or fixed value",
+        default=None,
+        help='JSON string for range proportions (e.g., \'{"short": 0.34, "medium": 0.33, "long": 0.33}\')',
     )
-
     parser.add_argument(
-        "--target_length",
+        "--generator_proportions",
         type=str,
-        default="64",
-        help="Target length range (min,max) or fixed value",
-    )
-
-    parser.add_argument(
-        "--num_channels",
-        type=str,
-        default="1,8",
-        help="Number of channels range (min,max) or fixed value",
+        default=None,
+        help='JSON string for generator proportions (e.g., \'{"short": {...}, "medium": {...}, "long": {...}}\')',
     )
     parser.add_argument(
         "--save_as_single_file",
@@ -96,38 +89,21 @@ def parse_args():
     return parser.parse_args()
 
 
-def parse_range_or_value(value_str: str):
-    """Parse a string as either a range (min,max) or a fixed value."""
-    parts = value_str.split(",")
-    if len(parts) == 1:
-        return int(parts[0])
-    elif len(parts) == 2:
-        return (int(parts[0]), int(parts[1]))
-    else:
-        raise ValueError(f"Invalid format: {value_str}. Expected 'value' or 'min,max'")
-
-
 def main():
     """Main function to generate synthetic datasets."""
     args = parse_args()
 
-    # Parse range arguments
-    history_length = parse_range_or_value(args.history_length)
-    target_length = parse_range_or_value(args.target_length)
-    num_channels = parse_range_or_value(args.num_channels)
-    generator_proportions = {
-        "lmc": 0.65,
-        "kernel": 0.15,
-        "gp": 0.15,
-        "forecast_pfn": 0.05,
-    }
+    range_proportions = (
+        json.loads(args.range_proportions) if args.range_proportions else None
+    )
+    generator_proportions = (
+        json.loads(args.generator_proportions) if args.generator_proportions else None
+    )
 
     # Create dataset composer
     composer = DefaultSyntheticComposer(
         seed=args.seed,
-        history_length=history_length,
-        target_length=target_length,
-        num_channels=num_channels,
+        range_proportions=range_proportions,
         generator_proportions=generator_proportions,
     ).composer
 

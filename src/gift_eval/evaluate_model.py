@@ -3,9 +3,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import List
 
-import numpy as np
 import pandas as pd
 import torch
 import yaml
@@ -20,12 +18,8 @@ from gluonts.ev.metrics import (
     RMSE,
     SMAPE,
 )
-from gluonts.model import evaluate_model
-from gluonts.model.forecast import SampleForecast
-from gluonts.time_feature import get_seasonality
 
-from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
-from src.gift_eval.data import Dataset as GiftEvalDataset
+from src.gift_eval.evaluator import GiftEvaluator
 from src.models.models import MultiStepModel
 from src.utils.utils import device
 
@@ -103,190 +97,6 @@ gts_logger.addFilter(
 logger = logging.getLogger(__name__)
 
 
-class MultiStepModelWrapper:
-    """
-    Wrapper class following standard GIFT eval interface patterns like TabPFN-TS and TiRex
-    """
-
-    def __init__(
-        self,
-        model,
-        device,
-        max_context_length=1024,
-    ):
-        self.model = model
-        self.device = device
-        self.max_context_length = max_context_length
-        self.prediction_length = None
-        self.ds_freq = None
-
-    def set_prediction_len(self, prediction_length):
-        """Set prediction length for the current dataset"""
-        self.prediction_length = prediction_length
-
-    def set_ds_freq(self, freq):
-        """Set dataset frequency for the current dataset"""
-        self.ds_freq = freq
-
-    @property
-    def model_id(self):
-        """Model identifier for results"""
-        return "MultiStepModel"
-
-    def get_frequency_enum(self, freq_str):
-        """Map frequency string to Frequency enum"""
-        try:
-            offset = pd.tseries.frequencies.to_offset(freq_str)
-            standardized_freq = offset.name
-        except Exception:
-            # Fallback for direct frequency string
-            standardized_freq = freq_str
-
-        # Handle special cases and mappings
-        freq_map = {
-            # Annual frequencies
-            "A-DEC": Frequency.A,
-            "YE-DEC": Frequency.A,
-            "A": Frequency.A,
-            "Y": Frequency.A,
-            # Quarterly frequencies
-            "QS-DEC": Frequency.Q,
-            "Q-DEC": Frequency.Q,
-            "Q": Frequency.Q,
-            # Monthly frequencies
-            "MS": Frequency.M,
-            "ME": Frequency.M,
-            "M": Frequency.M,
-            # Weekly frequencies
-            "W-MON": Frequency.W,
-            "W-TUE": Frequency.W,
-            "W-WED": Frequency.W,
-            "W-THU": Frequency.W,
-            "W-FRI": Frequency.W,
-            "W-SAT": Frequency.W,
-            "W-SUN": Frequency.W,
-            "W": Frequency.W,
-            # Daily frequencies
-            "D": Frequency.D,
-            # Hourly frequencies
-            "H": Frequency.H,
-            "h": Frequency.H,
-            # Second frequencies
-            "S": Frequency.S,
-            "s": Frequency.S,
-            # Minute frequencies
-            "min": Frequency.T1,
-        }
-
-        # Handle minute frequencies (both old and new formats)
-        if standardized_freq.endswith("T") or standardized_freq.endswith("min"):
-            if standardized_freq.endswith("min"):
-                # New format: "15min"
-                if standardized_freq == "min":
-                    return Frequency.T1
-                minutes = int(standardized_freq[:-3])  # Remove "min"
-            else:
-                # Old format: "15T"
-                minutes = int(standardized_freq[:-1])  # Remove "T"
-
-            if minutes == 5:
-                return Frequency.T5
-            elif minutes == 10:
-                return Frequency.T10
-            elif minutes == 15:
-                return Frequency.T15
-            else:
-                # Default to T1 for other minute frequencies
-                return Frequency.T1
-        elif standardized_freq in freq_map:
-            return freq_map[standardized_freq]
-        else:
-            raise NotImplementedError(
-                f"Frequency '{standardized_freq}' is not supported."
-            )
-
-    def predict(self, dataset) -> List[SampleForecast]:
-        """Generate forecasts for the given dataset"""
-        assert self.prediction_length is not None, "Prediction length must be set"
-        forecasts = []
-
-        for data_entry in dataset:
-            target = data_entry["target"]
-            start = data_entry["start"]
-            item_id = data_entry.get("item_id", "ts")
-
-            # if np.isnan(target).any():
-            #     logger.warning(
-            #         f"Target contains NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
-            #     )
-
-            assert isinstance(start, pd.Period), (
-                f"Expected pd.Period, got {type(start)}"
-            )
-            freq = start.freqstr
-
-            history = np.asarray(target, dtype=np.float32)
-
-            if history.ndim == 1:
-                history = history.reshape(1, -1)
-
-            num_dims, seq_len = history.shape
-
-            if seq_len > self.max_context_length:
-                history = history[:, -self.max_context_length :]
-                seq_len = self.max_context_length
-
-            # Convert to multivariate format: [batch_size, seq_len, num_channels]
-            history_values = (
-                torch.from_numpy(history.T).unsqueeze(0).to(self.device)
-            )  # [1, seq_len, num_dims]
-
-            frequency = self.get_frequency_enum(freq)
-
-            # Create multivariate future_values: [batch_size, pred_len, num_channels]
-            future_values = torch.zeros(
-                (1, self.prediction_length, num_dims), dtype=torch.float32
-            ).to(self.device)
-
-            batch = BatchTimeSeriesContainer(
-                history_values=history_values,
-                future_values=future_values,
-                start=np.array([start.to_timestamp()], dtype="datetime64[ns]"),
-                frequency=frequency,
-            )
-
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                with torch.no_grad():
-                    output = self.model(batch, training=False)
-
-                    predictions = (
-                        self.model.scaler.inverse_transform(
-                            output["result"],
-                            output["scale_params"],
-                        )
-                        .cpu()
-                        .numpy()
-                    )  # [1, pred_len, num_dims]
-
-            if np.isnan(predictions).any():
-                logger.warning(
-                    f"Predictions contain NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
-                )
-
-            # Remove batch dimension and transpose to match SampleForecast format: [num_dims, pred_len]
-            predictions = predictions.squeeze(0).T  # [num_dims, pred_len]
-
-            forecast_start = start + seq_len
-
-            forecast = SampleForecast(
-                samples=predictions,
-                start_date=forecast_start,
-                item_id=item_id,  # Use the item_id as provided by the dataset
-            )
-            forecasts.append(forecast)
-        return forecasts
-
-
 def load_model():
     """Load the MultiStepModel from checkpoint"""
     model = MultiStepModel(
@@ -301,111 +111,60 @@ def load_model():
     return model
 
 
-def gift_eval_dataset_iter():
-    """Iterator over all GIFT eval datasets and terms"""
-    for ds_name in ALL_DATASETS:
-        ds_key = ds_name.split("/")[0]
-        for term in TERMS:
-            # Skip medium/long terms for datasets not in MED_LONG_DATASETS
-            if term in ["medium", "long"] and ds_name not in MED_LONG_DATASETS.split():
-                continue
-
-            if "/" in ds_name:
-                ds_key = ds_name.split("/")[0]
-                ds_freq = ds_name.split("/")[1]
-                ds_key = ds_key.lower()
-                ds_key = PRETTY_NAMES.get(ds_key, ds_key)
-            else:
-                ds_key = ds_name.lower()
-                ds_key = PRETTY_NAMES.get(ds_key, ds_key)
-                ds_freq = DATASET_PROPERTIES_MAP[ds_key]["frequency"]
-
-            yield {
-                "ds_name": ds_name,
-                "ds_key": ds_key,
-                "ds_freq": ds_freq,
-                "term": term,
-            }
-
-
-def evaluate_dataset(predictor, ds_name, ds_key, ds_freq, term):
-    """Evaluate a single dataset configuration"""
-    logger.info(f"Processing dataset: {ds_name} ({term})")
-    ds_config = f"{ds_key}/{ds_freq}/{term}"
-
-    # The target needs to be univariate
-    dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=False)
-
-    # Set predictor parameters using standard interface
-    predictor.set_prediction_len(dataset.prediction_length)
-    predictor.set_ds_freq(ds_freq)
-
-    # Get seasonality
-    season_length = get_seasonality(dataset.freq)
-
-    logger.info(f"Dataset size: {len(dataset.test_data)}")
-    logger.info(f"Dataset freq: {dataset.freq}")
-    logger.info(f"Dataset season_length: {season_length}")
-    logger.info(f"Dataset prediction length: {dataset.prediction_length}")
-    logger.info(f"Dataset target dim: {dataset.target_dim}")
-
-    # Evaluate using GluonTS evaluate_model
-    res = evaluate_model(
-        predictor,
-        test_data=dataset.test_data,
-        metrics=METRICS,
-        axis=None,
-        batch_size=128,
-        mask_invalid_label=True,
-        allow_nan_forecast=False,
-        seasonality=season_length,
-    )
-
-    result = {
-        "dataset": ds_config,
-        "model": predictor.model_id,
-        "eval_metrics/MSE[mean]": res["MSE[mean]"].iloc[0],
-        "eval_metrics/MSE[0.5]": res["MSE[0.5]"].iloc[0],
-        "eval_metrics/MAE[0.5]": res["MAE[0.5]"].iloc[0],
-        "eval_metrics/MASE[0.5]": res["MASE[0.5]"].iloc[0],
-        "eval_metrics/MAPE[0.5]": res["MAPE[0.5]"].iloc[0],
-        "eval_metrics/sMAPE[0.5]": res["sMAPE[0.5]"].iloc[0],
-        "eval_metrics/MSIS": res["MSIS"].iloc[0],
-        "eval_metrics/RMSE[0.5]": res["RMSE[0.5]"].iloc[0],
-        "eval_metrics/RMSE[mean]": res["RMSE[mean]"].iloc[0],
-        "eval_metrics/NRMSE[0.5]": res["NRMSE[0.5]"].iloc[0],
-        "eval_metrics/ND[0.5]": res["ND[0.5]"].iloc[0],
-        "domain": DATASET_PROPERTIES_MAP[ds_key]["domain"],
-        "num_variates": DATASET_PROPERTIES_MAP[ds_key]["num_variates"],
-    }
-    return result
-
-
 def evaluate_on_gift_eval():
     """Main evaluation function"""
     # Set up logging
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
 
     # Load model
     model = load_model()
-    predictor = MultiStepModelWrapper(
-        model, device, max_context_length=MAX_CONTEXT_LENGTH
-    )
+    evaluator = GiftEvaluator(model, device, max_context_length=MAX_CONTEXT_LENGTH)
 
     results = []
 
     # Iterate through all datasets and terms
-    for task in gift_eval_dataset_iter():
-        try:
-            task_result = evaluate_dataset(predictor, **task)
-            results.append(task_result)
-            logger.info(f"Completed evaluation for {task['ds_name']} ({task['term']})")
-            print(task_result)
-        except Exception as e:
-            logger.error(
-                f"Error evaluating {task['ds_name']} ({task['term']}): {str(e)}"
-            )
-            continue
+    for term in TERMS:
+        datasets_for_term = ALL_DATASETS
+        if term in ["medium", "long"]:
+            datasets_for_term = MED_LONG_DATASETS.split()
+
+        term_results = evaluator.evaluate_datasets(
+            datasets_to_eval=datasets_for_term, term=term, plot=False
+        )
+
+        for ds_key, metrics in term_results.items():
+            ds_name_parts = ds_key.split("_")
+            ds_name = ds_name_parts[0]
+            if (
+                "/" not in ds_name and len(ds_name_parts) > 2
+            ):  # handle cases like kdd_cup_2018
+                ds_name = "_".join(ds_name_parts[:-1])
+
+            if "/" in ds_name:
+                base_ds_name = ds_name.split("/")[0]
+            else:
+                base_ds_name = ds_name
+
+            base_ds_name = PRETTY_NAMES.get(base_ds_name, base_ds_name)
+
+            result_entry = {
+                "dataset": f"{ds_name}/{term}",
+                "model": "MultiStepModel",
+                "eval_metrics/MSE[mean]": metrics["MSE[mean]"],
+                "eval_metrics/MSE[0.5]": metrics["MSE[0.5]"],
+                "eval_metrics/MAE[0.5]": metrics["MAE[0.5]"],
+                "eval_metrics/MASE[0.5]": metrics["MASE[0.5]"],
+                "eval_metrics/MAPE[0.5]": metrics["MAPE[0.5]"],
+                "eval_metrics/sMAPE[0.5]": metrics["sMAPE[0.5]"],
+                "eval_metrics/MSIS": metrics["MSIS"],
+                "eval_metrics/RMSE[0.5]": metrics["RMSE[0.5]"],
+                "eval_metrics/RMSE[mean]": metrics["RMSE[mean]"],
+                "eval_metrics/NRMSE[0.5]": metrics["NRMSE[0.5]"],
+                "eval_metrics/ND[0.5]": metrics["ND[0.5]"],
+                "domain": DATASET_PROPERTIES_MAP[base_ds_name]["domain"],
+                "num_variates": DATASET_PROPERTIES_MAP[base_ds_name]["num_variates"],
+            }
+            results.append(result_entry)
 
     # Save results to CSV
     output_columns = [

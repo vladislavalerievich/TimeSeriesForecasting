@@ -139,14 +139,10 @@ class BaseModel(nn.Module):
             # Apply scaling using the same parameters as history
             if self.scaler.name == "custom_robust":
                 medians, iqrs = history_scale_params
-                future_scaled = (future_values - medians.unsqueeze(1)) / iqrs.unsqueeze(
-                    1
-                )
+                future_scaled = (future_values - medians) / iqrs
             else:  # min_max scaler
                 max_vals, min_vals = history_scale_params
-                future_scaled = (future_values - min_vals.unsqueeze(1)) / (
-                    max_vals.unsqueeze(1) - min_vals.unsqueeze(1)
-                )
+                future_scaled = (future_values - min_vals) / (max_vals - min_vals)
 
         # Get positional embeddings
         history_pos_embed = self.get_positional_embeddings(
@@ -186,10 +182,19 @@ class BaseModel(nn.Module):
             Loss value
         """
         predictions = y_pred["result"]
-        future_scaled = y_pred["future_scaled"]
+        scale_params = y_pred["scale_params"]
+        future_values = y_true
 
-        if future_scaled is None:
+        if future_values is None:
             return torch.tensor(0.0, device=predictions.device)
+
+        # Scale the ground truth future values using the same parameters as history
+        if self.scaler.name == "custom_robust":
+            medians, iqrs = scale_params
+            future_scaled = (future_values - medians) / iqrs
+        else:  # min_max scaler
+            max_vals, min_vals = scale_params
+            future_scaled = (future_values - min_vals) / (max_vals - min_vals)
 
         if predictions.shape != future_scaled.shape:
             raise ValueError(

@@ -86,7 +86,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         if start is None:
             start = pd.Timestamp.fromordinal(
                 int(
-                    (BASE_START - BASE_END) * beta.rvs(5, 1, random_state=self.rng)
+                    (BASE_END - BASE_START) * beta.rvs(5, 1, random_state=self.rng)
                     + BASE_START
                 )
             )

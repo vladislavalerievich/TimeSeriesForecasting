@@ -28,8 +28,24 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
                 frequency = self.params.frequency
         else:
             frequency = self.rng.choice(list(Frequency))
+
+        history_length = params["history_length"]
+        future_length = params["future_length"]
+
+        # Cap the total length for low-frequency series to prevent timestamp overflow
+        if frequency in [Frequency.A, Frequency.Q]:
+            max_len = 256  # A safe maximum length for annual/quarterly data
+            total_length = history_length + future_length
+            if total_length > max_len:
+                # Scale down history and future lengths while preserving their ratio
+                ratio = history_length / total_length
+                history_length = max(1, int(max_len * ratio))
+                future_length = max(1, max_len - history_length)
+
         params.update(
             {
+                "history_length": history_length,
+                "future_length": future_length,
                 "frequency": frequency,
                 "trend_exp": self.params.trend_exp,
                 "scale_noise": self.params.scale_noise,
@@ -208,6 +224,7 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         history_length = params["history_length"]
         future_length = params["future_length"]
         num_channels = params["num_channels"]
+
         total_length = history_length + future_length
         batch_values = []
         batch_start = []

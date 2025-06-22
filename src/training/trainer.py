@@ -16,6 +16,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
 from src.data_handling.data_containers import BatchTimeSeriesContainer
+from src.gift_eval.evaluator import GiftEvaluator
 from src.models.models import MultiStepModel
 from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.synthetic_generation.data_loaders import (
@@ -34,6 +35,8 @@ from src.utils.utils import (
 
 # Suppress gpytorch numerical warnings
 warnings.filterwarnings("ignore", category=NumericalWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Configure logging
 logging.basicConfig(
@@ -53,6 +56,7 @@ class TrainingPipeline:
         self.train_loader = None
         self.val_loader = None
         self.initial_epoch = 0
+        self.gift_evaluator = None
 
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
@@ -98,7 +102,7 @@ class TrainingPipeline:
             device=self.device,
         )
 
-        # Fixed validation data loader (load all batches from disk)
+        # Fixed synthetic validation data loader (load all batches from disk)
         val_data_path = self.config.get(
             "val_data_path",
             "data/synthetic_validation_dataset/dataset.pt",
@@ -108,6 +112,13 @@ class TrainingPipeline:
             batch_size=1,
             device=self.device,
             single_file=True,
+        )
+
+        # --- Setup GIFT evaluator ---
+        self.gift_evaluator = GiftEvaluator(
+            model=self.model,
+            device=self.device,
+            max_context_length=self.config["max_context_length"],
         )
 
         # Setup loss function, metrics, wandb
@@ -165,6 +176,8 @@ class TrainingPipeline:
                     project="TimeSeriesForecasting",
                     config=self.config,
                     name=self.config["model_name"],
+                    resume="allow",
+                    id=self.config["model_name"],
                 )
             except Exception as e:
                 logger.error(f"WandB initialization failed: {e}")
@@ -334,6 +347,19 @@ class TrainingPipeline:
         avg_val_loss = total_val_loss / max(1, num_batches)
         if self.config["wandb"]:
             self._plot_fixed_examples(epoch, avg_val_loss)
+
+        # --- GIFT-eval validation ---
+        if self.config["wandb"] and epoch % 5 == 4:
+            logger.info("Running GIFT-eval validation...")
+            gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
+                datasets_to_eval=["us_births/D", "saugeenday/W", "ett1/W"],
+                term="short",
+                epoch=epoch,
+                plot=True,
+            )
+            wandb.log({"gift_eval": gift_eval_metrics, "epoch": epoch})
+            logger.info("GIFT-eval validation finished.")
+
         logger.info(f"Epoch {epoch + 1} Validation Loss: {avg_val_loss:.4f}")
         return avg_val_loss
 

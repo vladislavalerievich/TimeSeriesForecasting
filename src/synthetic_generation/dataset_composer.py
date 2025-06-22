@@ -108,116 +108,6 @@ class MultiRangeDatasetComposer:
         # Return the batch and an augmented generator name indicating the range
         return batch, f"{generator_name}_{selected_range}"
 
-
-class DatasetComposer:
-    """
-    Composes datasets from multiple generator wrappers according to specified proportions.
-    Manages the generation of both training and validation datasets.
-    """
-
-    def __init__(
-        self,
-        generator_proportions: Dict[GeneratorWrapper, float],
-        global_seed: int = 42,
-    ):
-        """
-        Initialize the DatasetComposer.
-
-        Parameters
-        ----------
-        generator_proportions : Dict[GeneratorWrapper, float]
-            Dictionary mapping generator wrappers to their proportions in the dataset.
-            The proportions should sum to 1.0.
-        global_seed : int, optional
-            Global random seed for reproducibility (default: 42).
-        """
-        self.generator_proportions = generator_proportions
-        self.global_seed = global_seed
-        self.rng = np.random.default_rng(global_seed)
-
-        # Validate proportions
-        self._validate_proportions()
-
-        # Set random seed
-        torch.manual_seed(self.global_seed)
-
-    def _validate_proportions(self) -> None:
-        """
-        Validate that the generator proportions sum to approximately 1.0.
-        """
-        total_proportion = sum(self.generator_proportions.values())
-        if not np.isclose(total_proportion, 1.0, atol=1e-6):
-            raise ValueError(
-                f"Generator proportions should sum to 1.0, got {total_proportion}"
-            )
-
-    def _compute_batch_counts(self, num_batches: int) -> Dict[GeneratorWrapper, int]:
-        """
-        Compute the number of batches to generate from each generator.
-
-        Parameters
-        ----------
-        num_batches : int
-            Total number of batches to generate.
-
-        Returns
-        -------
-        Dict[GeneratorWrapper, int]
-            Dictionary mapping generator wrappers to the number of batches to generate.
-        """
-        batch_counts = {}
-        remaining_batches = num_batches
-
-        # Distribute batches according to proportions
-        for i, (generator, proportion) in enumerate(self.generator_proportions.items()):
-            if i == len(self.generator_proportions) - 1:
-                # Last generator gets all remaining batches
-                batch_counts[generator] = remaining_batches
-            else:
-                # Allocate batches based on proportion
-                count = int(num_batches * proportion)
-                batch_counts[generator] = count
-                remaining_batches -= count
-
-        return batch_counts
-
-    def generate_batch(
-        self,
-        batch_size: int,
-        seed: Optional[int] = None,
-    ) -> Tuple[BatchTimeSeriesContainer, str]:
-        """
-        Generate a single batch by randomly selecting a generator according to proportions.
-
-        Parameters
-        ----------
-        batch_size : int
-            Number of time series to generate per batch.
-        seed : int, optional
-            Random seed for reproducibility (default: None).
-
-        Returns
-        -------
-        Tuple[BatchTimeSeriesContainer, str]
-            Tuple containing (batch_data, generator_name).
-        """
-        # Set seed if provided
-        if seed is not None:
-            self.rng = np.random.default_rng(seed)
-
-        # Select generator based on proportions
-        generators = list(self.generator_proportions.keys())
-        proportions = list(self.generator_proportions.values())
-        selected_generator = self.rng.choice(generators, p=proportions)
-
-        # Generate batch
-        batch = selected_generator.generate_batch(
-            batch_size=batch_size,
-            seed=seed,
-        )
-
-        return batch, selected_generator.__class__.__name__
-
     def generate_dataset(
         self,
         num_batches: int,
@@ -241,36 +131,22 @@ class DatasetComposer:
         List[BatchTimeSeriesContainer]
             List of batch data.
         """
-        # Compute batch counts for each generator
-        batch_counts = self._compute_batch_counts(num_batches)
-
         batches = []
-        stats = {gen.__class__.__name__: 0 for gen in self.generator_proportions.keys()}
+        stats: Dict[str, int] = {}
 
-        # Generate batches from each generator
-        batch_idx = 0
-        for generator, count in batch_counts.items():
-            generator_name = generator.__class__.__name__
-            logger.info(f"Generating {count} batches from {generator_name}")
+        logger.info(f"Generating {num_batches} batches...")
+        for batch_idx in tqdm(range(num_batches), desc="Generating batches"):
+            seed = self.global_seed + batch_idx
+            batch, generator_info = self.generate_batch(
+                batch_size=batch_size,
+                seed=seed,
+            )
+            batches.append(batch)
+            stats[generator_info] = stats.get(generator_info, 0) + 1
 
-            for i in tqdm(range(count), desc=f"Generating {generator_name} batches"):
-                # Generate batch with a unique seed
-                seed = self.global_seed + batch_idx
-                batch = generator.generate_batch(
-                    batch_size=batch_size,
-                    seed=seed,
-                )
+            if save_path:
+                self._save_batch(batch, batch_idx, save_path)
 
-                batches.append(batch)
-                stats[generator_name] += 1
-
-                # Save batch if save_path is provided
-                if save_path:
-                    self._save_batch(batch, batch_idx, save_path)
-
-                batch_idx += 1
-
-        # Log statistics
         logger.info("Dataset generation completed")
         logger.info(f"Statistics: {stats}")
 
@@ -393,6 +269,86 @@ class DatasetComposer:
         self.global_seed = original_seed
 
         logger.info(f"Training and validation datasets saved to {output_dir}")
+
+
+class DatasetComposer:
+    """
+    Composes datasets from multiple generator wrappers according to specified proportions.
+    Manages the generation of both training and validation datasets.
+    """
+
+    def __init__(
+        self,
+        generator_proportions: Dict[GeneratorWrapper, float],
+        global_seed: int = 42,
+    ):
+        """
+        Initialize the DatasetComposer.
+
+        Parameters
+        ----------
+        generator_proportions : Dict[GeneratorWrapper, float]
+            Dictionary mapping generator wrappers to their proportions in the dataset.
+            The proportions should sum to 1.0.
+        global_seed : int, optional
+            Global random seed for reproducibility (default: 42).
+        """
+        self.generator_proportions = generator_proportions
+        self.global_seed = global_seed
+        self.rng = np.random.default_rng(global_seed)
+
+        # Validate proportions
+        self._validate_proportions()
+
+        # Set random seed
+        torch.manual_seed(self.global_seed)
+
+    def _validate_proportions(self) -> None:
+        """
+        Validate that the generator proportions sum to approximately 1.0.
+        """
+        total_proportion = sum(self.generator_proportions.values())
+        if not np.isclose(total_proportion, 1.0, atol=1e-6):
+            raise ValueError(
+                f"Generator proportions should sum to 1.0, got {total_proportion}"
+            )
+
+    def generate_batch(
+        self,
+        batch_size: int,
+        seed: Optional[int] = None,
+    ) -> Tuple[BatchTimeSeriesContainer, str]:
+        """
+        Generate a single batch by randomly selecting a generator according to proportions.
+
+        Parameters
+        ----------
+        batch_size : int
+            Number of time series to generate per batch.
+        seed : int, optional
+            Random seed for reproducibility (default: None).
+
+        Returns
+        -------
+        Tuple[BatchTimeSeriesContainer, str]
+            Tuple containing (batch_data, generator_name).
+        """
+        # Set seed if provided
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
+
+        # Select generator based on proportions
+        generators = list(self.generator_proportions.keys())
+        proportions = list(self.generator_proportions.values())
+        selected_generator = self.rng.choice(generators, p=proportions)
+
+        # Generate batch
+        batch = selected_generator.generate_batch(
+            batch_size=batch_size,
+            seed=seed,
+        )
+
+        return batch, selected_generator.__class__.__name__
 
 
 class OnTheFlyDatasetGenerator:

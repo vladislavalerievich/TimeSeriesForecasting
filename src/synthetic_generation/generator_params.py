@@ -63,7 +63,7 @@ class ShortRangeGeneratorParams(GeneratorParams):
     """Parameters for short-range forecasting."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [64, 96, 128, 256, 512, 720]
+        default_factory=lambda: [32, 64, 96, 128, 256, 512, 720]
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
         default_factory=lambda: [

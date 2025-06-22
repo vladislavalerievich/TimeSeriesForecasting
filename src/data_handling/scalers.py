@@ -133,7 +133,7 @@ def rescale_custom_robust(predictions, scale_params):
 
     # Broadcast scaling parameters and rescale
     # medians and iqrs have shape [batch_size, 1, num_channels]
-    rescaled = predictions * iqrs.unsqueeze(1) + medians.unsqueeze(1)
+    rescaled = predictions * iqrs + medians
 
     return rescaled
 
@@ -155,7 +155,7 @@ def rescale_min_max(predictions, scale_params):
     # Broadcast scaling parameters and rescale
     # max_values and min_values have shape [batch_size, 1, num_channels]
     range_values = max_values - min_values
-    rescaled = predictions * range_values.unsqueeze(1) + min_values.unsqueeze(1)
+    rescaled = predictions * range_values + min_values
 
     return rescaled
 
