@@ -4,7 +4,7 @@ model_name: Multivariate_DeltaNet_
 continue_training: false
 seed: 2025
 debugging: false
-wandb: false # whether to log to wandb
+wandb: true # whether to log to wandb
 
 
 lr_scheduler: cosine
@@ -15,7 +15,7 @@ scaler: custom_robust
 
 batch_size: 128
 num_epochs: 50
-num_training_iterations_per_epoch: 100
+num_training_iterations_per_epoch: 50
 log_interval: 1
 
 BaseModelConfig:

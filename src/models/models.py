@@ -22,11 +22,12 @@ class BaseModel(nn.Module):
         self,
         epsilon=1e-3,
         scaler="custom_robust",
+        scaler_clamp_value=None,
         sin_pos_enc=False,
         sin_pos_const=10000.0,
         encoding_dropout=0.0,
         handle_constants_model=False,
-        embed_size=128,  # Default embed_size, adjust as needed
+        embed_size=128,
         K_max=6,
         time_feature_config=None,
         **kwargs,
@@ -40,16 +41,27 @@ class BaseModel(nn.Module):
         self.time_feature_config = time_feature_config or {}
 
         # Create multivariate scaler
-        self.scaler = CustomScalingMultivariate(scaler)
+        self.scaler = CustomScalingMultivariate(scaler, clamp=scaler_clamp_value)
 
         # Initial embedding layers for time series values
         self.expand_values = nn.Linear(1, embed_size, bias=True)
 
         # Projection layer for GluonTS time features
-        # K_max might be auto-adjusted, so we'll set this after we know the actual value
         self.K_max = K_max
-        self.time_feature_projection = nn.Linear(K_max, embed_size)
-        self._k_max_initialized = False
+        self.auto_adjust_k_max = self.time_feature_config.get(
+            "auto_adjust_k_max", False
+        )
+
+        if self.auto_adjust_k_max:
+            min_k = self.time_feature_config.get("min_k_max", 6)
+            max_k = self.time_feature_config.get("max_k_max", 20)
+            self.time_feature_projections = nn.ModuleDict(
+                {str(k): nn.Linear(k, self.embed_size) for k in range(min_k, max_k + 1)}
+            )
+            self.time_feature_projection = None  # Not used if auto-adjusting
+        else:
+            self.time_feature_projections = None
+            self.time_feature_projection = nn.Linear(self.K_max, self.embed_size)
 
         # Sinusoidal positional encoding (optional)
         self.sin_pos_encoder = None
@@ -63,15 +75,6 @@ class BaseModel(nn.Module):
         self.concat_pos = ConcatLayer(dim=-1, name="ConcatPos")
         self.concat_embed = ConcatLayer(dim=-1, name="ConcatEmbed")
         self.concat_targets = ConcatLayer(dim=1, name="ConcatTargets")
-
-    def _update_k_max_if_needed(self, actual_k_max: int):
-        """Update K_max and time feature projection layer if auto-adjustment changed it."""
-        if not self._k_max_initialized or actual_k_max != self.K_max:
-            self.K_max = actual_k_max
-            self.time_feature_projection = nn.Linear(actual_k_max, self.embed_size).to(
-                device
-            )
-            self._k_max_initialized = True
 
     def get_positional_embeddings(
         self, time_features, num_channels, drop_enc_allow=False
@@ -97,9 +100,20 @@ class BaseModel(nn.Module):
             return self.sin_pos_encoder(time_features, num_channels).to(torch.float32)
 
         # Project GluonTS time features to embed_size
-        pos_embed = self.time_feature_projection(
-            time_features
-        )  # [batch_size, seq_len, embed_size]
+        if self.auto_adjust_k_max:
+            actual_k_max = time_features.shape[-1]
+            k_max_str = str(actual_k_max)
+            if k_max_str not in self.time_feature_projections:
+                raise ValueError(
+                    f"No projection layer found for K_max={actual_k_max}. "
+                    "Check if `time_feature_config` in `train.yaml` matches "
+                    "the feature generator's settings."
+                )
+            projection_layer = self.time_feature_projections[k_max_str]
+            pos_embed = projection_layer(time_features)
+        else:
+            pos_embed = self.time_feature_projection(time_features)
+
         return pos_embed.unsqueeze(2).expand(-1, -1, num_channels, -1)
 
     def forward(
@@ -129,12 +143,12 @@ class BaseModel(nn.Module):
             time_feature_config=self.time_feature_config,
         )
 
-        # Update K_max if auto-adjustment changed it
-        actual_k_max = history_time_features.shape[-1]
-        self._update_k_max_if_needed(actual_k_max)
-
         batch_size, seq_len, num_channels = history_values.shape
         pred_len = future_values.shape[1] if future_values is not None else 0
+
+        # Pass num_channels to MultiStepModel on first forward pass
+        if hasattr(self, "set_num_channels") and not hasattr(self, "num_channels"):
+            self.set_num_channels(num_channels)
 
         # Handle constant channels if needed
         if self.handle_constants_model:
@@ -160,7 +174,7 @@ class BaseModel(nn.Module):
             if self.scaler.name == "custom_robust":
                 medians, iqrs = history_scale_params
                 future_scaled = (future_values - medians) / iqrs
-            else:  # min_max scaler
+            elif future_values is not None:  # min_max scaler
                 max_vals, min_vals = history_scale_params
                 future_scaled = (future_values - min_vals) / (max_vals - min_vals)
 
@@ -187,7 +201,6 @@ class BaseModel(nn.Module):
             "result": predictions,
             "scale_params": history_scale_params,
             "future_scaled": future_scaled,
-            "future_values": future_values,
         }
 
     def compute_loss(self, y_true, y_pred):
@@ -208,7 +221,7 @@ class BaseModel(nn.Module):
         if future_values is None:
             return torch.tensor(0.0, device=predictions.device)
 
-        # Scale the ground truth future values using the same parameters as history
+        # Scale the ground truth future values using history scale_params
         if self.scaler.name == "custom_robust":
             medians, iqrs = scale_params
             future_scaled = (future_values - medians) / iqrs
@@ -260,6 +273,7 @@ class MultiStepModel(BaseModel):
         use_dilated_conv=True,
         dilated_conv_kernel_size=3,
         dilated_conv_max_dilation=3,
+        cross_channel_attention_heads: int = 4,
         **kwargs,
     ):
         super().__init__(scaler=scaler, **base_model_config)
@@ -267,19 +281,23 @@ class MultiStepModel(BaseModel):
         self.use_gelu = use_gelu
         self.hidden_dim = hidden_dim
         self.channel_embed_dim = self.embed_size
+        self.use_dilated_conv = use_dilated_conv
 
+        self.cross_channel_attention = nn.MultiheadAttention(
+            embed_dim=self.channel_embed_dim,
+            num_heads=cross_channel_attention_heads,
+            batch_first=True,
+        )
+        self.channel_attention_norm = nn.LayerNorm(self.channel_embed_dim)
+
+        self.input_projection_layer = None
         if use_dilated_conv:
-            self.input_projection_layer = DilatedConv1dBlock(
-                self.channel_embed_dim * self.num_channels
-                if hasattr(self, "num_channels")
-                else self.channel_embed_dim,
-                token_embed_dim,
-                dilated_conv_kernel_size,
-                dilated_conv_max_dilation,
-                single_conv=False,
-            )
+            self.dilated_conv_config = {
+                "token_embed_dim": token_embed_dim,
+                "dilated_conv_kernel_size": dilated_conv_kernel_size,
+                "dilated_conv_max_dilation": dilated_conv_max_dilation,
+            }
         else:
-            # For multivariate processing, we need to handle all channels
             self.input_projection_layer = nn.Linear(
                 self.channel_embed_dim, token_embed_dim
             )
@@ -306,9 +324,24 @@ class MultiStepModel(BaseModel):
         )
 
         self.target_projection = nn.Linear(self.embed_size, token_embed_dim)
-        # Output layer now predicts all channels
+        # Output layer now predicts all channels jointly
         self.final_output_layer = nn.Linear(token_embed_dim, 1)
         self.final_activation = nn.Identity()
+
+    def set_num_channels(self, num_channels: int):
+        """Set num_channels and initialize layers that depend on it."""
+        self.num_channels = num_channels
+        if self.use_dilated_conv and self.input_projection_layer is None:
+            self.input_projection_layer = DilatedConv1dBlock(
+                in_channels=self.channel_embed_dim,
+                out_channels=self.dilated_conv_config["token_embed_dim"],
+                kernel_size=self.dilated_conv_config["dilated_conv_kernel_size"],
+                max_dilation=self.dilated_conv_config["dilated_conv_max_dilation"],
+                single_conv=False,
+            )
+            # Move the newly created layer to the same device as the rest of the model
+            device = self.expand_values.weight.device
+            self.input_projection_layer.to(device)
 
     def forecast(self, embedded, target_pos_embed, prediction_length, num_channels):
         """
@@ -325,70 +358,96 @@ class MultiStepModel(BaseModel):
         """
         batch_size, seq_len, _ = embedded.shape
 
-        # Reshape embedded to separate channels
+        # Reshape embedded to separate channels: [B, S, N, E]
         embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
 
-        # Process each channel through the encoder
-        all_channel_predictions = []
+        # Cross-channel attention for learning inter-dependencies
 
-        for c in range(num_channels):
-            # Get embeddings for current channel
-            channel_embedded = embedded[:, :, c, :]  # [batch_size, seq_len, embed_size]
+        # Reshape for attention: [B, S, N, E] -> [B*S, N, E]
+        channel_input = embedded.view(
+            batch_size * seq_len, num_channels, self.embed_size
+        )
 
-            # Apply input projection
-            x = self.input_projection_layer(channel_embedded)
+        # Apply self-attention across channels
+        attended_channels, _ = self.cross_channel_attention(
+            query=channel_input, key=channel_input, value=channel_input
+        )
 
-            # Apply global residual if enabled
-            if self.global_residual:
-                glob_res = channel_embedded[
-                    :, -(self.linear_sequence_length + 1) :, :
-                ].reshape(batch_size, -1)
-                glob_res = (
-                    self.global_residual(glob_res)
-                    .unsqueeze(1)
-                    .repeat(1, prediction_length, 1)
+        # Add residual connection and layer norm
+        attended_channels = self.channel_attention_norm(
+            channel_input + attended_channels
+        )
+
+        # Reshape back to [B, S, N, E]
+        embedded = attended_channels.view(
+            batch_size, seq_len, num_channels, self.embed_size
+        )
+
+        # Permute and reshape for joint channel processing: [B*N, S, E]
+        channel_embedded_all = (
+            embedded.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, seq_len, self.embed_size)
+        )
+
+        # Apply input projection
+        x = self.input_projection_layer(channel_embedded_all)
+
+        # Apply global residual if enabled
+        glob_res = 0.0
+        if self.global_residual:
+            glob_res_input = channel_embedded_all[
+                :, -(self.linear_sequence_length + 1) :, :
+            ].reshape(batch_size * num_channels, -1)
+            glob_res = (
+                self.global_residual(glob_res_input)
+                .unsqueeze(1)
+                .repeat(1, prediction_length, 1)
+            )
+
+        # Pass through encoder layers
+        for encoder_layer in self.encoder_layers:
+            x = encoder_layer(x)
+
+        if self.use_gelu and self.initial_gelu is not None:
+            x = self.input_projection_norm(x)
+            x = self.initial_gelu(x)
+
+        # Reshape target positional embeddings for joint processing: [B*N, P, E]
+        target_pos_embed_all = (
+            target_pos_embed.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, prediction_length, self.embed_size)
+        )
+        target_repr = self.target_projection(target_pos_embed_all)
+
+        # Use the last part of the sequence for prediction
+        x_sliced = x[
+            :, -prediction_length:, :
+        ]  # [batch_size * num_channels, pred_len, token_embed_dim]
+
+        if x_sliced.shape != target_repr.shape:
+            # If sequence is shorter than prediction length, repeat the last timestep
+            if x.shape[1] < prediction_length:
+                x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
+                x_sliced = x_last
+            else:
+                raise ValueError(
+                    f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
                 )
 
-            # Pass through encoder layers
-            for encoder_layer in self.encoder_layers:
-                x = encoder_layer(x)
+        # Generate predictions for all channels
+        final_representation = x_sliced + target_repr
+        if self.global_residual:
+            final_representation += glob_res
 
-            if self.use_gelu and self.initial_gelu is not None:
-                x = self.input_projection_norm(x)
-                x = self.initial_gelu(x)
+        predictions_flat = self.final_output_layer(final_representation).squeeze(-1)
 
-            # Get target positional embeddings for current channel
-            target_pos_embed_channel = target_pos_embed[
-                :, :, c, :
-            ]  # [batch_size, pred_len, embed_size]
-            target_repr = self.target_projection(target_pos_embed_channel)
-
-            # Use the last part of the sequence for prediction
-            x_sliced = x[
-                :, -prediction_length:, :
-            ]  # [batch_size, pred_len, token_embed_dim]
-
-            if x_sliced.shape != target_repr.shape:
-                # If sequence is shorter than prediction length, repeat the last timestep
-                if x.shape[1] < prediction_length:
-                    x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
-                    x_sliced = x_last
-                else:
-                    raise ValueError(
-                        f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
-                    )
-
-            # Generate predictions for this channel
-            channel_pred = self.final_output_layer(
-                x_sliced + target_repr
-            )  # [batch_size, pred_len, 1]
-            all_channel_predictions.append(
-                channel_pred.squeeze(-1)
-            )  # [batch_size, pred_len]
-
-        # Stack all channel predictions
-        predictions = torch.stack(
-            all_channel_predictions, dim=-1
-        )  # [batch_size, pred_len, num_channels]
+        # Reshape back to [B, P, N] before returning
+        predictions = (
+            predictions_flat.view(batch_size, num_channels, prediction_length)
+            .permute(0, 2, 1)
+            .contiguous()
+        )
 
         return predictions

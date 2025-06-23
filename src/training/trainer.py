@@ -56,6 +56,7 @@ class TrainingPipeline:
         self.val_loader = None
         self.initial_epoch = 0
         self.gift_evaluator = None
+        self.log_interval = self.config.get("log_interval", 10)
 
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
@@ -213,24 +214,6 @@ class TrainingPipeline:
         )
         logger.info(f"Checkpoint saved at epoch {epoch}")
 
-    def _scale_target(self, target: torch.Tensor, output: Dict) -> torch.Tensor:
-        """Scale multivariate target values based on configured scaler."""
-        # target: [batch_size, pred_len, num_channels]
-        # scale_params: tuple of (param1, param2) with shape [batch_size, 1, num_channels]
-
-        if self.config["scaler"] == "min_max":
-            max_scale = output["scale_params"][0]  # [batch_size, 1, num_channels]
-            min_scale = output["scale_params"][1]  # [batch_size, 1, num_channels]
-            # Broadcast scaling to match target shape
-            scaled_target = (target - min_scale) / (max_scale - min_scale)
-            return scaled_target
-        else:  # custom_robust
-            medians = output["scale_params"][0]  # [batch_size, 1, num_channels]
-            iqrs = output["scale_params"][1]  # [batch_size, 1, num_channels]
-            # Broadcast scaling to match target shape
-            scaled_target = (target - medians) / iqrs
-            return scaled_target
-
     def _inverse_scale(self, output: torch.Tensor, scale_params: Tuple) -> torch.Tensor:
         """Inverse scale multivariate model predictions using scaler's built-in method."""
         # Use the model's scaler inverse_transform method for consistency
@@ -291,8 +274,16 @@ class TrainingPipeline:
         if predictions.dim() == 3 and targets.dim() == 3:
             # Flatten to [batch_size * num_channels, pred_len] for metric computation
             batch_size, pred_len, num_channels = predictions.shape
-            predictions = predictions.view(-1, pred_len)
-            targets = targets.view(-1, pred_len)
+            predictions = (
+                predictions.permute(0, 2, 1)
+                .contiguous()
+                .view(batch_size * num_channels, pred_len)
+            )
+            targets = (
+                targets.permute(0, 2, 1)
+                .contiguous()
+                .view(batch_size * num_channels, pred_len)
+            )
         elif predictions.dim() != targets.dim():
             raise ValueError(
                 f"Prediction and target dimensions don't match: {predictions.shape} vs {targets.shape}"
@@ -305,7 +296,7 @@ class TrainingPipeline:
         self, epoch: int, batch_idx: int, running_loss: float
     ) -> None:
         """Log training progress."""
-        avg_loss = running_loss / 10
+        avg_loss = running_loss / self.log_interval
         logger.info(
             f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, "
             f"Batch Len: {self.config['batch_size']}, Sc. Loss: {avg_loss:.4f}"
@@ -334,10 +325,11 @@ class TrainingPipeline:
                 data, target = self._prepare_batch(batch)
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                     output = self.model(data)
-                    val_loss = self.model.compute_loss(target, output).item()
-                total_val_loss += val_loss
+                    loss = self.model.compute_loss(target, output)
 
-                # Inverse transform predictions for metrics
+                total_val_loss += loss.item()
+
+                # Inverse transform predictions for metrics calculation
                 inv_scaled_output = self.model.scaler.inverse_transform(
                     output["result"], output["scale_params"]
                 )
@@ -346,6 +338,15 @@ class TrainingPipeline:
 
         avg_val_loss = total_val_loss / max(1, num_batches)
         if self.config["wandb"]:
+            wandb.log(
+                {
+                    "val/sc_loss": avg_val_loss,
+                    "val/mape": self.val_metrics["mape"].compute(),
+                    "val/mse": self.val_metrics["mse"].compute(),
+                    "val/smape": self.val_metrics["smape"].compute(),
+                    "epoch": epoch,
+                }
+            )
             self._plot_fixed_examples(epoch, avg_val_loss)
 
         # --- GIFT-eval validation ---
@@ -392,7 +393,7 @@ class TrainingPipeline:
             running_loss += loss.item()
             epoch_loss += loss.item()
 
-            if batch_idx % 10 == 9:
+            if (batch_idx + 1) % self.log_interval == 0:
                 self._log_training_progress(epoch, batch_idx, running_loss)
                 running_loss = 0.0
 
