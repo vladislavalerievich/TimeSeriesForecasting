@@ -11,14 +11,15 @@ class GeneratorParams:
     global_seed: int = 42
     distribution_type: str = "uniform"
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [32, 1024]
+        default_factory=lambda: (32, 1024)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [6, 1024]
+        default_factory=lambda: (6, 1024)
     )
     num_channels: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [1, 2, 7]
+        default_factory=lambda: (1, 7)
     )
+    frequency: Frequency = Frequency.D
 
     def update(self, **kwargs):
         """Update parameters from keyword arguments."""
@@ -62,7 +63,7 @@ class ShortRangeGeneratorParams(GeneratorParams):
     """Parameters for short-range forecasting (aligned with GIFT eval patterns)."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (25, 1024)  # Range from GIFT eval: 25-1024 (capped)
+        default_factory=lambda: (25, 1024)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
         default_factory=lambda: [
@@ -105,7 +106,7 @@ class LongRangeGeneratorParams(GeneratorParams):
     """Parameters for long-range forecasting (aligned with GIFT eval patterns)."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (140, 1024)  # Range from GIFT eval: 140-1024 (capped)
+        default_factory=lambda: (140, 1024)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
         default_factory=lambda: [
@@ -116,7 +117,7 @@ class LongRangeGeneratorParams(GeneratorParams):
             450,
             720,
             900,
-        ]  # GIFT eval long-term lengths
+        ]
     )
 
 
@@ -146,10 +147,9 @@ class GPGeneratorParams(GeneratorParams):
     Parameters for the Gaussian Process (GP) Prior synthetic data generator.
     """
 
-    frequency: Frequency = Frequency.D
     max_kernels: int = 6
     likelihood_noise_level: float = 0.1  # Reduced for numerical stability
-    noise_level: str = "random"  # Options: ["random", "high", "moderate", "low"]
+    noise_level: str = "low"  # Options: ["random", "high", "moderate", "low"]
     use_original_gp: bool = False
     gaussians_periodic: bool = True
     peak_spike_ratio: float = 0.1
@@ -173,7 +173,6 @@ class GPGeneratorParams(GeneratorParams):
 class ForecastPFNGeneratorParams(GeneratorParams):
     """Parameters for the ForecastPFNGenerator."""
 
-    frequency: Frequency = Frequency.D
     trend_exp: bool = True
     scale_noise: Tuple[float, float] = (0.6, 0.3)
     harmonic_scale_ratio: float = 0.5

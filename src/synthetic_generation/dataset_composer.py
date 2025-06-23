@@ -542,12 +542,6 @@ class DefaultSyntheticComposer:
                     gen_params.global_seed = seed
                     gen_params.distribution_type = range_params.distribution_type
 
-                    # Override frequency list if available in range params
-                    if hasattr(range_params, "frequency") and hasattr(
-                        gen_params, "frequency"
-                    ):
-                        gen_params.frequency = range_params.frequency
-
                     # Re-run validation after parameter updates
                     gen_params.__post_init__()
 

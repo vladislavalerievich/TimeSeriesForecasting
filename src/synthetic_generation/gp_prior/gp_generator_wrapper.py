@@ -18,7 +18,6 @@ class GPGeneratorWrapper(GeneratorWrapper):
 
         params.update(
             {
-                "frequency": self.params.frequency,
                 "max_kernels": self.params.max_kernels,
                 "likelihood_noise_level": self.params.likelihood_noise_level,
                 "noise_level": self.params.noise_level,

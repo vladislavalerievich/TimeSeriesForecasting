@@ -22,7 +22,6 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
         params.update(
             {
-                "frequency": self.params.frequency,
                 "trend_exp": self.params.trend_exp,
                 "scale_noise": self.params.scale_noise,
                 "harmonic_scale_ratio": self.params.harmonic_scale_ratio,

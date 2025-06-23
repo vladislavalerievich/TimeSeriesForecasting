@@ -2,7 +2,6 @@ import logging
 import os
 
 import numpy as np
-import torch
 
 from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.synthetic_generation.forecast_pfn_prior.forecast_pfn_generator_wrapper import (
@@ -95,46 +94,11 @@ def visualize_batch_sample(
     logger.info("--------------------------------")
 
 
-def visualize_saved_batch(
-    batch_path: str = "data/synthetic_val_data_lmc_75_kernel_25_batches_10_batch_size_64/batch_00000.pt",
-    output_dir: str = "outputs/plots/",
-    sample_idx: int = 0,
-    show: bool = False,
-) -> None:
-    """
-    Load a saved batch file and visualize a specific sample.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    logger.info(f"Saving plots to {output_dir}")
-
-    try:
-        logger.info(f"Loading batch from {batch_path}")
-        batch = torch.load(batch_path)
-        logger.info(f"Loaded batch with {batch.history_values.shape[0]} samples")
-    except Exception as e:
-        logger.error(f"Failed to load batch from {batch_path}: {e}")
-        raise
-
-    output_file = os.path.join(output_dir, f"saved_sample_{sample_idx:03d}.png")
-    try:
-        plot_from_container(
-            ts_data=batch,
-            sample_idx=sample_idx,
-            output_file=output_file,
-            show=show,
-            title=f"Saved Multivariate Time Series (Sample {sample_idx})",
-        )
-        logger.info(f"Saved plot for sample {sample_idx} to {output_file}")
-    except Exception as e:
-        logger.error(f"Failed to save plot for sample {sample_idx}: {e}")
-        raise
-
-
 if __name__ == "__main__":
     # Configuration
     batch_size = 2
-    history_length = 128
-    future_length = 64
+    history_length = 1024
+    future_length = 512
     output_dir = "outputs/plots"
     global_seed = 2025
 
@@ -222,6 +186,3 @@ if __name__ == "__main__":
     visualize_batch_sample(
         forecast_pfn_multivariate_gen, batch_size=batch_size, output_dir=output_dir
     )
-
-    # Optionally, load and visualize the first sample from a saved batch
-    # visualize_saved_batch()
