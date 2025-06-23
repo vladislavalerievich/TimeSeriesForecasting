@@ -162,7 +162,7 @@ def test_synthetic_composer():
 
     # --- 2. Generate Batches and Collect Stats ---
     num_batches = 100
-    batch_size = 1
+    batch_size = 3
     generator_counts = Counter()
     # A dictionary where each value is a set of unique shape tuples
     generator_shapes = defaultdict(set)
@@ -185,7 +185,7 @@ def test_synthetic_composer():
         batch_time = time.time() - batch_start
         batch_times.append(batch_time)
         print(
-            f"  -> Batch {i + 1} of history length {batch.history_values.shape[1]} and future length {batch.future_values.shape[1]} completed in {batch_time:.4f}s using {generator_full_name}"
+            f"  -> Batch {i + 1} of history length {batch.history_values.shape[1]} and future length {batch.future_values.shape[1]}. frequency {batch.frequency} completed in {batch_time:.4f}s using {generator_full_name}"
         )
 
         generator_counts[generator_full_name] += 1
