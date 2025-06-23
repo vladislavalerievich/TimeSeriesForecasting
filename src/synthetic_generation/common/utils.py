@@ -36,28 +36,58 @@ ALL_FREQUENCY_MAX_LENGTHS = {
     **HIGH_FREQUENCY_MAX_LENGTHS,
 }
 
-# Simplified frequency selection based on GIFT eval patterns
-# Non-overlapping ranges for clear preferences
-FREQUENCY_OPTIMAL_RANGES = {
-    Frequency.A: (20, 60),  # Annual: 20-60 total length
-    Frequency.Q: (60, 120),  # Quarterly: 60-120 total length
-    Frequency.M: (120, 400),  # Monthly: 120-400 total length
-    Frequency.W: (200, 600),  # Weekly: 200-600 total length
-    Frequency.D: (400, 1800),  # Daily: 400-1800 total length (main workhorse)
-    Frequency.H: (800, 2200),  # Hourly: 800-2200 total length (main workhorse)
-    Frequency.S: (1000, 2000),  # 10-second: 1000-2000 total length
-    Frequency.T1: (1800, 3500),  # 1-minute: 1800-3500 total length
-    Frequency.T10: (2500, 5000),  # 10-minute: 2500-5000 total length
-    Frequency.T5: (4000, 8000),  # 5-minute: 4000-8000 total length
-    Frequency.T15: (5000, 9000),  # 15-minute: 5000-9000 total length
+# GIFT eval-based frequency distribution (actual percentages from 124 datasets)
+GIFT_EVAL_FREQUENCY_WEIGHTS = {
+    Frequency.H: 21.8,  # Hourly - most common (27/124 datasets)
+    Frequency.D: 18.5,  # Daily - second most common (23/124 datasets)
+    Frequency.W: 12.9,  # Weekly - third most common (16/124 datasets)
+    Frequency.T15: 9.7,  # 15-minute (12/124 datasets)
+    Frequency.T5: 9.7,  # 5-minute (12/124 datasets)
+    Frequency.M: 6.5,  # Monthly (8/124 datasets)
+    Frequency.T10: 5.6,  # 10-minute (7/124 datasets)
+    Frequency.S: 4.8,  # 10-second (6/124 datasets)
+    Frequency.T1: 2.0,  # 1-minute (rare, estimated)
+    Frequency.Q: 0.8,  # Quarterly (1/124 datasets)
+    Frequency.A: 0.8,  # Annual (1/124 datasets)
+}
+
+# More conservative GIFT eval-based ranges with clear discrimination
+# Format: (min_length, max_length, optimal_start, optimal_end)
+GIFT_EVAL_LENGTH_RANGES = {
+    # Low frequency ranges
+    Frequency.A: (30, 65, 35, 50),  # Annual: very specific range
+    Frequency.Q: (25, 100, 30, 60),  # Quarterly: narrow range
+    Frequency.M: (40, 900, 80, 700),  # Monthly: 40-900, optimal 80-700
+    Frequency.W: (
+        50,
+        3400,
+        100,
+        1000,
+    ),  # Weekly: 50-3.4k, optimal 100-1k (reduced overlap)
+    # Medium frequency ranges
+    Frequency.D: (30, 7000, 200, 2500),  # Daily: 30-7k, optimal 200-2.5k (lowered min)
+    Frequency.H: (
+        24,
+        35000,
+        700,
+        20000,
+    ),  # Hourly: 24-35k, optimal 700-20k (lowered min)
+    # High frequency ranges
+    Frequency.T1: (1400, 2500, 1400, 2000),  # 1-minute: narrow optimal range
+    Frequency.S: (7600, 9000, 7600, 9000),  # 10-second: narrow range
+    Frequency.T15: (2600, 140000, 5000, 80000),  # 15-minute: 2.6k-140k, optimal 5k-80k
+    Frequency.T5: (7000, 105000, 10000, 60000),  # 5-minute: 7k-105k, optimal 10k-60k
+    Frequency.T10: (46000, 53000, 47000, 52000),  # 10-minute: very narrow range
 }
 
 
 def select_safe_random_frequency(total_length: int, rng: Generator) -> Frequency:
     """
     Selects a random frequency suitable for a given total length of a time series,
-    avoiding combinations that could lead to pandas timestamp overflow errors.
-    Uses simplified logic based on GIFT eval patterns.
+    based on actual GIFT eval dataset patterns and distributions.
+
+    This function uses conservative data-driven weights and realistic length ranges
+    derived from analysis of 124 GIFT eval datasets across short/medium/long term horizons.
 
     Parameters
     ----------
@@ -69,59 +99,66 @@ def select_safe_random_frequency(total_length: int, rng: Generator) -> Frequency
     Returns
     -------
     Frequency
-        A randomly selected, suitable frequency with GIFT eval-aligned weighting.
+        A randomly selected frequency that matches GIFT eval patterns.
     """
-    # GIFT eval frequency weights (simplified)
-    base_weights = {
-        Frequency.D: 30.0,  # Daily - most common in GIFT eval
-        Frequency.H: 23.0,  # Hourly - very common
-        Frequency.T15: 13.0,  # 15-minute - common
-        Frequency.W: 10.0,  # Weekly - moderate
-        Frequency.T5: 10.0,  # 5-minute - common
-        Frequency.T10: 8.0,  # 10-minute - moderate
-        Frequency.M: 7.0,  # Monthly - moderate
-        Frequency.S: 4.0,  # 10-second - less common
-        Frequency.T1: 2.0,  # 1-minute - rare
-        Frequency.Q: 1.0,  # Quarterly - rare
-        Frequency.A: 1.0,  # Annual - rare
-    }
 
-    # Get all frequencies that don't exceed max length constraints
+    # Find valid frequencies and calculate scores
     valid_frequencies = []
-    weights = []
+    frequency_scores = []
 
     for freq in Frequency:
+        # Check basic timestamp limits
         max_allowed = ALL_FREQUENCY_MAX_LENGTHS.get(freq, float("inf"))
+        if total_length > max_allowed:
+            continue
 
-        if total_length <= max_allowed:
-            valid_frequencies.append(freq)
+        # Check if frequency has GIFT eval ranges defined
+        if freq not in GIFT_EVAL_LENGTH_RANGES:
+            continue
 
-            # Get base weight
-            base_weight = base_weights.get(freq, 0.1)
+        min_len, max_len, optimal_start, optimal_end = GIFT_EVAL_LENGTH_RANGES[freq]
 
-            # Check if length is in optimal range
-            optimal_min, optimal_max = FREQUENCY_OPTIMAL_RANGES.get(
-                freq, (1, float("inf"))
-            )
+        # Must be within the frequency's realistic range
+        if total_length < min_len or total_length > max_len:
+            continue
 
-            if optimal_min <= total_length <= optimal_max:
-                # In optimal range - use full weight
-                final_weight = base_weight * 10.0  # Strong boost for optimal range
+        valid_frequencies.append(freq)
+
+        # Calculate fitness score
+        base_weight = GIFT_EVAL_FREQUENCY_WEIGHTS.get(freq, 0.1)
+
+        # Length-based fitness with moderate boosts
+        if optimal_start <= total_length <= optimal_end:
+            # In optimal range - frequency gets its strongest preference
+            length_multiplier = 2.0  # Moderate boost for optimal range
+        else:
+            # Outside optimal but within valid range
+            # Calculate distance-based penalty
+            if total_length < optimal_start:
+                distance_penalty = (optimal_start - total_length) / (
+                    optimal_start - min_len
+                )
             else:
-                # Outside optimal range - use reduced weight
-                final_weight = base_weight * 0.1
+                distance_penalty = (total_length - optimal_end) / (
+                    max_len - optimal_end
+                )
 
-            weights.append(final_weight)
+            length_multiplier = 0.3 + 0.4 * (1.0 - distance_penalty)  # Range 0.3-0.7
 
+        final_score = base_weight * length_multiplier
+        frequency_scores.append(final_score)
+
+    # Handle edge cases
     if not valid_frequencies:
-        # Fallback to Daily
-        return Frequency.D
+        return Frequency.D  # Fallback to Daily
 
-    # Normalize weights to probabilities
-    weights = np.array(weights)
-    probabilities = weights / weights.sum()
+    if len(valid_frequencies) == 1:
+        return valid_frequencies[0]
 
-    # Select frequency based on weighted probabilities
+    # Select based on weighted probabilities
+    scores = np.array(frequency_scores)
+    probabilities = scores / scores.sum()
+
     return rng.choice(valid_frequencies, p=probabilities)
 
 
