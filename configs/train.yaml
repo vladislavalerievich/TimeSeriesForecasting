@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: Multivariate_GatedDeltaNet_
+model_name: Multivariate_DeltaNet_
 continue_training: false
 seed: 2025
 debugging: false
@@ -13,16 +13,22 @@ learning_rate: 0.00001 # 1e-5
 loss: mse # mae
 scaler: custom_robust
 
-batch_size: 2
+batch_size: 384
 num_epochs: 50
 num_training_iterations_per_epoch: 50
 
 BaseModelConfig:
   sin_pos_enc: false
   sin_pos_const: 100
-  sub_day: true
   encoding_dropout: 0.0
   handle_constants_model: false
+
+  time_feature_config:
+    use_enhanced_features: true
+    use_holiday_features: false
+    use_index_features: true
+    auto_adjust_k_max: true
+    include_seasonality_info: true 
 
 MultiStepModel:  
   residual: false
@@ -37,7 +43,7 @@ MultiStepModel:
   dilated_conv_max_dilation: 3
 
 EncoderConfig:
-  encoder_type: GatedDeltaNet
+  encoder_type: DeltaNet
   token_embed_dim: 1024 # Todo: remove duplicate
   num_layers: 2
   num_heads: 4  

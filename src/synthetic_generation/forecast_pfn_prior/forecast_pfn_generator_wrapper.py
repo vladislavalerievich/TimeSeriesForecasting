@@ -33,8 +33,24 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         future_length = params["future_length"]
 
         # Cap the total length for low-frequency series to prevent timestamp overflow
-        if frequency in [Frequency.A, Frequency.Q]:
-            max_len = 256  # A safe maximum length for annual/quarterly data
+        # Pandas datetime range is roughly 1677-2262, so we need conservative limits
+        frequency_limits = {
+            Frequency.A: 128,  # Annual: 128 years max
+            Frequency.Q: 512,  # Quarterly: 128 years max (512 quarters)
+            Frequency.M: 1536,  # Monthly: 128 years max (1536 months)
+            Frequency.W: 6656,  # Weekly: ~128 years max
+        }
+
+        # TODO Remove this
+        # frequency_limits = {
+        #     Frequency.A: 99,  # Annual: 99 years max
+        #     Frequency.Q: 396,  # Quarterly: 99 years max (396 quarters)
+        #     Frequency.M: 1188,  # Monthly: 99 years max (1188 months)
+        #     Frequency.W: 5148,  # Weekly: ~99 years max
+        # }
+
+        if frequency in frequency_limits:
+            max_len = frequency_limits[frequency]
             total_length = history_length + future_length
             if total_length > max_len:
                 # Scale down history and future lengths while preserving their ratio

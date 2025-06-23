@@ -71,6 +71,7 @@ class TrainingPipeline:
             base_model_config=self.config["BaseModelConfig"],
             encoder_config=self.config["EncoderConfig"],
             scaler=self.config["scaler"],
+            time_feature_config=self.config.get("time_feature_config", {}),
             **self.config["MultiStepModel"],
         ).to(self.device)
 
