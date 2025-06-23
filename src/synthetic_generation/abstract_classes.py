@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
+from src.synthetic_generation.common.utils import select_safe_random_frequency
 from src.synthetic_generation.generator_params import GeneratorParams
 
 
@@ -157,10 +158,15 @@ class GeneratorWrapper:
 
         num_channels = self._parse_param_value(self.params.num_channels)
 
+        # Select a suitable frequency based on the total length
+        total_length = history_length + future_length
+        frequency = select_safe_random_frequency(total_length, self.rng)
+
         return {
             "history_length": history_length,
             "future_length": future_length,
             "num_channels": num_channels,
+            "frequency": frequency,
         }
 
     def _get_all_possible_values(
@@ -201,7 +207,7 @@ class GeneratorWrapper:
         start: np.ndarray,
         history_length: int,
         future_length: int,
-        frequency: Optional[Frequency] = None,
+        frequency: Frequency,
     ) -> BatchTimeSeriesContainer:
         """
         Format the generated time series data into a BatchTimeSeriesContainer.
@@ -216,8 +222,8 @@ class GeneratorWrapper:
             Length of the history window
         future_length: int
             Length of the future window
-        frequency: Optional[Frequency]
-            Frequency of the time series. If None, a random frequency is selected.
+        frequency: Frequency
+            Frequency of the time series.
         """
 
         # Split values into history and future
@@ -228,10 +234,6 @@ class GeneratorWrapper:
             values[:, history_length : history_length + future_length, :],
             dtype=torch.float32,
         )
-
-        # Select a random frequency if none provided
-        if frequency is None:
-            frequency = self.rng.choice(list(Frequency))
 
         return BatchTimeSeriesContainer(
             history_values=history_values,

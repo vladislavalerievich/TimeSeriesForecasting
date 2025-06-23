@@ -93,7 +93,7 @@ class TrainingPipeline:
         on_the_fly_gen = OnTheFlyDatasetGenerator(
             composer=composer,
             batch_size=self.config["batch_size"],
-            buffer_size=10,
+            buffer_size=2,
             global_seed=self.config["seed"],
         )
         self.train_loader = SyntheticTrainDataLoader(

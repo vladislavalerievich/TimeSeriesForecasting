@@ -137,6 +137,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         num_channels = params["num_channels"]
         max_kernels = params["max_kernels"]
         use_gpytorch = params["use_gpytorch"]
+        frequency = params["frequency"]
         total_length = history_length + future_length
         batch_values = []
         batch_start = []
@@ -163,7 +164,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             start=np.array(batch_start),
             history_length=history_length,
             future_length=future_length,
-            frequency=None,
+            frequency=frequency,
         )
 
     def _format_to_container(

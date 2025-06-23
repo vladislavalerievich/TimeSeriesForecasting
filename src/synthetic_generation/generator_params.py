@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Union
 
-from src.data_handling.data_containers import Frequency as DataFrequency
 from src.synthetic_generation.common.constants import Frequency
 
 
@@ -60,10 +59,10 @@ class GeneratorParams:
 
 @dataclass
 class ShortRangeGeneratorParams(GeneratorParams):
-    """Parameters for short-range forecasting."""
+    """Parameters for short-range forecasting (aligned with GIFT eval patterns)."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [32, 64, 96, 128, 256, 512, 720]
+        default_factory=lambda: (25, 1024)  # Range from GIFT eval: 25-1024 (capped)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
         default_factory=lambda: [
@@ -78,67 +77,46 @@ class ShortRangeGeneratorParams(GeneratorParams):
             60,
         ]
     )
-    frequency: List[DataFrequency] = field(
-        default_factory=lambda: [
-            DataFrequency.S,
-            DataFrequency.T5,
-            DataFrequency.T10,
-            DataFrequency.T15,
-            DataFrequency.H,
-            DataFrequency.D,
-            DataFrequency.W,
-            DataFrequency.M,
-            DataFrequency.Q,
-            DataFrequency.A,
-        ]
-    )
 
 
 @dataclass
 class MediumRangeGeneratorParams(GeneratorParams):
-    """Parameters for medium-range forecasting."""
+    """Parameters for medium-range forecasting (aligned with GIFT eval patterns)."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [128, 256, 512, 720, 1024]
+        default_factory=lambda: (120, 1024)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [80, 120, 140, 180, 300, 480, 600]
-    )
-    frequency: List[DataFrequency] = field(
         default_factory=lambda: [
-            DataFrequency.S,
-            DataFrequency.T5,
-            DataFrequency.T10,
-            DataFrequency.T15,
-            DataFrequency.H,
-            DataFrequency.D,
-            DataFrequency.W,
-            DataFrequency.M,
+            80,
+            120,
+            130,
+            140,
+            180,
+            300,
+            480,
+            600,
         ]
     )
 
 
 @dataclass
 class LongRangeGeneratorParams(GeneratorParams):
-    """Parameters for long-range forecasting."""
+    """Parameters for long-range forecasting (aligned with GIFT eval patterns)."""
 
     history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [512, 720, 1024]
+        default_factory=lambda: (140, 1024)  # Range from GIFT eval: 140-1024 (capped)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [120, 180, 195, 210, 450, 720, 900]
-    )
-    frequency: List[DataFrequency] = field(
         default_factory=lambda: [
-            DataFrequency.S,
-            DataFrequency.T5,
-            DataFrequency.T10,
-            DataFrequency.T15,
-            DataFrequency.H,
-            DataFrequency.D,
-            DataFrequency.W,
-            DataFrequency.M,
-        ]
+            120,
+            180,
+            195,
+            210,
+            450,
+            720,
+            900,
+        ]  # GIFT eval long-term lengths
     )
 
 

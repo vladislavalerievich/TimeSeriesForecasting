@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
-from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.common.utils import generate_spikes
 from src.synthetic_generation.forecast_pfn_prior.forecast_pfn_generator import (
@@ -19,50 +19,10 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
     def _sample_parameters(self) -> Dict[str, Any]:
         params = super()._sample_parameters()
-        # Sample frequency from the frequency list in params if available, otherwise use default
-        if hasattr(self.params, "frequency") and self.params.frequency:
-            if isinstance(self.params.frequency, list):
-                frequency = self.rng.choice(self.params.frequency)
-            else:
-                # If it's a single frequency value, use it directly
-                frequency = self.params.frequency
-        else:
-            frequency = self.rng.choice(list(Frequency))
-
-        history_length = params["history_length"]
-        future_length = params["future_length"]
-
-        # Cap the total length for low-frequency series to prevent timestamp overflow
-        # Pandas datetime range is roughly 1677-2262, so we need conservative limits
-        frequency_limits = {
-            Frequency.A: 128,  # Annual: 128 years max
-            Frequency.Q: 512,  # Quarterly: 128 years max (512 quarters)
-            Frequency.M: 1536,  # Monthly: 128 years max (1536 months)
-            Frequency.W: 6656,  # Weekly: ~128 years max
-        }
-
-        # TODO Remove this
-        # frequency_limits = {
-        #     Frequency.A: 99,  # Annual: 99 years max
-        #     Frequency.Q: 396,  # Quarterly: 99 years max (396 quarters)
-        #     Frequency.M: 1188,  # Monthly: 99 years max (1188 months)
-        #     Frequency.W: 5148,  # Weekly: ~99 years max
-        # }
-
-        if frequency in frequency_limits:
-            max_len = frequency_limits[frequency]
-            total_length = history_length + future_length
-            if total_length > max_len:
-                # Scale down history and future lengths while preserving their ratio
-                ratio = history_length / total_length
-                history_length = max(1, int(max_len * ratio))
-                future_length = max(1, max_len - history_length)
 
         params.update(
             {
-                "history_length": history_length,
-                "future_length": future_length,
-                "frequency": frequency,
+                "frequency": self.params.frequency,
                 "trend_exp": self.params.trend_exp,
                 "scale_noise": self.params.scale_noise,
                 "harmonic_scale_ratio": self.params.harmonic_scale_ratio,

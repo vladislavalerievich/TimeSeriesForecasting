@@ -13,9 +13,9 @@ learning_rate: 0.00001 # 1e-5
 loss: mse # mae
 scaler: custom_robust
 
-batch_size: 384
+batch_size: 128
 num_epochs: 50
-num_training_iterations_per_epoch: 50
+num_training_iterations_per_epoch: 100
 
 BaseModelConfig:
   sin_pos_enc: false
@@ -33,7 +33,7 @@ BaseModelConfig:
 MultiStepModel:  
   residual: false
   num_encoder_layers: 2
-  token_embed_dim: 1024
+  token_embed_dim: 256  
   use_gelu: true
   use_input_projection_norm: false
   use_global_residual: false
@@ -44,7 +44,7 @@ MultiStepModel:
 
 EncoderConfig:
   encoder_type: DeltaNet
-  token_embed_dim: 1024 # Todo: remove duplicate
+  token_embed_dim: 256 # TODO: remove duplicate
   num_layers: 2
   num_heads: 4  
   norm: true
@@ -73,9 +73,9 @@ generator_proportions:
     kernel: 0.2
     lmc: 0.05
   long:   
-    forecast_pfn: 0.1
-    gp: 0.3
-    kernel: 0.05
-    lmc: 0.55
+    forecast_pfn: 0.2
+    gp: 0.1
+    kernel: 0.1
+    lmc: 0.6
 
 max_context_length: 1024

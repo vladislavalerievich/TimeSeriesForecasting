@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
 from src.synthetic_generation.generator_params import GPGeneratorParams
 from src.synthetic_generation.gp_prior.gp_generator import GPGenerator
@@ -16,18 +16,9 @@ class GPGeneratorWrapper(GeneratorWrapper):
     def _sample_parameters(self) -> Dict[str, Any]:
         params = super()._sample_parameters()
 
-        # Sample frequency from the frequency list in params if available, otherwise use default
-        if hasattr(self.params, "frequency") and self.params.frequency:
-            if isinstance(self.params.frequency, list):
-                frequency = self.rng.choice(self.params.frequency)
-            else:
-                # If it's a single frequency value, use it directly
-                frequency = self.params.frequency
-        else:
-            frequency = self.rng.choice(list(Frequency))
-
         params.update(
             {
+                "frequency": self.params.frequency,
                 "max_kernels": self.params.max_kernels,
                 "likelihood_noise_level": self.params.likelihood_noise_level,
                 "noise_level": self.params.noise_level,
@@ -40,7 +31,6 @@ class GPGeneratorWrapper(GeneratorWrapper):
                 "kernel_periods": self.params.kernel_periods,
                 "max_period_ratio": self.params.max_period_ratio,
                 "kernel_bank": self.params.kernel_bank,
-                "frequency": frequency,
             }
         )
         return params

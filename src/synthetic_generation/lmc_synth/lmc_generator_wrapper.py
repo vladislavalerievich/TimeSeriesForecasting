@@ -125,6 +125,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         scale = params["scale"]
         weibull_shape = params["weibull_shape"]
         weibull_scale = params["weibull_scale"]
+        frequency = params["frequency"]
 
         total_length = history_length + future_length
 
@@ -151,4 +152,5 @@ class LMCGeneratorWrapper(GeneratorWrapper):
             start=batch_start,
             history_length=history_length,
             future_length=future_length,
+            frequency=frequency,
         )
