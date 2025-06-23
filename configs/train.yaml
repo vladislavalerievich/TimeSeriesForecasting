@@ -8,14 +8,15 @@ wandb: false # whether to log to wandb
 
 
 lr_scheduler: cosine
-initial_lr: 0.001 # 1e-3
-learning_rate: 0.00001 # 1e-5
+initial_lr: 0.00001 # 1e-5
+learning_rate: 0.0000001 # 1e-7
 loss: mse # mae
 scaler: custom_robust
 
 batch_size: 128
 num_epochs: 50
 num_training_iterations_per_epoch: 100
+log_interval: 1
 
 BaseModelConfig:
   sin_pos_enc: false
@@ -41,6 +42,7 @@ MultiStepModel:
   use_dilated_conv: true
   dilated_conv_kernel_size: 5
   dilated_conv_max_dilation: 3
+  cross_channel_attention_heads: 4
 
 EncoderConfig:
   encoder_type: DeltaNet
@@ -63,19 +65,19 @@ range_proportions:
 
 generator_proportions:
   short:    
-    forecast_pfn: 0.3
-    gp: 0.3
-    kernel: 0.35
-    lmc: 0.05
+    forecast_pfn: 0.05
+    gp: 0.25
+    kernel: 0.25
+    lmc: 0.45
   medium:
-    forecast_pfn: 0.2
-    gp: 0.2
-    kernel: 0.2
-    lmc: 0.05
+    forecast_pfn: 0.05
+    gp: 0.3
+    kernel: 0.25
+    lmc: 0.45
   long:   
-    forecast_pfn: 0.2
-    gp: 0.1
-    kernel: 0.1
-    lmc: 0.6
+    forecast_pfn: 0.05
+    gp: 0.3
+    kernel: 0.25
+    lmc: 0.45
 
 max_context_length: 1024
