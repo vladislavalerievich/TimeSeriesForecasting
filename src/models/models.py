@@ -28,6 +28,7 @@ class BaseModel(nn.Module):
         handle_constants_model=False,
         embed_size=128,  # Default embed_size, adjust as needed
         K_max=6,
+        time_feature_config=None,
         **kwargs,
     ):
         super().__init__()
@@ -36,6 +37,7 @@ class BaseModel(nn.Module):
         self.encoding_dropout = encoding_dropout
         self.handle_constants_model = handle_constants_model
         self.embed_size = embed_size
+        self.time_feature_config = time_feature_config or {}
 
         # Create multivariate scaler
         self.scaler = CustomScalingMultivariate(scaler)
@@ -44,7 +46,10 @@ class BaseModel(nn.Module):
         self.expand_values = nn.Linear(1, embed_size, bias=True)
 
         # Projection layer for GluonTS time features
+        # K_max might be auto-adjusted, so we'll set this after we know the actual value
+        self.K_max = K_max
         self.time_feature_projection = nn.Linear(K_max, embed_size)
+        self._k_max_initialized = False
 
         # Sinusoidal positional encoding (optional)
         self.sin_pos_encoder = None
@@ -58,6 +63,15 @@ class BaseModel(nn.Module):
         self.concat_pos = ConcatLayer(dim=-1, name="ConcatPos")
         self.concat_embed = ConcatLayer(dim=-1, name="ConcatEmbed")
         self.concat_targets = ConcatLayer(dim=1, name="ConcatTargets")
+
+    def _update_k_max_if_needed(self, actual_k_max: int):
+        """Update K_max and time feature projection layer if auto-adjustment changed it."""
+        if not self._k_max_initialized or actual_k_max != self.K_max:
+            self.K_max = actual_k_max
+            self.time_feature_projection = nn.Linear(actual_k_max, self.embed_size).to(
+                device
+            )
+            self._k_max_initialized = True
 
     def get_positional_embeddings(
         self, time_features, num_channels, drop_enc_allow=False
@@ -111,7 +125,13 @@ class BaseModel(nn.Module):
             data_container.future_length,
             data_container.batch_size,
             data_container.frequency,
+            K_max=self.K_max,
+            time_feature_config=self.time_feature_config,
         )
+
+        # Update K_max if auto-adjustment changed it
+        actual_k_max = history_time_features.shape[-1]
+        self._update_k_max_if_needed(actual_k_max)
 
         batch_size, seq_len, num_channels = history_values.shape
         pred_len = future_values.shape[1] if future_values is not None else 0

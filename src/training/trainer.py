@@ -33,7 +33,6 @@ from src.utils.utils import (
     seed_everything,
 )
 
-# Suppress gpytorch numerical warnings
 warnings.filterwarnings("ignore", category=NumericalWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
