@@ -13,7 +13,8 @@ from gluonts.model.forecast import SampleForecast
 from gluonts.time_feature import get_seasonality
 
 import wandb
-from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
+from src.data_handling.data_containers import BatchTimeSeriesContainer
+from src.data_handling.frequency_utils import get_frequency_enum
 from src.gift_eval.data import Dataset as GiftEvalDataset
 from src.plotting.plot_multivariate_timeseries import plot_multivariate_timeseries
 
@@ -73,64 +74,6 @@ class MultiStepModelWrapper:
         """Model identifier for results"""
         return "MultiStepModel"
 
-    def get_frequency_enum(self, freq_str):
-        """Map frequency string to Frequency enum"""
-        try:
-            offset = pd.tseries.frequencies.to_offset(freq_str)
-            standardized_freq = offset.name
-        except Exception:
-            standardized_freq = freq_str
-
-        freq_map = {
-            "A-DEC": Frequency.A,
-            "YE-DEC": Frequency.A,
-            "A": Frequency.A,
-            "Y": Frequency.A,
-            "QS-DEC": Frequency.Q,
-            "Q-DEC": Frequency.Q,
-            "Q": Frequency.Q,
-            "MS": Frequency.M,
-            "ME": Frequency.M,
-            "M": Frequency.M,
-            "W-MON": Frequency.W,
-            "W-TUE": Frequency.W,
-            "W-WED": Frequency.W,
-            "W-THU": Frequency.W,
-            "W-FRI": Frequency.W,
-            "W-SAT": Frequency.W,
-            "W-SUN": Frequency.W,
-            "W": Frequency.W,
-            "D": Frequency.D,
-            "H": Frequency.H,
-            "h": Frequency.H,
-            "S": Frequency.S,
-            "s": Frequency.S,
-            "min": Frequency.T1,
-        }
-
-        if standardized_freq.endswith("T") or standardized_freq.endswith("min"):
-            if standardized_freq.endswith("min"):
-                if standardized_freq == "min":
-                    return Frequency.T1
-                minutes = int(standardized_freq[:-3])
-            else:
-                minutes = int(standardized_freq[:-1])
-
-            if minutes == 5:
-                return Frequency.T5
-            elif minutes == 10:
-                return Frequency.T10
-            elif minutes == 15:
-                return Frequency.T15
-            else:
-                return Frequency.T1
-        elif standardized_freq in freq_map:
-            return freq_map[standardized_freq]
-        else:
-            raise NotImplementedError(
-                f"Frequency '{standardized_freq}' is not supported."
-            )
-
     def predict(self, dataset) -> List[SampleForecast]:
         """Generate forecasts for the given dataset"""
         assert self.prediction_length is not None, "Prediction length must be set"
@@ -157,7 +100,7 @@ class MultiStepModelWrapper:
                 seq_len = self.max_context_length
 
             history_values = torch.from_numpy(history.T).unsqueeze(0).to(self.device)
-            frequency = self.get_frequency_enum(freq)
+            frequency = get_frequency_enum(freq)
             future_values = torch.zeros(
                 (1, self.prediction_length, num_dims), dtype=torch.float32
             ).to(self.device)

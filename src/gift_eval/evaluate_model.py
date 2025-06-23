@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os
@@ -30,7 +31,6 @@ sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "src")))
 
 # Configs
 DATASET_PROPERTIES_PATH = "src/gift_eval/dataset_properties.json"
-MODEL_PATH = "/home/moroshav/TimeSeriesForecasting/models/Old_GatedDeltaNet_rtx_2080_allow_neg_eigval_False_batch_size_64_num_epochs_150_initial_lr1e-05_learning_rate_1e-07_.pth"
 TRAIN_YAML = "configs/train.yaml"
 MAX_CONTEXT_LENGTH = 1024
 
@@ -97,7 +97,7 @@ gts_logger.addFilter(
 logger = logging.getLogger(__name__)
 
 
-def load_model():
+def load_model(model_path: str):
     """Load the MultiStepModel from checkpoint"""
     model = MultiStepModel(
         base_model_config=config["BaseModelConfig"],
@@ -105,19 +105,19 @@ def load_model():
         scaler=config["scaler"],
         **config["MultiStepModel"],
     ).to(device)
-    checkpoint = torch.load(MODEL_PATH, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
 
 
-def evaluate_on_gift_eval():
+def evaluate_on_gift_eval(model_path: str):
     """Main evaluation function"""
     # Set up logging
     logging.basicConfig(level=logging.INFO)
 
     # Load model
-    model = load_model()
+    model = load_model(model_path)
     evaluator = GiftEvaluator(model, device, max_context_length=MAX_CONTEXT_LENGTH)
 
     results = []
@@ -133,12 +133,8 @@ def evaluate_on_gift_eval():
         )
 
         for ds_key, metrics in term_results.items():
-            ds_name_parts = ds_key.split("_")
-            ds_name = ds_name_parts[0]
-            if (
-                "/" not in ds_name and len(ds_name_parts) > 2
-            ):  # handle cases like kdd_cup_2018
-                ds_name = "_".join(ds_name_parts[:-1])
+            # Robustly extract the dataset name from the key
+            ds_name = ds_key[: -len(term) - 1]
 
             if "/" in ds_name:
                 base_ds_name = ds_name.split("/")[0]
@@ -198,4 +194,15 @@ def evaluate_on_gift_eval():
 
 
 if __name__ == "__main__":
-    evaluate_on_gift_eval()
+    parser = argparse.ArgumentParser(
+        description="Evaluate a MultiStepModel on GIFT-Eval."
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        required=True,
+        help="Path to the trained model checkpoint (.pth file).",
+    )
+    args = parser.parse_args()
+
+    evaluate_on_gift_eval(args.model_path)
