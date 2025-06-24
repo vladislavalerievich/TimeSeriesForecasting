@@ -179,6 +179,7 @@ class TrainingPipeline:
                     name=self.config["model_name"],
                     resume="allow",
                     id=self.config["model_name"],
+                    init_timeout=1000,
                 )
             except Exception as e:
                 logger.error(f"WandB initialization failed: {e}")
