@@ -36,19 +36,19 @@ ALL_FREQUENCY_MAX_LENGTHS = {
     **HIGH_FREQUENCY_MAX_LENGTHS,
 }
 
-# GIFT eval-based frequency distribution (actual counts from 124 datasets)
+# GIFT eval-based frequency distribution
 GIFT_EVAL_FREQUENCY_WEIGHTS = {
-    Frequency.H: 25.0,  # Hourly - most common (31/124 datasets)
-    Frequency.D: 23.4,  # Daily - second most common (29/124 datasets)
-    Frequency.W: 12.9,  # Weekly - third most common (16/124 datasets)
-    Frequency.T15: 9.7,  # 15-minute (12/124 datasets)
-    Frequency.T5: 9.7,  # 5-minute (12/124 datasets)
-    Frequency.M: 7.3,  # Monthly (9/124 datasets)
-    Frequency.T10: 4.8,  # 10-minute (6/124 datasets)
-    Frequency.S: 4.8,  # 10-second (6/124 datasets)
-    Frequency.T1: 1.6,  # 1-minute (rare, estimated)
-    Frequency.Q: 0.8,  # Quarterly (1/124 datasets)
-    Frequency.A: 0.8,  # Annual (1/124 datasets)
+    Frequency.H: 25.0,  # Hourly - most common
+    Frequency.D: 23.4,  # Daily - second most common
+    Frequency.W: 12.9,  # Weekly - third most common
+    Frequency.T15: 9.7,  # 15-minute
+    Frequency.T5: 9.7,  # 5-minute
+    Frequency.M: 7.3,  # Monthly
+    Frequency.T10: 4.8,  # 10-minute
+    Frequency.S: 4.8,  # 10-second
+    Frequency.T1: 1.6,  # 1-minute
+    Frequency.Q: 0.8,  # Quarterly
+    Frequency.A: 0.8,  # Annual
 }
 
 # GIFT eval-based length ranges derived from actual dataset analysis
@@ -87,7 +87,7 @@ def select_safe_random_frequency(total_length: int, rng: Generator) -> Frequency
     based on actual GIFT eval dataset patterns and distributions.
 
     This function uses data-driven weights and realistic length ranges extracted from
-    analysis of 124 GIFT eval datasets across short/medium/long term horizons.
+    analysis of GIFT eval datasets across short/medium/long term horizons.
 
     The selection logic:
     1. Filters frequencies that can handle the given total_length
