@@ -3,7 +3,7 @@ import os
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from gluonts.dataset.util import to_pandas
 
@@ -399,6 +399,148 @@ for term in sorted(dataset_lengths_by_term.keys()):
             print(f"    Forecast lengths (test): {forecast_test}")
 
 
+print("\n" + "=" * 60)
+print("MISSING VALUES SUMMARY")
+print("=" * 60)
+
+datasets_with_missing = []
+total_datasets = len(dataset_names)
+
+for ds_name in sorted(dataset_names):
+    try:
+        ds = Dataset(name=ds_name, term="short", to_univariate=False)
+        train_data_iter = ds.training_dataset
+        n_series = 0
+        channels_per_series = ds.target_dim
+        channels_with_invalid = 0
+        total_invalid = 0
+        all_invalid_timesteps = 0
+        partial_invalid_timesteps = 0
+        consecutive_blocks = 0
+        scattered_values = 0
+
+        for data in train_data_iter:
+            n_series += 1
+            target = data["target"]
+            if target.ndim == 1:
+                target = target.reshape(1, -1)
+
+            invalid_mask = np.logical_or(np.isnan(target), np.isinf(target))
+            invalid_per_channel = invalid_mask.sum(axis=1)
+            if np.any(invalid_per_channel > 0):
+                channels_with_invalid += np.sum(invalid_per_channel > 0)
+                total_invalid += invalid_per_channel.sum()
+                all_invalid = np.all(invalid_mask, axis=0).sum()
+                any_invalid = np.any(invalid_mask, axis=0).sum()
+                all_invalid_timesteps += all_invalid
+                partial_invalid_timesteps += any_invalid - all_invalid
+
+                # Check for consecutive vs scattered invalid values
+                for ch in range(target.shape[0]):
+                    if invalid_per_channel[ch] > 0:
+                        invalid_indices = np.where(invalid_mask[ch])[0]
+                        if len(invalid_indices) > 1:
+                            diffs = np.diff(invalid_indices)
+                            if np.all(diffs == 1):
+                                consecutive_blocks += 1
+                            else:
+                                scattered_values += 1
+                        else:
+                            scattered_values += 1
+
+        if channels_with_invalid > 0:
+            datasets_with_missing.append(ds_name)
+            print(f"{ds_name}:")
+            print(f"  Total series: {n_series}")
+            print(f"  Channels per series: {channels_per_series}")
+            print(
+                f"  Channels with invalid values: {min(channels_with_invalid, n_series * channels_per_series)}"
+            )
+            print(f"  Total invalid values: {total_invalid}")
+            print(f"  Timesteps with all channels invalid: {all_invalid_timesteps}")
+            print(
+                f"  Timesteps with some channels invalid: {partial_invalid_timesteps}"
+            )
+            print(f"  Consecutive invalid blocks: {consecutive_blocks}")
+            print(f"  Scattered invalid values: {scattered_values}")
+            print()
+
+    except Exception as e:
+        print(f"Failed to analyze {ds_name}: {e}")
+        print()
+
+print("=" * 60)
+print(
+    f"SUMMARY: {len(datasets_with_missing)} out of {total_datasets} datasets have missing values"
+)
+if datasets_with_missing:
+    print("Datasets with missing values:")
+    for ds_name in sorted(datasets_with_missing):
+        print(f"  - {ds_name}")
+else:
+    print("No datasets with missing values found.")
+
+
+print("\n" + "=" * 60)
+print("MISSING VALUES SUMMARY MULTIVARIATE (aligned vs misaligned)")
+print("=" * 60)
+
+datasets_with_missing = []
+total_datasets = len(dataset_names)
+
+for ds_name in sorted(dataset_names):
+    try:
+        ds = Dataset(name=ds_name, term="short", to_univariate=False)
+        if ds.target_dim == 1:  # Skip univariate datasets
+            continue
+        train_data_iter = ds.training_dataset
+        n_series = 0
+        channels_per_series = ds.target_dim
+        has_missing = False
+        all_aligned = True
+
+        for data in train_data_iter:
+            n_series += 1
+            target = data["target"]
+            if target.ndim == 1:
+                target = target.reshape(1, -1)
+
+            invalid_mask = np.logical_or(np.isnan(target), np.isinf(target))
+            if np.any(invalid_mask):
+                has_missing = True
+                # Check if invalid values occur at the same timesteps
+                all_invalid = np.all(invalid_mask, axis=0)
+                any_invalid = np.any(invalid_mask, axis=0)
+                if np.any(
+                    any_invalid & ~all_invalid
+                ):  # Some channels have invalid values at different timesteps
+                    all_aligned = False
+
+        if has_missing:
+            datasets_with_missing.append(ds_name)
+            print(f"{ds_name}:")
+            print(f"  Total series: {n_series}")
+            print(f"  Channels per series: {channels_per_series}")
+            print(
+                f"  Missing values alignment: {'Same timesteps (aligned)' if all_aligned else 'Different timesteps (misaligned)'}"
+            )
+            print()
+
+    except Exception as e:
+        print(f"Failed to analyze {ds_name}: {e}")
+        print()
+
+print("=" * 60)
+print(
+    f"SUMMARY: {len(datasets_with_missing)} out of {total_datasets} datasets have missing values"
+)
+if datasets_with_missing:
+    print("Datasets with missing values:")
+    for ds_name in sorted(datasets_with_missing):
+        print(f"  - {ds_name}")
+else:
+    print("No datasets with missing values found.")
+
 ds_name = "bizitobs_l2c/5T"  # Name of the dataset
 to_univariate = False  # Whether to convert the data to univariate
 term = "medium"  # Term of the dataset
@@ -450,13 +592,6 @@ else:
     # Univariate case: use to_pandas
     train_series = to_pandas(train_data)
     train_series.plot()
-
-plt.grid(which="both")
-plt.legend(
-    [f"train series dim {i}" for i in range(train_data["target"].shape[0])],
-    loc="upper left",
-)
-plt.show()
 
 
 val_data_iter = dataset.validation_dataset
