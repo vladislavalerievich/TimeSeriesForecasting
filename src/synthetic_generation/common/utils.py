@@ -36,7 +36,6 @@ ALL_FREQUENCY_MAX_LENGTHS = {
     **HIGH_FREQUENCY_MAX_LENGTHS,
 }
 
-# GIFT eval-based frequency distribution
 GIFT_EVAL_FREQUENCY_WEIGHTS = {
     Frequency.H: 25.0,  # Hourly - most common
     Frequency.D: 23.4,  # Daily - second most common
@@ -55,29 +54,29 @@ GIFT_EVAL_FREQUENCY_WEIGHTS = {
 # Format: (min_length, max_length, optimal_start, optimal_end)
 GIFT_EVAL_LENGTH_RANGES = {
     # Low frequency ranges (based on actual GIFT eval data + logical extensions)
-    Frequency.A: (25, 100, 30, 70),  # Annual: extended to handle test cases
-    Frequency.Q: (25, 150, 50, 120),  # Quarterly: focused on realistic range
-    Frequency.M: (40, 1000, 100, 600),  # Monthly: 51-780 in actual data + margin
-    Frequency.W: (50, 3500, 100, 1500),  # Weekly: 52-3239 in actual data
+    Frequency.A: (25, 100, 30, 70),
+    Frequency.Q: (25, 150, 50, 120),
+    Frequency.M: (40, 1000, 100, 600),
+    Frequency.W: (50, 3500, 100, 1500),
     # Medium frequency ranges
     Frequency.D: (150, 25000, 300, 7000),  # Daily: covers 1-year+ scenarios
-    Frequency.H: (600, 35000, 700, 17000),  # Hourly: 672-34152 in actual data
+    Frequency.H: (600, 35000, 700, 17000),
     # High frequency ranges (extended for shorter realistic scenarios)
     Frequency.T1: (200, 2500, 1200, 1800),  # 1-minute: day to few days
-    Frequency.S: (7500, 9500, 7900, 9000),  # 10-second: 7994-8835 in actual data
-    Frequency.T15: (1000, 140000, 50000, 130000),  # 15-minute: extended range
+    Frequency.S: (7500, 9500, 7900, 9000),
+    Frequency.T15: (1000, 140000, 50000, 130000),
     Frequency.T5: (
         200,
         105000,
         20000,
         95000,
-    ),  # 5-minute: extended for shorter scenarios
+    ),
     Frequency.T10: (
         40000,
         55000,
         47000,
         52000,
-    ),  # 10-minute: 47520-51792 in actual data
+    ),
 }
 
 
