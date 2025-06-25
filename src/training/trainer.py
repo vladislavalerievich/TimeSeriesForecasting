@@ -72,19 +72,8 @@ class TrainingPipeline:
                 f"Effective batch size: {self.config['batch_size'] * self.accumulation_steps}"
             )
 
-        # Determine K_max once during initialization for consistency
-        time_feature_config = self.config.get("time_feature_config", {})
-        if time_feature_config.get("auto_adjust_k_max", False):
-            # Use a fixed K_max even if auto_adjust is enabled to ensure consistency
-            self.K_max = time_feature_config.get("min_k_max", 12)
-            logger.warning(
-                f"Auto K_max adjustment disabled for training stability. Using fixed K_max={self.K_max}"
-            )
-            # Override the config to disable auto adjustment
-            self.config["time_feature_config"]["auto_adjust_k_max"] = False
-            self.config["time_feature_config"]["min_k_max"] = self.K_max
-        else:
-            self.K_max = self.config.get("K_max", 6)
+        # Set default K_max (time_features.py will handle auto_adjust internally)
+        self.K_max = self.config.get("K_max", 6)
 
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
@@ -352,18 +341,61 @@ class TrainingPipeline:
         for metric in metrics.values():
             metric.update(predictions, targets)
 
-    def _log_training_progress(
+    def _log_metrics(
+        self,
+        metrics_dict: Dict,
+        metric_type: str,
+        epoch: int,
+        step: int = None,
+        extra_info: str = "",
+    ) -> None:
+        """
+        Generic method to log metrics to both logger and wandb.
+
+        Args:
+            metrics_dict: Dictionary of metrics to log
+            metric_type: Type of metrics (e.g., 'train', 'val', 'gift_eval')
+            epoch: Current epoch
+            step: Optional step number
+            extra_info: Additional info to include in log message
+        """
+        # Format metrics for logging
+        metrics_str = ", ".join([f"{k}: {v:.4f}" for k, v in metrics_dict.items()])
+
+        # Always log to Python logger
+        log_msg = f"[{metric_type.upper()}] Epoch {epoch + 1}"
+        if step is not None:
+            log_msg += f", Step {step + 1}"
+        if extra_info:
+            log_msg += f" - {extra_info}"
+        log_msg += f" | {metrics_str}"
+        logger.info(log_msg)
+
+        # Optionally log to wandb
+        if self.config["wandb"]:
+            wandb_dict = {f"{metric_type}/{k}": v for k, v in metrics_dict.items()}
+            wandb_dict["epoch"] = epoch
+            if step is not None:
+                wandb_dict["step"] = step
+            wandb.log(wandb_dict)
+
+    def _log_training_metrics(
         self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
     ) -> None:
-        """Log training progress."""
+        """Log training metrics during training."""
         avg_loss = running_loss / self.log_interval
 
-        # For gradient accumulation, step_idx represents effective steps
+        # Prepare metrics dictionary
+        train_metrics = {
+            "loss": avg_loss,
+            "gradient_norm": avg_grad_norm,
+            "mape": self.train_metrics["mape"].compute().item(),
+            "mse": self.train_metrics["mse"].compute().item(),
+            "smape": self.train_metrics["smape"].compute().item(),
+        }
+
+        # Calculate global step
         if self.gradient_accumulation_enabled:
-            logger.info(
-                f"Epoch: {epoch + 1}, Effective Step: {step_idx + 1}, "
-                f"Sc. Loss: {avg_loss:.4f}, Grad Norm: {avg_grad_norm:.4f}"
-            )
             global_step = (
                 epoch
                 * (
@@ -372,25 +404,94 @@ class TrainingPipeline:
                 )
                 + step_idx
             )
+            extra_info = f"Effective Step: {step_idx + 1}"
         else:
-            logger.info(
-                f"Epoch: {epoch + 1}, Batch: {step_idx + 1}, "
-                f"Sc. Loss: {avg_loss:.4f}, Grad Norm: {avg_grad_norm:.4f}"
-            )
             global_step = (
                 epoch * self.config["num_training_iterations_per_epoch"] + step_idx
             )
+            extra_info = f"Batch: {step_idx + 1}"
 
+        self._log_metrics(train_metrics, "train", epoch, global_step, extra_info)
+
+    def _log_validation_metrics(self, epoch: int, val_loss: float) -> None:
+        """Log validation metrics from synthetic validation data."""
+        val_metrics = {
+            "loss": val_loss,
+            "mape": self.val_metrics["mape"].compute().item(),
+            "mse": self.val_metrics["mse"].compute().item(),
+            "smape": self.val_metrics["smape"].compute().item(),
+        }
+
+        self._log_metrics(val_metrics, "val", epoch, extra_info="Synthetic Validation")
+
+    def _log_gift_eval_metrics(self, epoch: int, gift_metrics: Dict) -> None:
+        """Log GIFT evaluation metrics."""
+        # Flatten nested gift eval metrics for logging
+        flattened_metrics = {}
+        for dataset_name, metrics in gift_metrics.items():
+            for metric_name, value in metrics.items():
+                flattened_metrics[f"{dataset_name}_{metric_name}"] = value
+
+        if flattened_metrics:
+            self._log_metrics(
+                flattened_metrics,
+                "gift_eval",
+                epoch,
+                extra_info="Real Dataset Evaluation",
+            )
+
+    def _log_epoch_summary(
+        self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
+    ) -> None:
+        """Log comprehensive epoch summary."""
+        # Prepare epoch summary metrics
+        epoch_metrics = {
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "train_mape": self.train_metrics["mape"].compute().item(),
+            "train_mse": self.train_metrics["mse"].compute().item(),
+            "train_smape": self.train_metrics["smape"].compute().item(),
+            "val_mape": self.val_metrics["mape"].compute().item(),
+            "val_mse": self.val_metrics["mse"].compute().item(),
+            "val_smape": self.val_metrics["smape"].compute().item(),
+            "learning_rate": self.optimizer.param_groups[0]["lr"],
+            "epoch_time_minutes": epoch_time / 60,
+        }
+
+        # Log comprehensive summary
+        logger.info("=" * 80)
+        logger.info(f"EPOCH {epoch + 1} SUMMARY")
+        logger.info("=" * 80)
+        logger.info(f"Training Loss: {train_loss:.4f}")
+        logger.info(f"Validation Loss: {val_loss:.4f}")
+        logger.info(
+            f"Training MAPE: {epoch_metrics['train_mape']:.4f}, MSE: {epoch_metrics['train_mse']:.4f}, SMAPE: {epoch_metrics['train_smape']:.4f}"
+        )
+        logger.info(
+            f"Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
+        )
+        logger.info(f"Learning Rate: {epoch_metrics['learning_rate']:.8f}")
+        logger.info(f"Epoch Time: {epoch_metrics['epoch_time_minutes']:.2f} minutes")
+        logger.info("=" * 80)
+
+        # Log to wandb
         if self.config["wandb"]:
+            # Log structured epoch metrics
             wandb.log(
                 {
-                    "train/loss": avg_loss,
-                    "train/gradient_norm": avg_grad_norm,
-                    "train/mape": self.train_metrics["mape"].compute(),
-                    "train/mse": self.train_metrics["mse"].compute(),
-                    "train/smape": self.train_metrics["smape"].compute(),
+                    "epoch_summary/train_loss": train_loss,
+                    "epoch_summary/val_loss": val_loss,
+                    "epoch_summary/train_mape": epoch_metrics["train_mape"],
+                    "epoch_summary/train_mse": epoch_metrics["train_mse"],
+                    "epoch_summary/train_smape": epoch_metrics["train_smape"],
+                    "epoch_summary/val_mape": epoch_metrics["val_mape"],
+                    "epoch_summary/val_mse": epoch_metrics["val_mse"],
+                    "epoch_summary/val_smape": epoch_metrics["val_smape"],
+                    "epoch_summary/learning_rate": epoch_metrics["learning_rate"],
+                    "epoch_summary/epoch_time_minutes": epoch_metrics[
+                        "epoch_time_minutes"
+                    ],
                     "epoch": epoch,
-                    "step": global_step,
                 }
             )
 
@@ -415,31 +516,27 @@ class TrainingPipeline:
                 num_batches += 1
 
         avg_val_loss = total_val_loss / max(1, num_batches)
+
+        # Log validation metrics (always to logger, optionally to wandb)
+        self._log_validation_metrics(epoch, avg_val_loss)
+
+        # Plot examples if wandb is enabled
         if self.config["wandb"]:
-            wandb.log(
-                {
-                    "val/sc_loss": avg_val_loss,
-                    "val/mape": self.val_metrics["mape"].compute(),
-                    "val/mse": self.val_metrics["mse"].compute(),
-                    "val/smape": self.val_metrics["smape"].compute(),
-                    "epoch": epoch,
-                }
-            )
             self._plot_fixed_examples(epoch, avg_val_loss)
 
         # --- GIFT-eval validation ---
-        if self.config["wandb"] and epoch % 5 == 4:
+        if epoch % 5 == 4:
             logger.info("Running GIFT-eval validation...")
             gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
                 datasets_to_eval=["us_births/D", "saugeenday/W", "ett1/W"],
                 term="short",
                 epoch=epoch,
-                plot=True,
+                plot=self.config["wandb"],  # Only plot if wandb is enabled
             )
-            wandb.log({"gift_eval": gift_eval_metrics, "epoch": epoch})
+            # Log GIFT eval metrics (always to logger, optionally to wandb)
+            self._log_gift_eval_metrics(epoch, gift_eval_metrics)
             logger.info("GIFT-eval validation finished.")
 
-        logger.info(f"Epoch {epoch + 1} Validation Loss: {avg_val_loss:.4f}")
         return avg_val_loss
 
     def _train_epoch(self, epoch: int) -> float:
@@ -522,14 +619,14 @@ class TrainingPipeline:
                     and (effective_step + 1) % self.log_interval == 0
                 ):
                     avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
-                    self._log_training_progress(
+                    self._log_training_metrics(
                         epoch, effective_step, running_loss, avg_grad_norm
                     )
                     running_loss = 0.0
             else:
                 if (batch_idx + 1) % self.log_interval == 0:
                     avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
-                    self._log_training_progress(
+                    self._log_training_metrics(
                         epoch, batch_idx, running_loss, avg_grad_norm
                     )
                     running_loss = 0.0
@@ -550,6 +647,29 @@ class TrainingPipeline:
     def train(self) -> None:
         """Execute the training pipeline."""
         logger.info("Starting training...")
+        logger.info("=" * 80)
+        logger.info("TRAINING CONFIGURATION")
+        logger.info("=" * 80)
+        logger.info(f"Model: {self.config['model_name']}")
+        logger.info(f"Epochs: {self.config['num_epochs']}")
+        logger.info(f"Batch Size: {self.config['batch_size']}")
+        if self.gradient_accumulation_enabled:
+            logger.info(
+                f"Gradient Accumulation: Enabled ({self.accumulation_steps} steps)"
+            )
+            logger.info(
+                f"Effective Batch Size: {self.config['batch_size'] * self.accumulation_steps}"
+            )
+        else:
+            logger.info("Gradient Accumulation: Disabled")
+        logger.info(f"Learning Rate: {self.config['learning_rate']}")
+        logger.info(f"Loss Function: {self.config['loss']}")
+        logger.info(f"Scaler: {self.config['scaler']}")
+        logger.info(f"Device: {self.device}")
+        logger.info(
+            f"WandB Logging: {'Enabled' if self.config['wandb'] else 'Disabled'}"
+        )
+        logger.info("=" * 80)
 
         for epoch in range(self.initial_epoch, self.config["num_epochs"]):
             start_time = time.time()
@@ -560,30 +680,9 @@ class TrainingPipeline:
             # Validation
             val_loss = self._validate_epoch(epoch)
 
-            # Logging
-            if self.config["wandb"]:
-                wandb.log(
-                    {
-                        "epoch_metrics": {
-                            "train": {
-                                "sc_loss": train_loss,
-                                "mape": self.train_metrics["mape"].compute(),
-                                "smape": self.train_metrics["smape"].compute(),
-                            },
-                            "val": {
-                                "sc_loss": val_loss,
-                                "mape": self.val_metrics["mape"].compute(),
-                                "smape": self.val_metrics["smape"].compute(),
-                            },
-                        },
-                        "epoch": epoch,
-                        "lr": self.optimizer.param_groups[0]["lr"],
-                    }
-                )
-
             # Epoch summary
             epoch_time = time.time() - start_time
-            logger.info(f"Epoch: {epoch + 1}, Time: {epoch_time / 60:.2f} mins")
+            self._log_epoch_summary(epoch, train_loss, val_loss, epoch_time)
 
             # Reset metrics
             for metric_dict in [self.train_metrics, self.val_metrics]:
@@ -598,9 +697,14 @@ class TrainingPipeline:
             if epoch % 5 == 4 or epoch == self.config["num_epochs"] - 1:
                 self._save_checkpoint(epoch)
 
+        logger.info("=" * 80)
+        logger.info("TRAINING COMPLETED SUCCESSFULLY!")
+        logger.info("=" * 80)
+
         if self.config["wandb"]:
+            logger.info("Finishing WandB logging...")
             wandb.finish()
-        logger.info("Training completed successfully.")
+            logger.info("WandB logging finished.")
 
 
 if __name__ == "__main__":

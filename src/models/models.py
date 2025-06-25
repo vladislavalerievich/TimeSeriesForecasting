@@ -28,7 +28,7 @@ class BaseModel(nn.Module):
         encoding_dropout=0.0,
         handle_constants_model=False,
         embed_size=128,
-        K_max=6,
+        K_max=15,
         time_feature_config=None,
         **kwargs,
     ):
@@ -56,20 +56,8 @@ class BaseModel(nn.Module):
 
         # Projection layer for GluonTS time features
         self.K_max = K_max
-        self.auto_adjust_k_max = self.time_feature_config.get(
-            "auto_adjust_k_max", False
-        )
-
-        if self.auto_adjust_k_max:
-            min_k = self.time_feature_config.get("min_k_max", 6)
-            max_k = self.time_feature_config.get("max_k_max", 20)
-            self.time_feature_projections = nn.ModuleDict(
-                {str(k): nn.Linear(k, self.embed_size) for k in range(min_k, max_k + 1)}
-            )
-            self.time_feature_projection = None  # Not used if auto-adjusting
-        else:
-            self.time_feature_projections = None
-            self.time_feature_projection = nn.Linear(self.K_max, self.embed_size)
+        # Single projection layer - time_features.py handles k_max determination internally
+        self.time_feature_projection = nn.Linear(self.K_max, self.embed_size)
 
         # Sinusoidal positional encoding (optional)
         self.sin_pos_encoder = None
@@ -108,19 +96,7 @@ class BaseModel(nn.Module):
             return self.sin_pos_encoder(time_features, num_channels).to(torch.float32)
 
         # Project GluonTS time features to embed_size
-        if self.auto_adjust_k_max:
-            actual_k_max = time_features.shape[-1]
-            k_max_str = str(actual_k_max)
-            if k_max_str not in self.time_feature_projections:
-                raise ValueError(
-                    f"No projection layer found for K_max={actual_k_max}. "
-                    "Check if `time_feature_config` in `train.yaml` matches "
-                    "the feature generator's settings."
-                )
-            projection_layer = self.time_feature_projections[k_max_str]
-            pos_embed = projection_layer(time_features)
-        else:
-            pos_embed = self.time_feature_projection(time_features)
+        pos_embed = self.time_feature_projection(time_features)
 
         return pos_embed.unsqueeze(2).expand(-1, -1, num_channels, -1)
 

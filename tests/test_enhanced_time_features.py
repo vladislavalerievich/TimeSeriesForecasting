@@ -8,8 +8,7 @@ import pandas as pd
 
 from src.data_handling.data_containers import Frequency
 from src.data_handling.time_features import (
-    EnhancedTimeFeatureGenerator,
-    compute_basic_time_features,
+    TimeFeatureGenerator,
     compute_batch_time_features,
 )
 
@@ -43,19 +42,6 @@ def test_basic_vs_enhanced_features():
     print(f"  Start dates: {[str(d) for d in start_dates]}")
     print()
 
-    # Test basic features (original implementation)
-    print("Computing basic time features...")
-    basic_hist, basic_target = compute_basic_time_features(
-        start, history_length, target_length, batch_size, frequency, K_max=6
-    )
-
-    print(
-        f"Basic features shape - History: {basic_hist.shape}, Target: {basic_target.shape}"
-    )
-    print("Basic features example (first timestep, first batch):")
-    print(f"  {basic_hist[0, 0, :].detach().cpu().numpy()}")
-    print()
-
     # Test enhanced features with different configurations
     configs = [
         {
@@ -64,8 +50,7 @@ def test_basic_vs_enhanced_features():
                 "use_enhanced_features": True,
                 "use_holiday_features": False,
                 "auto_adjust_k_max": True,
-                "min_k_max": 6,
-                "max_k_max": 15,
+                "k_max": 15,
             },
         },
         {
@@ -76,8 +61,7 @@ def test_basic_vs_enhanced_features():
                 "holiday_set": "us_business",
                 "holiday_kernel": "exponential",
                 "auto_adjust_k_max": True,
-                "min_k_max": 6,
-                "max_k_max": 20,
+                "k_max": 20,
             },
         },
         {
@@ -88,8 +72,7 @@ def test_basic_vs_enhanced_features():
                 "holiday_set": "us_retail",
                 "holiday_kernel": "squared_exponential",
                 "auto_adjust_k_max": True,
-                "min_k_max": 6,
-                "max_k_max": 25,
+                "k_max": (6, 25),
             },
         },
     ]
@@ -145,8 +128,7 @@ def test_different_frequencies():
         "use_holiday_features": True,
         "holiday_set": "us_business",
         "auto_adjust_k_max": True,
-        "min_k_max": 6,
-        "max_k_max": 20,
+        "k_max": 20,
     }
 
     for freq, freq_name, hist_len, target_len in frequencies:
@@ -205,7 +187,7 @@ def test_feature_generator_directly():
 
     for test_config in configs:
         print(f"Testing {test_config['name']}:")
-        generator = EnhancedTimeFeatureGenerator(**test_config["config"])
+        generator = TimeFeatureGenerator(**test_config["config"])
 
         features = generator.compute_features(period_idx, dates, "h")
 
@@ -231,7 +213,7 @@ def test_holiday_kernels():
 
     for kernel in kernels:
         print(f"Testing {kernel} kernel:")
-        generator = EnhancedTimeFeatureGenerator(
+        generator = TimeFeatureGenerator(
             use_enhanced_features=False,
             use_holiday_features=True,
             holiday_set="us_business",

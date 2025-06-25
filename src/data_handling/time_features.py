@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -139,7 +139,7 @@ HOLIDAY_FEATURE_SETS = {
 }
 
 
-class EnhancedTimeFeatureGenerator:
+class TimeFeatureGenerator:
     """
     Enhanced time feature generator that leverages full GluonTS capabilities.
     """
@@ -152,9 +152,8 @@ class EnhancedTimeFeatureGenerator:
         holiday_kernel: str = "exponential",
         holiday_kernel_alpha: float = 1.0,
         use_index_features: bool = True,
-        auto_adjust_k_max: bool = True,
-        min_k_max: int = 6,
-        max_k_max: int = 20,
+        k_max: Union[int, Tuple[int, int]] = 15,
+        auto_adjust_k_max: bool = False,
         include_seasonality_info: bool = True,
     ):
         """
@@ -174,12 +173,11 @@ class EnhancedTimeFeatureGenerator:
             Kernel parameter for exponential kernels
         use_index_features : bool
             Whether to include index-based features alongside normalized ones
+        k_max : Union[int, Tuple[int, int]]
+            Either an integer specifying K_max directly, or a tuple (min_k_max, max_k_max)
+            specifying the range for automatic adjustment
         auto_adjust_k_max : bool
             Whether to automatically adjust K_max based on available features
-        min_k_max : int
-            Minimum K_max value
-        max_k_max : int
-            Maximum K_max value
         include_seasonality_info : bool
             Whether to include seasonality information as features
         """
@@ -187,9 +185,8 @@ class EnhancedTimeFeatureGenerator:
         self.use_holiday_features = use_holiday_features
         self.holiday_set = holiday_set
         self.use_index_features = use_index_features
+        self.k_max = k_max
         self.auto_adjust_k_max = auto_adjust_k_max
-        self.min_k_max = min_k_max
-        self.max_k_max = max_k_max
         self.include_seasonality_info = include_seasonality_info
 
         # Initialize holiday feature set
@@ -345,7 +342,22 @@ class EnhancedTimeFeatureGenerator:
     def get_optimal_k_max(self, freq_str: str) -> int:
         """Determine optimal K_max based on frequency and enabled features."""
         if not self.auto_adjust_k_max:
-            return self.min_k_max
+            # If k_max is an integer, return it directly
+            if isinstance(self.k_max, int):
+                return self.k_max
+            # If k_max is a tuple, return the minimum value as default
+            elif isinstance(self.k_max, tuple):
+                return self.k_max[0]
+            else:
+                return 6  # fallback default
+
+        # Get min and max values from k_max
+        if isinstance(self.k_max, int):
+            min_k_max = max_k_max = self.k_max
+        elif isinstance(self.k_max, tuple) and len(self.k_max) == 2:
+            min_k_max, max_k_max = self.k_max
+        else:
+            min_k_max, max_k_max = 6, 20  # fallback defaults
 
         # Estimate number of features
         base_features = len(time_features_from_frequency_str(freq_str) or [])
@@ -367,7 +379,7 @@ class EnhancedTimeFeatureGenerator:
             base_features + enhanced_count + holiday_count + seasonality_count
         )
 
-        return min(max(total_estimated, self.min_k_max), self.max_k_max)
+        return min(max(total_estimated, min_k_max), max_k_max)
 
 
 def compute_batch_time_features(
@@ -410,7 +422,7 @@ def compute_batch_time_features(
 
     # Initialize enhanced feature generator
     feature_config = time_feature_config or {}
-    feature_generator = EnhancedTimeFeatureGenerator(**feature_config)
+    feature_generator = TimeFeatureGenerator(**feature_config)
 
     # Auto-adjust K_max if enabled
     if feature_generator.auto_adjust_k_max:
@@ -522,32 +534,3 @@ def _pad_or_truncate_features(features: np.ndarray, K_max: int) -> np.ndarray:
         features = features[:, :K_max]
 
     return features
-
-
-# Convenience function for backward compatibility
-def compute_basic_time_features(
-    start,
-    history_length,
-    target_length,
-    batch_size,
-    frequency,
-    K_max=6,
-):
-    """
-    Backward compatible function that uses only basic GluonTS features.
-    """
-    return compute_batch_time_features(
-        start,
-        history_length,
-        target_length,
-        batch_size,
-        frequency,
-        K_max,
-        time_feature_config={
-            "use_enhanced_features": False,
-            "use_holiday_features": False,
-            "use_index_features": False,
-            "auto_adjust_k_max": False,
-            "include_seasonality_info": False,
-        },
-    )
