@@ -1,10 +1,10 @@
 data_dir: ./data
 model_path: ./models
-model_name: Multivariate_DeltaNet_
+model_name: Multivariate_DeltaNet_KI-Kluster
 continue_training: false
 seed: 2025
 debugging: false
-wandb: false # whether to log to wandb
+wandb: true # whether to log to wandb
 
 
 lr_scheduler: cosine
@@ -14,6 +14,9 @@ loss: mse # mae
 scaler: custom_robust  
 adaptive_loss_normalization: false 
 gradient_clip_val: 0.5
+
+gradient_accumulation_enabled: true
+accumulation_steps: 8  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
 batch_size: 2
 num_epochs: 50

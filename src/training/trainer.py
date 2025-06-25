@@ -59,6 +59,19 @@ class TrainingPipeline:
         self.gift_evaluator = None
         self.log_interval = self.config.get("log_interval", 10)
 
+        # Gradient accumulation parameters
+        self.gradient_accumulation_enabled = self.config.get(
+            "gradient_accumulation_enabled", False
+        )
+        self.accumulation_steps = self.config.get("accumulation_steps", 1)
+        if self.gradient_accumulation_enabled:
+            logger.info(
+                f"Gradient accumulation enabled with {self.accumulation_steps} steps"
+            )
+            logger.info(
+                f"Effective batch size: {self.config['batch_size'] * self.accumulation_steps}"
+            )
+
         # Determine K_max once during initialization for consistency
         time_feature_config = self.config.get("time_feature_config", {})
         if time_feature_config.get("auto_adjust_k_max", False):
@@ -195,7 +208,6 @@ class TrainingPipeline:
                     name=self.config["model_name"],
                     resume="allow",
                     id=self.config["model_name"],
-                    init_timeout=1000,
                 )
             except Exception as e:
                 logger.error(f"WandB initialization failed: {e}")
@@ -341,14 +353,34 @@ class TrainingPipeline:
             metric.update(predictions, targets)
 
     def _log_training_progress(
-        self, epoch: int, batch_idx: int, running_loss: float, avg_grad_norm: float
+        self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
     ) -> None:
         """Log training progress."""
         avg_loss = running_loss / self.log_interval
-        logger.info(
-            f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, "
-            f"Sc. Loss: {avg_loss:.4f}, Grad Norm: {avg_grad_norm:.4f}"
-        )
+
+        # For gradient accumulation, step_idx represents effective steps
+        if self.gradient_accumulation_enabled:
+            logger.info(
+                f"Epoch: {epoch + 1}, Effective Step: {step_idx + 1}, "
+                f"Sc. Loss: {avg_loss:.4f}, Grad Norm: {avg_grad_norm:.4f}"
+            )
+            global_step = (
+                epoch
+                * (
+                    self.config["num_training_iterations_per_epoch"]
+                    // self.accumulation_steps
+                )
+                + step_idx
+            )
+        else:
+            logger.info(
+                f"Epoch: {epoch + 1}, Batch: {step_idx + 1}, "
+                f"Sc. Loss: {avg_loss:.4f}, Grad Norm: {avg_grad_norm:.4f}"
+            )
+            global_step = (
+                epoch * self.config["num_training_iterations_per_epoch"] + step_idx
+            )
+
         if self.config["wandb"]:
             wandb.log(
                 {
@@ -358,8 +390,7 @@ class TrainingPipeline:
                     "train/mse": self.train_metrics["mse"].compute(),
                     "train/smape": self.train_metrics["smape"].compute(),
                     "epoch": epoch,
-                    "step": epoch * self.config["num_training_iterations_per_epoch"]
-                    + batch_idx,
+                    "step": global_step,
                 }
             )
 
@@ -417,49 +448,104 @@ class TrainingPipeline:
         running_loss = 0.0
         epoch_loss = 0.0
         gradient_norms = []
+        accumulated_loss = 0.0
+
+        # Initialize gradients for the first accumulation step
+        self.optimizer.zero_grad()
 
         for batch_idx, batch in enumerate(self.train_loader):
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
             data, target = self._prepare_batch(batch)
-            self.optimizer.zero_grad()
+
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                 output = self.model(data)
                 # Compute normalized loss for a robust training signal
                 loss, inv_scaled_output = self._compute_normalized_loss(output, target)
 
+            # Scale loss by accumulation steps if gradient accumulation is enabled
+            if self.gradient_accumulation_enabled:
+                loss = loss / self.accumulation_steps
+
             loss.backward()
+            accumulated_loss += loss.item()
 
-            # Gradient clipping for stability
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(),
-                max_norm=self.config.get("gradient_clip_val", 1.0),
+            # Check if we should update weights (every accumulation_steps or at the end)
+            is_accumulation_step = (batch_idx + 1) % self.accumulation_steps == 0
+            is_last_batch = (
+                batch_idx + 1 >= self.config["num_training_iterations_per_epoch"]
             )
-            gradient_norms.append(grad_norm.item())
 
-            self.optimizer.step()
+            if (
+                not self.gradient_accumulation_enabled
+                or is_accumulation_step
+                or is_last_batch
+            ):
+                # Gradient clipping for stability
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    max_norm=self.config.get("gradient_clip_val", 1.0),
+                )
+                gradient_norms.append(grad_norm.item())
 
-            # Only clear cache every 10 batches to reduce overhead
-            if (batch_idx + 1) % 10 == 0:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                # For logging purposes, use the accumulated loss
+                if self.gradient_accumulation_enabled:
+                    running_loss += (
+                        accumulated_loss * self.accumulation_steps
+                    )  # Scale back for logging
+                    epoch_loss += accumulated_loss * self.accumulation_steps
+                    accumulated_loss = 0.0
+                else:
+                    running_loss += loss.item()
+                    epoch_loss += loss.item()
+
+            # Only clear cache every 10 effective updates to reduce overhead
+            effective_step = (
+                batch_idx // self.accumulation_steps
+                if self.gradient_accumulation_enabled
+                else batch_idx
+            )
+            if (effective_step + 1) % 10 == 0:
                 torch.cuda.empty_cache()
 
-            # Update metrics with inverse transformed predictions
+            # Update metrics with inverse transformed predictions (every batch)
             self._update_metrics(self.train_metrics, inv_scaled_output, target)
 
-            running_loss += loss.item()
-            epoch_loss += loss.item()
+            # Log progress based on effective updates
+            if self.gradient_accumulation_enabled:
+                if (
+                    is_accumulation_step
+                    and (effective_step + 1) % self.log_interval == 0
+                ):
+                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
+                    self._log_training_progress(
+                        epoch, effective_step, running_loss, avg_grad_norm
+                    )
+                    running_loss = 0.0
+            else:
+                if (batch_idx + 1) % self.log_interval == 0:
+                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
+                    self._log_training_progress(
+                        epoch, batch_idx, running_loss, avg_grad_norm
+                    )
+                    running_loss = 0.0
 
-            if (batch_idx + 1) % self.log_interval == 0:
-                avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
-                self._log_training_progress(
-                    epoch, batch_idx, running_loss, avg_grad_norm
-                )
-                running_loss = 0.0
-
-        return epoch_loss / min(
+        # Calculate average epoch loss
+        total_batches = min(
             batch_idx + 1, self.config["num_training_iterations_per_epoch"]
         )
+        if self.gradient_accumulation_enabled:
+            # For gradient accumulation, we want the average loss per effective update
+            effective_updates = (
+                total_batches + self.accumulation_steps - 1
+            ) // self.accumulation_steps
+            return epoch_loss / max(1, effective_updates)
+        else:
+            return epoch_loss / max(1, total_batches)
 
     def train(self) -> None:
         """Execute the training pipeline."""
