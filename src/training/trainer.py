@@ -56,7 +56,7 @@ SHORT_DATASETS = [
     "saugeenday/W",
 ]
 MED_LONG_DATASETS = ["bizitobs_l2c/H"]
-ALL_DATASETS = list(set(SHORT_DATASETS.split() + MED_LONG_DATASETS.split()))
+ALL_DATASETS = list(set(SHORT_DATASETS + MED_LONG_DATASETS))
 
 
 class TrainingPipeline:
