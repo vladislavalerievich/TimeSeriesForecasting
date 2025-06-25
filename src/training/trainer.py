@@ -44,6 +44,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Constants for GIFT-Eval datasets
+SHORT_DATASETS = [
+    "us_births/D",
+    "us_births/M",
+    "us_births/W",
+    "ett1/W",
+    "ett2/W",
+    "saugeenday/D",
+    "saugeenday/M",
+    "saugeenday/W",
+]
+MED_LONG_DATASETS = ["bizitobs_l2c/H"]
+ALL_DATASETS = list(set(SHORT_DATASETS.split() + MED_LONG_DATASETS.split()))
+
 
 class TrainingPipeline:
     def __init__(self, config: Dict):
@@ -305,9 +319,13 @@ class TrainingPipeline:
                         show=False,
                     )
 
-                    # Log each plot individually with unique names
+                    # Log each plot individually with unique names (synthetic validation prefix)
                     wandb.log(
-                        {f"val_plot_batch{batch_idx + 1}_sample{i}": wandb.Image(fig)}
+                        {
+                            f"synthetic_val/batch{batch_idx + 1}_sample{i}": wandb.Image(
+                                fig
+                            )
+                        }
                     )
                     plt.close(fig)
 
@@ -525,17 +543,17 @@ class TrainingPipeline:
             self._plot_fixed_examples(epoch, avg_val_loss)
 
         # --- GIFT-eval validation ---
-        if epoch % 5 == 4:
-            logger.info("Running GIFT-eval validation...")
-            gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
-                datasets_to_eval=["us_births/D", "saugeenday/W", "ett1/W"],
-                term="short",
-                epoch=epoch,
-                plot=self.config["wandb"],  # Only plot if wandb is enabled
-            )
-            # Log GIFT eval metrics (always to logger, optionally to wandb)
-            self._log_gift_eval_metrics(epoch, gift_eval_metrics)
-            logger.info("GIFT-eval validation finished.")
+
+        logger.info("Running GIFT-eval validation...")
+        gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
+            datasets_to_eval=ALL_DATASETS,
+            term="short",
+            epoch=epoch,
+            plot=self.config["wandb"],  # Only plot if wandb is enabled
+        )
+        # Log GIFT eval metrics (always to logger, optionally to wandb)
+        self._log_gift_eval_metrics(epoch, gift_eval_metrics)
+        logger.info("GIFT-eval validation finished.")
 
         return avg_val_loss
 

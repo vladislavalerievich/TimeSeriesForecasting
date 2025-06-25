@@ -16,11 +16,11 @@ adaptive_loss_normalization: false
 gradient_clip_val: 0.5
 
 gradient_accumulation_enabled: true
-accumulation_steps: 8  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
+accumulation_steps: 2  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
 batch_size: 2
 num_epochs: 50
-num_training_iterations_per_epoch: 3
+num_training_iterations_per_epoch: 2
 log_interval: 1
 
 BaseModelConfig:
@@ -33,7 +33,7 @@ BaseModelConfig:
     use_enhanced_features: true
     use_holiday_features: false
     use_index_features: true
-    auto_adjust_k_max: true
+    k_max: 1
     include_seasonality_info: true 
 
 MultiStepModel:  
