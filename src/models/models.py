@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
-from src.data_handling.scalers import CustomScalingMultivariate
+from src.data_handling.scalers import MinMaxScaler, RobustScaler
 from src.data_handling.time_features import compute_batch_time_features
 from src.models.blocks import (
     ConcatLayer,
@@ -40,8 +40,16 @@ class BaseModel(nn.Module):
         self.embed_size = embed_size
         self.time_feature_config = time_feature_config or {}
 
-        # Create multivariate scaler
-        self.scaler = CustomScalingMultivariate(scaler, clamp=scaler_clamp_value)
+        # Create the appropriate scaler based on config
+        if scaler == "custom_robust":
+            self.scaler = RobustScaler(epsilon=epsilon)
+        elif scaler == "min_max":
+            self.scaler = MinMaxScaler(epsilon=epsilon)
+        else:
+            raise ValueError(f"Unknown scaler: {scaler}")
+
+        self.scaler_name = scaler
+        self.scaler_clamp_value = scaler_clamp_value
 
         # Initial embedding layers for time series values
         self.expand_values = nn.Linear(1, embed_size, bias=True)
@@ -133,6 +141,7 @@ class BaseModel(nn.Module):
         """
         history_values = data_container.history_values
         future_values = data_container.future_values
+        history_mask = data_container.history_mask
         history_time_features, target_time_features = compute_batch_time_features(
             data_container.start,
             data_container.history_length,
@@ -156,10 +165,19 @@ class BaseModel(nn.Module):
             noise = torch.randn_like(history_values) * 0.1 * is_constant.unsqueeze(1)
             history_values = history_values + noise
 
-        # Scale history values
-        history_scale_params, history_scaled = self.scaler(history_values, self.epsilon)
+        # Compute scaling statistics from history values
+        scale_statistics = self.scaler.compute_statistics(history_values, history_mask)
 
-        # Scale future values (multivariate)
+        # Scale history values
+        history_scaled = self.scaler.scale(history_values, scale_statistics)
+
+        # Apply optional clamping if configured
+        if self.scaler_clamp_value is not None:
+            history_scaled = torch.clamp(
+                history_scaled, -self.scaler_clamp_value, self.scaler_clamp_value
+            )
+
+        # Scale future values if present (for training)
         future_scaled = None
         if future_values is not None:
             assert future_values.dim() == 3, (
@@ -170,13 +188,8 @@ class BaseModel(nn.Module):
                 f"but history_values has {num_channels} channels"
             )
 
-            # Apply scaling using the same parameters as history
-            if self.scaler.name == "custom_robust":
-                medians, iqrs = history_scale_params
-                future_scaled = (future_values - medians) / iqrs
-            elif future_values is not None:  # min_max scaler
-                max_vals, min_vals = history_scale_params
-                future_scaled = (future_values - min_vals) / (max_vals - min_vals)
+            # Scale future values using the same statistics from history
+            future_scaled = self.scaler.scale(future_values, scale_statistics)
 
         # Get positional embeddings
         history_pos_embed = self.get_positional_embeddings(
@@ -199,7 +212,7 @@ class BaseModel(nn.Module):
 
         return {
             "result": predictions,
-            "scale_params": history_scale_params,
+            "scale_statistics": scale_statistics,
             "future_scaled": future_scaled,
         }
 
@@ -215,19 +228,14 @@ class BaseModel(nn.Module):
             Loss value
         """
         predictions = y_pred["result"]
-        scale_params = y_pred["scale_params"]
+        scale_statistics = y_pred["scale_statistics"]
         future_values = y_true
 
         if future_values is None:
             return torch.tensor(0.0, device=predictions.device)
 
-        # Scale the ground truth future values using history scale_params
-        if self.scaler.name == "custom_robust":
-            medians, iqrs = scale_params
-            future_scaled = (future_values - medians) / iqrs
-        else:  # min_max scaler
-            max_vals, min_vals = scale_params
-            future_scaled = (future_values - min_vals) / (max_vals - min_vals)
+        # Scale the ground truth future values using history scale_statistics
+        future_scaled = self.scaler.scale(future_values, scale_statistics)
 
         if predictions.shape != future_scaled.shape:
             raise ValueError(
@@ -239,7 +247,7 @@ class BaseModel(nn.Module):
 
     def forecast(self, embedded, target_pos_embed, prediction_length, num_channels):
         """
-        Generate forecasts for all channels.
+        Generate forecasts for all channels simultaneously.
 
         Args:
             embedded: Embedded history values [batch_size, seq_len, num_channels * embed_size]
@@ -250,7 +258,113 @@ class BaseModel(nn.Module):
         Returns:
             Predictions tensor [batch_size, pred_len, num_channels]
         """
-        raise NotImplementedError("Subclasses must implement forecast method")
+        batch_size, seq_len, _ = embedded.shape
+
+        # Reshape embedded to separate channels: [B, S, N, E]
+        embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
+
+        # Permute and reshape for joint channel processing: [B*N, S, E]
+        channel_embedded_all = (
+            embedded.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, seq_len, self.embed_size)
+        )
+
+        # Apply input projection
+        x = self.input_projection_layer(channel_embedded_all)
+
+        # Apply global residual if enabled
+        glob_res = 0.0
+        if self.global_residual:
+            glob_res_input = channel_embedded_all[
+                :, -(self.linear_sequence_length + 1) :, :
+            ].reshape(batch_size * num_channels, -1)
+            glob_res = (
+                self.global_residual(glob_res_input)
+                .unsqueeze(1)
+                .repeat(1, prediction_length, 1)
+            )
+
+        # Pass through encoder layers (temporal processing)
+        for encoder_layer in self.encoder_layers:
+            x = encoder_layer(x)
+
+        # Reshape back to [B, N, S, token_embed_dim] for cross-channel attention
+        x = x.view(batch_size, num_channels, seq_len, -1)
+
+        # Apply cross-channel attention layers (after temporal processing)
+        for i in range(self.cross_channel_attention_layers):
+            # Reshape for attention: [B, S, N, token_embed_dim] -> [B*S, N, token_embed_dim]
+            attention_input = (
+                x.permute(0, 2, 1, 3)
+                .contiguous()
+                .view(batch_size * seq_len, num_channels, -1)
+            )
+
+            # Apply cross-channel attention
+            attended_channels, _ = self.cross_channel_attentions[i](
+                query=attention_input, key=attention_input, value=attention_input
+            )
+
+            # Add residual connection and layer norm
+            attended_channels = self.channel_attention_norms[i](
+                attention_input + attended_channels
+            )
+
+            # Reshape back to [B, N, S, token_embed_dim]
+            x = attended_channels.view(batch_size, seq_len, num_channels, -1).permute(
+                0, 2, 1, 3
+            )
+
+        # Reshape back to [B*N, S, token_embed_dim] for final processing
+        x = (
+            x.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, seq_len, -1)
+        )
+
+        if self.use_gelu and self.initial_gelu is not None:
+            x = self.input_projection_norm(x)
+            x = self.initial_gelu(x)
+
+        # Reshape target positional embeddings for joint processing: [B*N, P, E]
+        target_pos_embed_all = (
+            target_pos_embed.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, prediction_length, self.embed_size)
+        )
+        target_repr = self.target_projection(target_pos_embed_all)
+
+        # Use the last part of the sequence for prediction
+        x_sliced = x[
+            :, -prediction_length:, :
+        ]  # [batch_size * num_channels, pred_len, token_embed_dim]
+
+        if x_sliced.shape != target_repr.shape:
+            # If sequence is shorter than prediction length, repeat the last timestep
+            if x.shape[1] < prediction_length:
+                x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
+                x_sliced = x_last
+            else:
+                raise ValueError(
+                    f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
+                )
+
+        # Generate predictions for all channels
+        final_representation = x_sliced + target_repr
+        if self.global_residual:
+            final_representation += glob_res
+
+        predictions_flat = self.final_output_layer(final_representation).squeeze(-1)
+
+        # Reshape back to [B, P, N] before returning
+        predictions = (
+            predictions_flat.view(batch_size, num_channels, prediction_length)
+            .permute(0, 2, 1)
+            .contiguous()
+        )
+
+        return predictions
 
 
 class MultiStepModel(BaseModel):
@@ -274,6 +388,7 @@ class MultiStepModel(BaseModel):
         dilated_conv_kernel_size=3,
         dilated_conv_max_dilation=3,
         cross_channel_attention_heads: int = 4,
+        cross_channel_attention_layers: int = 2,
         **kwargs,
     ):
         super().__init__(scaler=scaler, **base_model_config)
@@ -282,13 +397,26 @@ class MultiStepModel(BaseModel):
         self.hidden_dim = hidden_dim
         self.channel_embed_dim = self.embed_size
         self.use_dilated_conv = use_dilated_conv
+        self.cross_channel_attention_layers = cross_channel_attention_layers
 
-        self.cross_channel_attention = nn.MultiheadAttention(
-            embed_dim=self.channel_embed_dim,
-            num_heads=cross_channel_attention_heads,
-            batch_first=True,
+        # Create multiple cross-channel attention layers with layer norms
+        self.cross_channel_attentions = nn.ModuleList(
+            [
+                nn.MultiheadAttention(
+                    embed_dim=token_embed_dim,  # Use token_embed_dim instead of channel_embed_dim
+                    num_heads=cross_channel_attention_heads,
+                    batch_first=True,
+                )
+                for _ in range(cross_channel_attention_layers)
+            ]
         )
-        self.channel_attention_norm = nn.LayerNorm(self.channel_embed_dim)
+
+        self.channel_attention_norms = nn.ModuleList(
+            [
+                nn.LayerNorm(token_embed_dim)
+                for _ in range(cross_channel_attention_layers)
+            ]
+        )
 
         self.input_projection_layer = None
         if use_dilated_conv:
@@ -361,28 +489,6 @@ class MultiStepModel(BaseModel):
         # Reshape embedded to separate channels: [B, S, N, E]
         embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
 
-        # Cross-channel attention for learning inter-dependencies
-
-        # Reshape for attention: [B, S, N, E] -> [B*S, N, E]
-        channel_input = embedded.view(
-            batch_size * seq_len, num_channels, self.embed_size
-        )
-
-        # Apply self-attention across channels
-        attended_channels, _ = self.cross_channel_attention(
-            query=channel_input, key=channel_input, value=channel_input
-        )
-
-        # Add residual connection and layer norm
-        attended_channels = self.channel_attention_norm(
-            channel_input + attended_channels
-        )
-
-        # Reshape back to [B, S, N, E]
-        embedded = attended_channels.view(
-            batch_size, seq_len, num_channels, self.embed_size
-        )
-
         # Permute and reshape for joint channel processing: [B*N, S, E]
         channel_embedded_all = (
             embedded.permute(0, 2, 1, 3)
@@ -405,9 +511,43 @@ class MultiStepModel(BaseModel):
                 .repeat(1, prediction_length, 1)
             )
 
-        # Pass through encoder layers
+        # Pass through encoder layers (temporal processing)
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
+
+        # Reshape back to [B, N, S, token_embed_dim] for cross-channel attention
+        x = x.view(batch_size, num_channels, seq_len, -1)
+
+        # Apply cross-channel attention layers (after temporal processing)
+        for i in range(self.cross_channel_attention_layers):
+            # Reshape for attention: [B, S, N, token_embed_dim] -> [B*S, N, token_embed_dim]
+            attention_input = (
+                x.permute(0, 2, 1, 3)
+                .contiguous()
+                .view(batch_size * seq_len, num_channels, -1)
+            )
+
+            # Apply cross-channel attention
+            attended_channels, _ = self.cross_channel_attentions[i](
+                query=attention_input, key=attention_input, value=attention_input
+            )
+
+            # Add residual connection and layer norm
+            attended_channels = self.channel_attention_norms[i](
+                attention_input + attended_channels
+            )
+
+            # Reshape back to [B, N, S, token_embed_dim]
+            x = attended_channels.view(batch_size, seq_len, num_channels, -1).permute(
+                0, 2, 1, 3
+            )
+
+        # Reshape back to [B*N, S, token_embed_dim] for final processing
+        x = (
+            x.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, seq_len, -1)
+        )
 
         if self.use_gelu and self.initial_gelu is not None:
             x = self.input_projection_norm(x)

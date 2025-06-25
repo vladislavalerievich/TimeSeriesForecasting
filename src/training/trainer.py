@@ -6,6 +6,7 @@ import warnings
 from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -58,8 +59,23 @@ class TrainingPipeline:
         self.gift_evaluator = None
         self.log_interval = self.config.get("log_interval", 10)
 
+        # Determine K_max once during initialization for consistency
+        time_feature_config = self.config.get("time_feature_config", {})
+        if time_feature_config.get("auto_adjust_k_max", False):
+            # Use a fixed K_max even if auto_adjust is enabled to ensure consistency
+            self.K_max = time_feature_config.get("min_k_max", 12)
+            logger.warning(
+                f"Auto K_max adjustment disabled for training stability. Using fixed K_max={self.K_max}"
+            )
+            # Override the config to disable auto adjustment
+            self.config["time_feature_config"]["auto_adjust_k_max"] = False
+            self.config["time_feature_config"]["min_k_max"] = self.K_max
+        else:
+            self.K_max = self.config.get("K_max", 6)
+
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
+        logger.info(f"Using K_max: {self.K_max}")
         logger.info(f"Config: {yaml.dump(config)}")
         self._setup()
 
@@ -215,10 +231,41 @@ class TrainingPipeline:
         )
         logger.info(f"Checkpoint saved at epoch {epoch}")
 
-    def _inverse_scale(self, output: torch.Tensor, scale_params: Tuple) -> torch.Tensor:
-        """Inverse scale multivariate model predictions using scaler's built-in method."""
-        # Use the model's scaler inverse_transform method for consistency
-        return self.model.scaler.inverse_transform(output, scale_params)
+    def _inverse_scale(
+        self, scaled_data: torch.Tensor, scale_statistics: dict
+    ) -> torch.Tensor:
+        """
+        Apply inverse scaling to convert predictions back to original scale.
+
+        Args:
+            scaled_data: Scaled predictions [batch_size, pred_len, num_channels]
+            scale_statistics: Scaling statistics from forward pass
+
+        Returns:
+            Data in original scale
+        """
+        return self.model.scaler.inverse_scale(scaled_data, scale_statistics)
+
+    def _compute_normalized_loss(self, output: dict, target: torch.Tensor) -> tuple:
+        """
+        Compute normalized loss for training.
+
+        Args:
+            output: Model output dictionary containing 'result' and 'scale_statistics'
+            target: Ground truth future values
+
+        Returns:
+            Tuple of (loss, inverse_scaled_predictions)
+        """
+        # Compute loss on scaled values for stable training
+        loss = self.model.compute_loss(target, output)
+
+        # Get inverse scaled predictions for logging/metrics
+        inv_scaled_output = self._inverse_scale(
+            output["result"], output["scale_statistics"]
+        )
+
+        return loss, inv_scaled_output
 
     def _prepare_batch(
         self, batch: BatchTimeSeriesContainer
@@ -238,7 +285,7 @@ class TrainingPipeline:
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                     output = self.model(batch)
                     inv_scaled_output = self._inverse_scale(
-                        output["result"], output["scale_params"]
+                        output["result"], output["scale_statistics"]
                     )
                 pred_future = inv_scaled_output.cpu().numpy()
 
@@ -294,18 +341,19 @@ class TrainingPipeline:
             metric.update(predictions, targets)
 
     def _log_training_progress(
-        self, epoch: int, batch_idx: int, running_loss: float
+        self, epoch: int, batch_idx: int, running_loss: float, avg_grad_norm: float
     ) -> None:
         """Log training progress."""
         avg_loss = running_loss / self.log_interval
         logger.info(
             f"Epoch: {epoch + 1}, Batch: {batch_idx + 1}, "
-            f"Batch Len: {self.config['batch_size']}, Sc. Loss: {avg_loss:.4f}"
+            f"Sc. Loss: {avg_loss:.4f}, Grad Norm: {avg_grad_norm:.4f}"
         )
         if self.config["wandb"]:
             wandb.log(
                 {
                     "train/loss": avg_loss,
+                    "train/gradient_norm": avg_grad_norm,
                     "train/mape": self.train_metrics["mape"].compute(),
                     "train/mse": self.train_metrics["mse"].compute(),
                     "train/smape": self.train_metrics["smape"].compute(),
@@ -326,14 +374,12 @@ class TrainingPipeline:
                 data, target = self._prepare_batch(batch)
                 with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                     output = self.model(data)
-                    loss = self.model.compute_loss(target, output)
 
+                # Compute normalized loss and get inverse scaled output
+                loss, inv_scaled_output = self._compute_normalized_loss(output, target)
                 total_val_loss += loss.item()
 
-                # Inverse transform predictions for metrics calculation
-                inv_scaled_output = self.model.scaler.inverse_transform(
-                    output["result"], output["scale_params"]
-                )
+                # Update metrics with inverse scaled predictions
                 self._update_metrics(self.val_metrics, inv_scaled_output, target)
                 num_batches += 1
 
@@ -370,6 +416,7 @@ class TrainingPipeline:
         self.model.train()
         running_loss = 0.0
         epoch_loss = 0.0
+        gradient_norms = []
 
         for batch_idx, batch in enumerate(self.train_loader):
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
@@ -379,23 +426,35 @@ class TrainingPipeline:
             self.optimizer.zero_grad()
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                 output = self.model(data)
-                loss = self.model.compute_loss(target, output)
+                # Compute normalized loss for a robust training signal
+                loss, inv_scaled_output = self._compute_normalized_loss(output, target)
 
             loss.backward()
+
+            # Gradient clipping for stability
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(),
+                max_norm=self.config.get("gradient_clip_val", 1.0),
+            )
+            gradient_norms.append(grad_norm.item())
+
             self.optimizer.step()
-            torch.cuda.empty_cache()
+
+            # Only clear cache every 10 batches to reduce overhead
+            if (batch_idx + 1) % 10 == 0:
+                torch.cuda.empty_cache()
 
             # Update metrics with inverse transformed predictions
-            inv_scaled_output = self.model.scaler.inverse_transform(
-                output["result"], output["scale_params"]
-            )
             self._update_metrics(self.train_metrics, inv_scaled_output, target)
 
             running_loss += loss.item()
             epoch_loss += loss.item()
 
             if (batch_idx + 1) % self.log_interval == 0:
-                self._log_training_progress(epoch, batch_idx, running_loss)
+                avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
+                self._log_training_progress(
+                    epoch, batch_idx, running_loss, avg_grad_norm
+                )
                 running_loss = 0.0
 
         return epoch_loss / min(

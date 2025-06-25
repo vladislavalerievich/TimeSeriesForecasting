@@ -114,20 +114,42 @@ class MultiStepModelWrapper:
 
             with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
                 with torch.no_grad():
-                    output = self.model(batch, training=False)
+                    output = self.model(batch, drop_enc_allow=False)
                     predictions = (
-                        self.model.scaler.inverse_transform(
+                        self.model.scaler.inverse_scale(
                             output["result"],
-                            output["scale_params"],
+                            output["scale_statistics"],
                         )
                         .cpu()
                         .numpy()
                     )
 
             if np.isnan(predictions).any():
+                # Try again without half precision if we get NaNs
                 logger.warning(
-                    f"Predictions contain NaNs for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
+                    f"NaN predictions with half precision for {item_id}. Retrying with full precision."
                 )
+                with torch.no_grad():
+                    output = self.model(batch, drop_enc_allow=False)
+                    predictions = (
+                        self.model.scaler.inverse_scale(
+                            output["result"],
+                            output["scale_statistics"],
+                        )
+                        .cpu()
+                        .numpy()
+                    )
+
+            if np.isnan(predictions).any():
+                nan_count = np.isnan(predictions).sum()
+                total_count = predictions.size
+                logger.warning(
+                    f"Predictions contain {nan_count}/{total_count} NaNs ({nan_count / total_count * 100:.1f}%) "
+                    f"for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
+                )
+                # Replace NaN with zeros for metrics computation, but log the issue
+                predictions = np.nan_to_num(predictions, nan=0.0)
+                # Consider marking this forecast as potentially unreliable
 
             predictions = predictions.squeeze(0).T
             forecast_start = start + seq_len

@@ -1,231 +1,293 @@
+from abc import ABC, abstractmethod
+from typing import Dict, Optional
+
 import torch
-import torch.nn as nn
 
 
-def custom_scaler_robust_multivariate(
-    inputs, epsilon, q_low=0.25, q_high=0.75, clamp=None
-):
+class BaseScaler(ABC):
     """
-    Scale each channel of multivariate time series independently using median and IQR.
+    Abstract base class for time series scalers.
 
-    Args:
-        inputs: Tensor of shape [batch_size, seq_len, num_channels]
-        epsilon: Small value to avoid division by zero
-        q_low: Lower quantile (default: 0.25)
-        q_high: Higher quantile (default: 0.75)
-        clamp: Optional value to clamp scaled outputs
-
-    Returns:
-        scale_params: Tuple of (medians, iqrs) for each channel in each batch
-        inputs_scaled: Scaled input tensor with same shape as input
-    """
-    batch_size, seq_len, num_channels = inputs.shape
-
-    # Initialize output tensors
-    medians = torch.zeros(batch_size, 1, num_channels, device=inputs.device)
-    iqrs = torch.zeros(batch_size, 1, num_channels, device=inputs.device)
-    inputs_scaled = torch.zeros_like(inputs)
-
-    # Process each channel independently
-    for c in range(num_channels):
-        channel_values = inputs[:, :, c]
-
-        # Compute median for each batch sample
-        batch_medians = torch.nanmedian(channel_values, dim=1).values
-
-        # Compute IQR for each batch sample
-        q1 = torch.nanquantile(channel_values, q_low, dim=1)
-        q3 = torch.nanquantile(channel_values, q_high, dim=1)
-        batch_iqrs = q3 - q1
-
-        # Ensure IQR is not zero
-        batch_iqrs = torch.clamp(batch_iqrs, min=epsilon)
-
-        # Store scaling parameters
-        medians[:, 0, c] = batch_medians
-        iqrs[:, 0, c] = batch_iqrs
-
-        # Apply scaling
-        scaled_channel = (
-            channel_values - batch_medians.unsqueeze(1)
-        ) / batch_iqrs.unsqueeze(1)
-
-        # Handle NaN values
-        scaled_channel = torch.where(
-            torch.isnan(scaled_channel),
-            torch.tensor(0.0, device=inputs.device),
-            scaled_channel,
-        )
-
-        # Apply optional clamping
-        if clamp is not None:
-            scaled_channel = torch.clamp(scaled_channel, -clamp, clamp)
-
-        # Store scaled values
-        inputs_scaled[:, :, c] = scaled_channel
-
-    return (medians, iqrs), inputs_scaled.to(torch.float32)
-
-
-def min_max_scaler_multivariate(inputs, epsilon):
-    """
-    Apply min-max scaling independently to each channel of multivariate time series.
-
-    Args:
-        inputs: Tensor of shape [batch_size, seq_len, num_channels]
-        epsilon: Small value to avoid division by zero
-
-    Returns:
-        scale_params: Tuple of (max_values, min_values) for each channel in each batch
-        inputs_scaled: Scaled input tensor with same shape as input
-    """
-    batch_size, seq_len, num_channels = inputs.shape
-
-    # Initialize output tensors
-    max_values = torch.zeros(batch_size, 1, num_channels, device=inputs.device)
-    min_values = torch.zeros(batch_size, 1, num_channels, device=inputs.device)
-    inputs_scaled = torch.zeros_like(inputs)
-
-    # Process each channel independently
-    for c in range(num_channels):
-        channel_values = inputs[:, :, c]
-
-        # Get max and min for each batch sample
-        batch_max = torch.max(channel_values, dim=1, keepdim=True)[0]
-        batch_min = torch.min(channel_values, dim=1, keepdim=True)[0]
-
-        # Ensure range is not zero
-        range_values = torch.clamp(batch_max - batch_min, min=epsilon)
-
-        # Store scaling parameters
-        max_values[:, 0, c] = batch_max.squeeze(1)
-        min_values[:, 0, c] = batch_min.squeeze(1)
-
-        # Apply scaling
-        scaled_channel = (channel_values - batch_min) / range_values
-
-        # Handle NaN values
-        scaled_channel = torch.where(
-            torch.isnan(scaled_channel),
-            torch.tensor(0.0, device=inputs.device),
-            scaled_channel,
-        )
-
-        # Store scaled values
-        inputs_scaled[:, :, c] = scaled_channel
-
-    return (max_values, min_values), inputs_scaled.to(torch.float32)
-
-
-def rescale_custom_robust(predictions, scale_params):
-    """
-    Rescale multivariate predictions using the custom robust scaling parameters.
-
-    Args:
-        predictions: Tensor of shape [batch_size, pred_len, num_channels]
-        scale_params: Tuple of (medians, iqrs) as returned by custom_scaler_robust_multivariate
-
-    Returns:
-        Rescaled predictions with shape [batch_size, pred_len, num_channels]
-    """
-    medians, iqrs = scale_params
-    batch_size, pred_len, num_channels = predictions.shape
-
-    # Broadcast scaling parameters and rescale
-    # medians and iqrs have shape [batch_size, 1, num_channels]
-    rescaled = predictions * iqrs + medians
-
-    return rescaled
-
-
-def rescale_min_max(predictions, scale_params):
-    """
-    Rescale multivariate predictions using the min-max scaling parameters.
-
-    Args:
-        predictions: Tensor of shape [batch_size, pred_len, num_channels]
-        scale_params: Tuple of (max_values, min_values) as returned by min_max_scaler_multivariate
-
-    Returns:
-        Rescaled predictions with shape [batch_size, pred_len, num_channels]
-    """
-    max_values, min_values = scale_params
-    batch_size, pred_len, num_channels = predictions.shape
-
-    # Broadcast scaling parameters and rescale
-    # max_values and min_values have shape [batch_size, 1, num_channels]
-    range_values = max_values - min_values
-    rescaled = predictions * range_values + min_values
-
-    return rescaled
-
-
-class CustomScalingMultivariate(nn.Module):
-    """
-    Custom scaling module for multivariate time series data.
+    Defines the interface for scaling multivariate time series data with support
+    for masked values and channel-wise scaling.
     """
 
-    def __init__(self, name, clamp=None):
-        super().__init__()
-        self.name = name
-        self.clamp = clamp
-
-        if name == "custom_robust":
-            self.scaler = lambda x, eps: custom_scaler_robust_multivariate(
-                x, eps, clamp=clamp
-            )
-        elif name == "min_max":
-            self.scaler = min_max_scaler_multivariate
-        else:
-            raise ValueError(f"Unknown scaler name: {name}")
-
-    def forward(self, values, epsilon):
+    @abstractmethod
+    def compute_statistics(
+        self, history_values: torch.Tensor, history_mask: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
         """
-        Scale input values using the configured scaler.
+        Compute scaling statistics from historical data.
 
         Args:
-            values: Input tensor of shape [batch_size, seq_len, num_channels]
-            epsilon: Small value to avoid division by zero
+            history_values: Historical observations.
+                Shape: [batch_size, seq_len, num_channels]
+            history_mask: Optional mask indicating valid entries (1.0 for valid, 0.0 for invalid).
+                Shape: [batch_size, seq_len]
+                If None, all values are considered valid.
 
         Returns:
-            Tuple of (scale_params, scaled_values)
+            Dictionary containing scaling statistics with tensors of shape
+            [batch_size, 1, num_channels] for broadcasting compatibility.
         """
-        if values is None:
-            return None, None
-        return self.scaler(values, epsilon)
+        pass
 
-    def inverse_transform(self, scaled_values, scale_params):
+    @abstractmethod
+    def scale(
+        self, data: torch.Tensor, statistics: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
         """
-        Inverse transform scaled values back to original scale.
+        Apply scaling transformation to data.
 
         Args:
-            scaled_values: Scaled tensor of shape [batch_size, seq_len, num_channels] or [batch_size, seq_len]
-            scale_params: Scaling parameters from forward pass
+            data: Data to scale.
+                Shape: [batch_size, seq_len_or_pred_len, num_channels]
+            statistics: Scaling statistics from compute_statistics.
 
         Returns:
-            Rescaled tensor with same shape as scaled_values
+            Scaled tensor with same shape as input.
         """
-        if scaled_values is None or scale_params is None:
-            return None
+        pass
 
-        # Handle different input shapes
-        if scaled_values.dim() == 2:
-            # If 2D [batch_size, seq_len], assume single channel
-            scaled_values = scaled_values.unsqueeze(-1)
-            squeeze_output = True
-        else:
-            squeeze_output = False
+    @abstractmethod
+    def inverse_scale(
+        self, scaled_data: torch.Tensor, statistics: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Apply inverse scaling transformation to recover original scale.
 
-        # Apply multivariate rescaling
-        if self.name == "custom_robust":
-            rescaled = rescale_custom_robust(scaled_values, scale_params)
-        elif self.name == "min_max":
-            rescaled = rescale_min_max(scaled_values, scale_params)
-        else:
-            raise ValueError(f"Unknown scaler name: {self.name}")
+        Args:
+            scaled_data: Scaled data to transform back.
+                Shape: [batch_size, seq_len_or_pred_len, num_channels]
+            statistics: Scaling statistics from compute_statistics.
 
-        # Restore original shape if needed
-        if squeeze_output:
-            rescaled = rescaled.squeeze(-1)
+        Returns:
+            Data in original scale with same shape as input.
+        """
+        pass
 
-        return rescaled
+
+class RobustScaler(BaseScaler):
+    """
+    Robust scaler using median and IQR for normalization.
+
+    Scaling formula: (data - median) / (iqr + epsilon)
+
+    This scaler is robust to outliers by using median and interquartile range
+    instead of mean and standard deviation.
+
+    Args:
+        epsilon: Small constant for numerical stability. Default: 1e-8
+    """
+
+    def __init__(self, epsilon: float = 1e-8):
+        if epsilon <= 0:
+            raise ValueError("epsilon must be positive")
+        self.epsilon = epsilon
+
+    def compute_statistics(
+        self, history_values: torch.Tensor, history_mask: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute median and IQR statistics from historical data.
+
+        Args:
+            history_values: Historical observations.
+                Shape: [batch_size, seq_len, num_channels]
+            history_mask: Optional mask indicating valid entries.
+                Shape: [batch_size, seq_len]
+
+        Returns:
+            Dictionary with keys 'median' and 'iqr', each containing tensors
+            of shape [batch_size, 1, num_channels].
+        """
+        batch_size, seq_len, num_channels = history_values.shape
+        device = history_values.device
+
+        # Initialize output tensors
+        medians = torch.zeros(batch_size, 1, num_channels, device=device)
+        iqrs = torch.ones(batch_size, 1, num_channels, device=device)
+
+        for b in range(batch_size):
+            for c in range(num_channels):
+                # Get data for this batch and channel
+                channel_data = history_values[b, :, c]
+
+                # Apply mask if provided
+                if history_mask is not None:
+                    mask = history_mask[b, :].bool()
+                    valid_data = channel_data[mask]
+                else:
+                    valid_data = channel_data
+
+                # Skip if no valid data
+                if len(valid_data) == 0:
+                    continue  # Keep defaults: median=0, iqr=1
+
+                # Compute median
+                median_val = torch.median(valid_data)
+                medians[b, 0, c] = median_val
+
+                # Compute IQR (75th percentile - 25th percentile)
+                if len(valid_data) > 1:
+                    q75 = torch.quantile(valid_data, 0.75)
+                    q25 = torch.quantile(valid_data, 0.25)
+                    iqr_val = q75 - q25
+
+                    # Ensure IQR is not zero (use default if it is)
+                    if iqr_val > 0:
+                        iqrs[b, 0, c] = iqr_val
+                # If only one data point, keep default iqr=1
+
+        return {"median": medians, "iqr": iqrs}
+
+    def scale(
+        self, data: torch.Tensor, statistics: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Apply robust scaling: (data - median) / (iqr + epsilon).
+
+        Args:
+            data: Data to scale.
+                Shape: [batch_size, seq_len_or_pred_len, num_channels]
+            statistics: Dictionary containing 'median' and 'iqr' tensors.
+
+        Returns:
+            Scaled tensor with same shape as input.
+        """
+        median = statistics["median"]
+        iqr = statistics["iqr"]
+
+        return (data - median) / (iqr + self.epsilon)
+
+    def inverse_scale(
+        self, scaled_data: torch.Tensor, statistics: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Apply inverse robust scaling: scaled_data * (iqr + epsilon) + median.
+
+        Args:
+            scaled_data: Scaled data to transform back.
+                Shape: [batch_size, seq_len_or_pred_len, num_channels]
+            statistics: Dictionary containing 'median' and 'iqr' tensors.
+
+        Returns:
+            Data in original scale with same shape as input.
+        """
+        median = statistics["median"]
+        iqr = statistics["iqr"]
+
+        return scaled_data * (iqr + self.epsilon) + median
+
+
+class MinMaxScaler(BaseScaler):
+    """
+    Min-Max scaler that normalizes data to the range [-1, 1].
+
+    Scaling formula: (data - min) / (max - min + epsilon) * 2 - 1
+
+    This scaler maps the data to a fixed range, which can be beneficial
+    for neural networks and other algorithms that work well with bounded inputs.
+
+    Args:
+        epsilon: Small constant for numerical stability. Default: 1e-8
+    """
+
+    def __init__(self, epsilon: float = 1e-8):
+        if epsilon <= 0:
+            raise ValueError("epsilon must be positive")
+        self.epsilon = epsilon
+
+    def compute_statistics(
+        self, history_values: torch.Tensor, history_mask: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute min and max statistics from historical data.
+
+        Args:
+            history_values: Historical observations.
+                Shape: [batch_size, seq_len, num_channels]
+            history_mask: Optional mask indicating valid entries.
+                Shape: [batch_size, seq_len]
+
+        Returns:
+            Dictionary with keys 'min' and 'max', each containing tensors
+            of shape [batch_size, 1, num_channels].
+        """
+        batch_size, seq_len, num_channels = history_values.shape
+        device = history_values.device
+
+        # Initialize output tensors with defaults
+        mins = torch.zeros(batch_size, 1, num_channels, device=device)
+        maxs = torch.ones(batch_size, 1, num_channels, device=device)
+
+        for b in range(batch_size):
+            for c in range(num_channels):
+                # Get data for this batch and channel
+                channel_data = history_values[b, :, c]
+
+                # Apply mask if provided
+                if history_mask is not None:
+                    mask = history_mask[b, :].bool()
+                    valid_data = channel_data[mask]
+                else:
+                    valid_data = channel_data
+
+                # Skip if no valid data
+                if len(valid_data) == 0:
+                    continue  # Keep defaults: min=0, max=1
+
+                # Compute min and max
+                min_val = torch.min(valid_data)
+                max_val = torch.max(valid_data)
+
+                mins[b, 0, c] = min_val
+                maxs[b, 0, c] = max_val
+
+                # Handle case where min == max
+                if torch.abs(max_val - min_val) < self.epsilon:
+                    maxs[b, 0, c] = min_val + 1.0  # Set range to [min_val, min_val + 1]
+
+        return {"min": mins, "max": maxs}
+
+    def scale(
+        self, data: torch.Tensor, statistics: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Apply min-max scaling to range [-1, 1]: (data - min) / (max - min + epsilon) * 2 - 1.
+
+        Args:
+            data: Data to scale.
+                Shape: [batch_size, seq_len_or_pred_len, num_channels]
+            statistics: Dictionary containing 'min' and 'max' tensors.
+
+        Returns:
+            Scaled tensor with same shape as input, values in range [-1, 1].
+        """
+        min_val = statistics["min"]
+        max_val = statistics["max"]
+
+        # Scale to [0, 1] then to [-1, 1]
+        normalized = (data - min_val) / (max_val - min_val + self.epsilon)
+        return normalized * 2.0 - 1.0
+
+    def inverse_scale(
+        self, scaled_data: torch.Tensor, statistics: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Apply inverse min-max scaling: (scaled_data + 1) / 2 * (max - min + epsilon) + min.
+
+        Args:
+            scaled_data: Scaled data to transform back (assumed to be in range [-1, 1]).
+                Shape: [batch_size, seq_len_or_pred_len, num_channels]
+            statistics: Dictionary containing 'min' and 'max' tensors.
+
+        Returns:
+            Data in original scale with same shape as input.
+        """
+        min_val = statistics["min"]
+        max_val = statistics["max"]
+
+        # Transform from [-1, 1] to [0, 1] then to original scale
+        normalized = (scaled_data + 1.0) / 2.0
+        return normalized * (max_val - min_val + self.epsilon) + min_val

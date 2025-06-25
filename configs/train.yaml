@@ -4,18 +4,20 @@ model_name: Multivariate_DeltaNet_
 continue_training: false
 seed: 2025
 debugging: false
-wandb: true # whether to log to wandb
+wandb: false # whether to log to wandb
 
 
 lr_scheduler: cosine
 initial_lr: 0.00001 # 1e-5
 learning_rate: 0.0000001 # 1e-7
 loss: mse # mae
-scaler: custom_robust
+scaler: custom_robust  
+adaptive_loss_normalization: false 
+gradient_clip_val: 0.5
 
-batch_size: 128
+batch_size: 2
 num_epochs: 50
-num_training_iterations_per_epoch: 50
+num_training_iterations_per_epoch: 3
 log_interval: 1
 
 BaseModelConfig:
@@ -43,6 +45,7 @@ MultiStepModel:
   dilated_conv_kernel_size: 5
   dilated_conv_max_dilation: 3
   cross_channel_attention_heads: 4
+  cross_channel_attention_layers: 2
 
 EncoderConfig:
   encoder_type: DeltaNet
@@ -51,7 +54,7 @@ EncoderConfig:
   num_heads: 4  
   norm: true
   norm_type: layernorm
-  residual: false   
+  residual: true
   enc_conv: true
   dilated_conv_kernel_size: 5  
   dilated_conv_max_dilation: 3
