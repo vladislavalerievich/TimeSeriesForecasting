@@ -142,11 +142,9 @@ class BatchTimeSeriesContainer:
             Type: Frequency enum (D=Daily, W=Weekly, H=Hourly, ME=Month End, S=Seconds)
         static_features: Optional StaticFeaturesDataContainer of features constant over time.
             Shape: [batch_size, num_static_features, num_static_features_per_channel]
-        history_mask: Optional boolean/float tensor indicating valid (1/True) vs padded (0/False)
-            entries in history_values/history_time_features.
+        history_mask: Optional boolean/float tensor indicating missing entries in history_values across channels.
             Shape: [batch_size, seq_len]
-        future_mask: Optional boolean/float tensor indicating valid (1/True) vs padded/missing (0/False)
-            future values.
+        future_mask: Optional boolean/float tensor indicating missing entries in future_values across channels.
             Shape: [batch_size, pred_len]
     """
 

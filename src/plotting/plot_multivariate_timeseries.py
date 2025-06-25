@@ -164,12 +164,12 @@ def plot_from_container(
     **kwargs,
 ) -> Figure:
     """
-    Helper function to plot from a TimeSeriesDataContainer.
+    Helper function to plot from a BatchTimeSeriesContainer.
 
     Parameters
     ----------
-    ts_data : TimeSeriesDataContainer
-        The time series data container.
+    ts_data : BatchTimeSeriesContainer
+        The batch time series data container.
     sample_idx : int
         Index of the sample in the batch to plot.
     predicted_values : np.ndarray, optional
