@@ -235,7 +235,7 @@ class GiftEvaluator:
 
     def _evaluate_single_dataset(
         self, task: Dict
-    ) -> Tuple[Dict, List[SampleForecast], List[Dict]]:
+    ) -> Tuple[Dict, List[SampleForecast], List[Tuple[Dict, Dict]]]:
         ds_name, ds_freq, term = (
             task["ds_name"],
             task["ds_freq"],
@@ -247,17 +247,25 @@ class GiftEvaluator:
         self.predictor.set_prediction_len(dataset.prediction_length)
         self.predictor.set_ds_freq(ds_freq)
 
-        # Convert test data to list to avoid tee issues with GluonTS evaluate_model
-        test_data_list = list(dataset.test_data)
+        # Get test data object
+        test_data = dataset.test_data
 
         # Get only the first sample (first window) for plotting
-        plot_samples = test_data_list[:1] if test_data_list else []
-        forecasts = self.predictor.predict(plot_samples) if plot_samples else []
+        # This will be a list with one tuple: [(input_dict, label_dict)]
+        plot_samples_with_labels = list(test_data)[:1] if test_data else []
+        plot_samples_inputs = (
+            [sample[0] for sample in plot_samples_with_labels]
+            if plot_samples_with_labels
+            else []
+        )
+        forecasts = (
+            self.predictor.predict(plot_samples_inputs) if plot_samples_inputs else []
+        )
 
         season_length = get_seasonality(dataset.freq)
         res = evaluate_model(
             self.predictor,
-            test_data=test_data_list,  # Pass the list directly
+            test_data=test_data,
             metrics=METRICS,
             axis=None,
             batch_size=128,
@@ -279,42 +287,43 @@ class GiftEvaluator:
             "NRMSE[0.5]": res["NRMSE[0.5]"].iloc[0],
             "ND[0.5]": res["ND[0.5]"].iloc[0],
         }
-        return metrics, forecasts, plot_samples
+        return metrics, forecasts, plot_samples_with_labels
 
     def _plot_and_log_samples(self, plot_samples, forecasts, task, epoch):
         ds_name, term = task["ds_name"], task["term"]
-        pred_len = self.predictor.prediction_length
         max_context = self.predictor.max_context_length
 
         # Only plot the first window (first sample) for each dataset
         if plot_samples and forecasts:
             try:
-                data_entry = plot_samples[0]
+                # plot_samples is a list with one element: (input_dict, label_dict)
+                input_data, label_data = plot_samples[0]
                 forecast = forecasts[0]
 
-                # Handle both test data format (tuples) and regular dataset format (dicts)
-                if isinstance(data_entry, tuple):
-                    # Test data format: (input_data, expected_output)
-                    input_data = data_entry[0]
-                    full_target = input_data["target"]
-                else:
-                    # Regular dataset format: dictionary
-                    full_target = data_entry["target"]
+                history_values = input_data["target"]
+                future_values = label_data["target"]
 
-                # Ensure target is a 2D numpy array [num_dims, seq_len]
-                if isinstance(full_target, np.ndarray):
-                    if full_target.ndim == 1:
-                        full_target = full_target.reshape(1, -1)
+                # Ensure history is a 2D numpy array [num_dims, seq_len]
+                if isinstance(history_values, np.ndarray):
+                    if history_values.ndim == 1:
+                        history_values = history_values.reshape(1, -1)
                 else:
-                    full_target = np.asarray(full_target, dtype=np.float32)
-                    if full_target.ndim == 1:
-                        full_target = full_target.reshape(1, -1)
+                    history_values = np.asarray(history_values, dtype=np.float32)
+                    if history_values.ndim == 1:
+                        history_values = history_values.reshape(1, -1)
 
-                history_values = full_target[:, :-pred_len]
                 if history_values.shape[1] > max_context:
                     history_values = history_values[:, -max_context:]
 
-                future_values = full_target[:, -pred_len:]
+                # Ensure future is a 2D numpy array [num_dims, seq_len]
+                if isinstance(future_values, np.ndarray):
+                    if future_values.ndim == 1:
+                        future_values = future_values.reshape(1, -1)
+                else:
+                    future_values = np.asarray(future_values, dtype=np.float32)
+                    if future_values.ndim == 1:
+                        future_values = future_values.reshape(1, -1)
+
                 predicted_values = forecast.samples
 
                 fig = plot_multivariate_timeseries(
