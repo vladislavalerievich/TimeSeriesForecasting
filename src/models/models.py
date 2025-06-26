@@ -28,7 +28,7 @@ class BaseModel(nn.Module):
         encoding_dropout=0.0,
         handle_constants_model=False,
         embed_size=128,
-        K_max=15,
+        K_max=6,
         time_feature_config=None,
         **kwargs,
     ):

@@ -206,7 +206,15 @@ class GiftEvaluator:
             ds_key, ds_freq = ds_name.split("/")
         else:
             ds_key = ds_name
-            ds_freq = self.dataset_properties_map[ds_key]["frequency"]
+            # For datasets without explicit frequency, try to get from properties
+            ds_key_lower = ds_key.lower()
+            ds_key_mapped = PRETTY_NAMES.get(ds_key_lower, ds_key_lower)
+            if ds_key_mapped in self.dataset_properties_map:
+                ds_freq = self.dataset_properties_map[ds_key_mapped]["frequency"]
+            else:
+                # Fallback frequency if not found
+                ds_freq = "D"  # Default to daily
+
         ds_key = ds_key.lower()
         ds_key = PRETTY_NAMES.get(ds_key, ds_key)
         return ds_key, ds_freq
@@ -261,7 +269,11 @@ class GiftEvaluator:
         pred_len = self.predictor.prediction_length
         max_context = self.predictor.max_context_length
 
-        for i, (data_entry, forecast) in enumerate(zip(plot_samples, forecasts)):
+        # Only plot the first window (first sample) for each dataset
+        if plot_samples and forecasts:
+            data_entry = plot_samples[0]
+            forecast = forecasts[0]
+
             full_target = data_entry["target"]
             history_values = full_target[:, :-pred_len]
             if history_values.shape[1] > max_context:
@@ -274,8 +286,11 @@ class GiftEvaluator:
                 history_values=history_values.T,
                 future_values=future_values.T,
                 predicted_values=predicted_values.T,
-                title=f"GIFT-Eval: {ds_name}/{term} - Sample {i} - Epoch {epoch}",
+                title=f"GIFT-Eval: {ds_name}/{term} - Epoch {epoch}",
                 show=False,
             )
-            wandb.log({f"gift_eval/{ds_name}_{term}_sample_{i}": wandb.Image(fig)})
+            # Use clear prefix for GIFT-eval plots to distinguish from synthetic validation
+            wandb.log(
+                {f"gift_eval/{ds_name.replace('/', '_')}_{term}": wandb.Image(fig)}
+            )
             plt.close(fig)

@@ -86,12 +86,8 @@ class TrainingPipeline:
                 f"Effective batch size: {self.config['batch_size'] * self.accumulation_steps}"
             )
 
-        # Set default K_max (time_features.py will handle auto_adjust internally)
-        self.K_max = self.config.get("K_max", 6)
-
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
-        logger.info(f"Using K_max: {self.K_max}")
         logger.info(f"Config: {yaml.dump(config)}")
         self._setup()
 
