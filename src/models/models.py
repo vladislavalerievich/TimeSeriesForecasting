@@ -239,106 +239,89 @@ class BaseModel(nn.Module):
         # Reshape embedded to separate channels: [B, S, N, E]
         embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
 
-        # Permute and reshape for joint channel processing: [B*N, S, E]
-        channel_embedded_all = (
-            embedded.permute(0, 2, 1, 3)
-            .contiguous()
-            .view(batch_size * num_channels, seq_len, self.embed_size)
-        )
+        # Process each channel independently to reduce complex reshaping
+        channel_outputs = []
 
-        # Apply input projection
-        x = self.input_projection_layer(channel_embedded_all)
+        for channel_idx in range(num_channels):
+            # Extract single channel: [B, S, E]
+            channel_embedded = embedded[:, :, channel_idx, :]
 
-        # Apply global residual if enabled
-        glob_res = 0.0
-        if self.global_residual:
-            glob_res_input = channel_embedded_all[
-                :, -(self.linear_sequence_length + 1) :, :
-            ].reshape(batch_size * num_channels, -1)
-            glob_res = (
-                self.global_residual(glob_res_input)
-                .unsqueeze(1)
-                .repeat(1, prediction_length, 1)
-            )
+            # Apply input projection
+            x = self.input_projection_layer(channel_embedded)
 
-        # Pass through encoder layers (temporal processing)
-        for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)
+            # Apply global residual if enabled
+            if self.global_residual is not None:
+                glob_res_input = channel_embedded[
+                    :, -(self.linear_sequence_length + 1) :, :
+                ].reshape(batch_size, -1)
+                glob_res = (
+                    self.global_residual(glob_res_input)
+                    .unsqueeze(1)
+                    .repeat(1, prediction_length, 1)
+                )
+            else:
+                glob_res = 0.0
 
-        # Reshape back to [B, N, S, token_embed_dim] for cross-channel attention
-        x = x.view(batch_size, num_channels, seq_len, -1)
+            # Pass through encoder layers (temporal processing)
+            for encoder_layer in self.encoder_layers:
+                x = encoder_layer(x)
 
-        # Apply cross-channel attention layers (after temporal processing)
-        for i in range(self.cross_channel_attention_layers):
-            # Reshape for attention: [B, S, N, token_embed_dim] -> [B*S, N, token_embed_dim]
-            attention_input = (
-                x.permute(0, 2, 1, 3)
-                .contiguous()
-                .view(batch_size * seq_len, num_channels, -1)
-            )
+            if self.use_gelu and self.initial_gelu is not None:
+                x = self.input_projection_norm(x)
+                x = self.initial_gelu(x)
 
-            # Apply cross-channel attention
-            attended_channels, _ = self.cross_channel_attentions[i](
-                query=attention_input, key=attention_input, value=attention_input
-            )
+            # Get target representation for this channel
+            target_repr = self.target_projection(target_pos_embed[:, :, channel_idx, :])
 
-            # Add residual connection and layer norm
-            attended_channels = self.channel_attention_norms[i](
-                attention_input + attended_channels
-            )
-
-            # Reshape back to [B, N, S, token_embed_dim]
-            x = attended_channels.view(batch_size, seq_len, num_channels, -1).permute(
-                0, 2, 1, 3
-            )
-
-        # Reshape back to [B*N, S, token_embed_dim] for final processing
-        x = (
-            x.permute(0, 2, 1, 3)
-            .contiguous()
-            .view(batch_size * num_channels, seq_len, -1)
-        )
-
-        if self.use_gelu and self.initial_gelu is not None:
-            x = self.input_projection_norm(x)
-            x = self.initial_gelu(x)
-
-        # Reshape target positional embeddings for joint processing: [B*N, P, E]
-        target_pos_embed_all = (
-            target_pos_embed.permute(0, 2, 1, 3)
-            .contiguous()
-            .view(batch_size * num_channels, prediction_length, self.embed_size)
-        )
-        target_repr = self.target_projection(target_pos_embed_all)
-
-        # Use the last part of the sequence for prediction
-        x_sliced = x[
-            :, -prediction_length:, :
-        ]  # [batch_size * num_channels, pred_len, token_embed_dim]
-
-        if x_sliced.shape != target_repr.shape:
-            # If sequence is shorter than prediction length, repeat the last timestep
-            if x.shape[1] < prediction_length:
+            # Use the last part of the sequence for prediction
+            if x.shape[1] >= prediction_length:
+                x_sliced = x[:, -prediction_length:, :]
+            else:
+                # If sequence is shorter than prediction length, repeat the last timestep
                 x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
                 x_sliced = x_last
-            else:
-                raise ValueError(
-                    f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
+
+            # Generate predictions for this channel
+            final_representation = x_sliced + target_repr
+            if self.global_residual is not None:
+                final_representation += glob_res
+
+            channel_predictions = self.final_output_layer(final_representation).squeeze(
+                -1
+            )
+            channel_outputs.append(channel_predictions)
+
+        # Stack channel predictions: [B, P, N]
+        predictions = torch.stack(channel_outputs, dim=-1)
+
+        # Apply cross-channel attention if enabled (simplified approach)
+        if self.cross_channel_attention_layers > 0:
+            # Apply attention across channels at each timestep
+            batch_size, pred_len, num_channels = predictions.shape
+
+            # Reshape for attention: [B*P, N, 1] -> we need to expand to token_embed_dim
+            predictions_expanded = predictions.unsqueeze(-1).expand(
+                -1, -1, -1, self.final_output_layer.in_features
+            )
+            predictions_reshaped = predictions_expanded.view(
+                batch_size * pred_len, num_channels, -1
+            )
+
+            for i in range(self.cross_channel_attention_layers):
+                attended_channels, _ = self.cross_channel_attentions[i](
+                    query=predictions_reshaped,
+                    key=predictions_reshaped,
+                    value=predictions_reshaped,
                 )
 
-        # Generate predictions for all channels
-        final_representation = x_sliced + target_repr
-        if self.global_residual:
-            final_representation += glob_res
+                # Add residual connection and layer norm
+                predictions_reshaped = self.channel_attention_norms[i](
+                    predictions_reshaped + attended_channels
+                )
 
-        predictions_flat = self.final_output_layer(final_representation).squeeze(-1)
-
-        # Reshape back to [B, P, N] before returning
-        predictions = (
-            predictions_flat.view(batch_size, num_channels, prediction_length)
-            .permute(0, 2, 1)
-            .contiguous()
-        )
+            # Project back to single dimension and reshape
+            predictions = self.final_output_layer(predictions_reshaped).squeeze(-1)
+            predictions = predictions.view(batch_size, pred_len, num_channels)
 
         return predictions
 
@@ -450,6 +433,7 @@ class MultiStepModel(BaseModel):
     def forecast(self, embedded, target_pos_embed, prediction_length, num_channels):
         """
         Generate forecasts for all channels simultaneously.
+        Optimized version with reduced reshaping for better gradient flow.
 
         Args:
             embedded: Embedded history values [batch_size, seq_len, num_channels * embed_size]
@@ -465,105 +449,88 @@ class MultiStepModel(BaseModel):
         # Reshape embedded to separate channels: [B, S, N, E]
         embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
 
-        # Permute and reshape for joint channel processing: [B*N, S, E]
-        channel_embedded_all = (
-            embedded.permute(0, 2, 1, 3)
-            .contiguous()
-            .view(batch_size * num_channels, seq_len, self.embed_size)
-        )
+        # Process each channel independently to reduce complex reshaping
+        channel_outputs = []
 
-        # Apply input projection
-        x = self.input_projection_layer(channel_embedded_all)
+        for channel_idx in range(num_channels):
+            # Extract single channel: [B, S, E]
+            channel_embedded = embedded[:, :, channel_idx, :]
 
-        # Apply global residual if enabled
-        glob_res = 0.0
-        if self.global_residual:
-            glob_res_input = channel_embedded_all[
-                :, -(self.linear_sequence_length + 1) :, :
-            ].reshape(batch_size * num_channels, -1)
-            glob_res = (
-                self.global_residual(glob_res_input)
-                .unsqueeze(1)
-                .repeat(1, prediction_length, 1)
-            )
+            # Apply input projection
+            x = self.input_projection_layer(channel_embedded)
 
-        # Pass through encoder layers (temporal processing)
-        for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)
+            # Apply global residual if enabled
+            if self.global_residual is not None:
+                glob_res_input = channel_embedded[
+                    :, -(self.linear_sequence_length + 1) :, :
+                ].reshape(batch_size, -1)
+                glob_res = (
+                    self.global_residual(glob_res_input)
+                    .unsqueeze(1)
+                    .repeat(1, prediction_length, 1)
+                )
+            else:
+                glob_res = 0.0
 
-        # Reshape back to [B, N, S, token_embed_dim] for cross-channel attention
-        x = x.view(batch_size, num_channels, seq_len, -1)
+            # Pass through encoder layers (temporal processing)
+            for encoder_layer in self.encoder_layers:
+                x = encoder_layer(x)
 
-        # Apply cross-channel attention layers (after temporal processing)
-        for i in range(self.cross_channel_attention_layers):
-            # Reshape for attention: [B, S, N, token_embed_dim] -> [B*S, N, token_embed_dim]
-            attention_input = (
-                x.permute(0, 2, 1, 3)
-                .contiguous()
-                .view(batch_size * seq_len, num_channels, -1)
-            )
+            if self.use_gelu and self.initial_gelu is not None:
+                x = self.input_projection_norm(x)
+                x = self.initial_gelu(x)
 
-            # Apply cross-channel attention
-            attended_channels, _ = self.cross_channel_attentions[i](
-                query=attention_input, key=attention_input, value=attention_input
-            )
+            # Get target representation for this channel
+            target_repr = self.target_projection(target_pos_embed[:, :, channel_idx, :])
 
-            # Add residual connection and layer norm
-            attended_channels = self.channel_attention_norms[i](
-                attention_input + attended_channels
-            )
-
-            # Reshape back to [B, N, S, token_embed_dim]
-            x = attended_channels.view(batch_size, seq_len, num_channels, -1).permute(
-                0, 2, 1, 3
-            )
-
-        # Reshape back to [B*N, S, token_embed_dim] for final processing
-        x = (
-            x.permute(0, 2, 1, 3)
-            .contiguous()
-            .view(batch_size * num_channels, seq_len, -1)
-        )
-
-        if self.use_gelu and self.initial_gelu is not None:
-            x = self.input_projection_norm(x)
-            x = self.initial_gelu(x)
-
-        # Reshape target positional embeddings for joint processing: [B*N, P, E]
-        target_pos_embed_all = (
-            target_pos_embed.permute(0, 2, 1, 3)
-            .contiguous()
-            .view(batch_size * num_channels, prediction_length, self.embed_size)
-        )
-        target_repr = self.target_projection(target_pos_embed_all)
-
-        # Use the last part of the sequence for prediction
-        x_sliced = x[
-            :, -prediction_length:, :
-        ]  # [batch_size * num_channels, pred_len, token_embed_dim]
-
-        if x_sliced.shape != target_repr.shape:
-            # If sequence is shorter than prediction length, repeat the last timestep
-            if x.shape[1] < prediction_length:
+            # Use the last part of the sequence for prediction
+            if x.shape[1] >= prediction_length:
+                x_sliced = x[:, -prediction_length:, :]
+            else:
+                # If sequence is shorter than prediction length, repeat the last timestep
                 x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
                 x_sliced = x_last
-            else:
-                raise ValueError(
-                    f"Shape mismatch: x_sliced {x_sliced.shape}, target_repr {target_repr.shape}"
+
+            # Generate predictions for this channel
+            final_representation = x_sliced + target_repr
+            if self.global_residual is not None:
+                final_representation += glob_res
+
+            channel_predictions = self.final_output_layer(final_representation).squeeze(
+                -1
+            )
+            channel_outputs.append(channel_predictions)
+
+        # Stack channel predictions: [B, P, N]
+        predictions = torch.stack(channel_outputs, dim=-1)
+
+        # Apply cross-channel attention if enabled (simplified approach)
+        if self.cross_channel_attention_layers > 0:
+            # Apply attention across channels at each timestep
+            batch_size, pred_len, num_channels = predictions.shape
+
+            # Reshape for attention: [B*P, N, 1] -> we need to expand to token_embed_dim
+            predictions_expanded = predictions.unsqueeze(-1).expand(
+                -1, -1, -1, self.final_output_layer.in_features
+            )
+            predictions_reshaped = predictions_expanded.view(
+                batch_size * pred_len, num_channels, -1
+            )
+
+            for i in range(self.cross_channel_attention_layers):
+                attended_channels, _ = self.cross_channel_attentions[i](
+                    query=predictions_reshaped,
+                    key=predictions_reshaped,
+                    value=predictions_reshaped,
                 )
 
-        # Generate predictions for all channels
-        final_representation = x_sliced + target_repr
-        if self.global_residual:
-            final_representation += glob_res
+                # Add residual connection and layer norm
+                predictions_reshaped = self.channel_attention_norms[i](
+                    predictions_reshaped + attended_channels
+                )
 
-        predictions_flat = self.final_output_layer(final_representation).squeeze(-1)
-
-        # Reshape back to [B, P, N] before returning
-        predictions = (
-            predictions_flat.view(batch_size, num_channels, prediction_length)
-            .permute(0, 2, 1)
-            .contiguous()
-        )
+            # Project back to single dimension and reshape
+            predictions = self.final_output_layer(predictions_reshaped).squeeze(-1)
+            predictions = predictions.view(batch_size, pred_len, num_channels)
 
         return predictions

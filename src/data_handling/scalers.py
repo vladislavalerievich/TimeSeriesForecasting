@@ -77,19 +77,23 @@ class RobustScaler(BaseScaler):
     instead of mean and standard deviation.
 
     Args:
-        epsilon: Small constant for numerical stability. Default: 1e-8
+        epsilon: Small constant for numerical stability. Default: 1e-6 (increased for better stability)
+        min_scale: Minimum scale value to prevent division by very small numbers. Default: 1e-3
     """
 
-    def __init__(self, epsilon: float = 1e-8):
+    def __init__(self, epsilon: float = 1e-6, min_scale: float = 1e-3):
         if epsilon <= 0:
             raise ValueError("epsilon must be positive")
+        if min_scale <= 0:
+            raise ValueError("min_scale must be positive")
         self.epsilon = epsilon
+        self.min_scale = min_scale
 
     def compute_statistics(
         self, history_values: torch.Tensor, history_mask: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute median and IQR statistics from historical data.
+        Compute median and IQR statistics from historical data with improved numerical stability.
 
         Args:
             history_values: Historical observations.
@@ -124,20 +128,37 @@ class RobustScaler(BaseScaler):
                 if len(valid_data) == 0:
                     continue  # Keep defaults: median=0, iqr=1
 
+                # Remove NaN and inf values for more robust statistics
+                valid_data = valid_data[torch.isfinite(valid_data)]
+
+                if len(valid_data) == 0:
+                    continue  # Keep defaults if no finite data
+
                 # Compute median
                 median_val = torch.median(valid_data)
                 medians[b, 0, c] = median_val
 
                 # Compute IQR (75th percentile - 25th percentile)
                 if len(valid_data) > 1:
-                    q75 = torch.quantile(valid_data, 0.75)
-                    q25 = torch.quantile(valid_data, 0.25)
-                    iqr_val = q75 - q25
+                    try:
+                        q75 = torch.quantile(valid_data, 0.75)
+                        q25 = torch.quantile(valid_data, 0.25)
+                        iqr_val = q75 - q25
 
-                    # Ensure IQR is not zero (use default if it is)
-                    if iqr_val > 0:
+                        # Ensure IQR is not too small (use minimum scale)
+                        iqr_val = torch.max(
+                            iqr_val, torch.tensor(self.min_scale, device=device)
+                        )
                         iqrs[b, 0, c] = iqr_val
-                # If only one data point, keep default iqr=1
+                    except Exception:
+                        # Fallback to standard deviation if quantile fails
+                        std_val = torch.std(valid_data)
+                        iqrs[b, 0, c] = torch.max(
+                            std_val, torch.tensor(self.min_scale, device=device)
+                        )
+                # If only one data point, keep default iqr with min_scale
+                else:
+                    iqrs[b, 0, c] = self.min_scale
 
         return {"median": medians, "iqr": iqrs}
 
@@ -158,7 +179,17 @@ class RobustScaler(BaseScaler):
         median = statistics["median"]
         iqr = statistics["iqr"]
 
-        return (data - median) / (iqr + self.epsilon)
+        # Ensure denominator is not too small
+        denominator = torch.max(
+            iqr + self.epsilon, torch.tensor(self.min_scale, device=iqr.device)
+        )
+
+        scaled_data = (data - median) / denominator
+
+        # Clamp to reasonable range to prevent extreme values
+        scaled_data = torch.clamp(scaled_data, -50.0, 50.0)
+
+        return scaled_data
 
     def inverse_scale(
         self, scaled_data: torch.Tensor, statistics: Dict[str, torch.Tensor]
@@ -177,7 +208,12 @@ class RobustScaler(BaseScaler):
         median = statistics["median"]
         iqr = statistics["iqr"]
 
-        return scaled_data * (iqr + self.epsilon) + median
+        # Ensure denominator consistency with scaling
+        denominator = torch.max(
+            iqr + self.epsilon, torch.tensor(self.min_scale, device=iqr.device)
+        )
+
+        return scaled_data * denominator + median
 
 
 class MinMaxScaler(BaseScaler):
