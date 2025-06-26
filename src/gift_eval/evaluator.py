@@ -1,6 +1,5 @@
 import json
 import logging
-from itertools import islice, tee
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -80,15 +79,30 @@ class MultiStepModelWrapper:
         forecasts = []
 
         for data_entry in dataset:
-            target = data_entry["target"]
-            start = data_entry["start"]
-            item_id = data_entry.get("item_id", "ts")
+            try:
+                # Handle both test data format (tuples) and regular dataset format (dicts)
+                if isinstance(data_entry, tuple):
+                    # Test data format: (input_data, expected_output)
+                    input_data = data_entry[0]
+                    target = input_data["target"]
+                    start = input_data["start"]
+                    item_id = input_data.get("item_id", "ts")
+                else:
+                    # Regular dataset format: dictionary
+                    target = data_entry["target"]
+                    start = data_entry["start"]
+                    item_id = data_entry.get("item_id", "ts")
 
-            assert isinstance(start, pd.Period), (
-                f"Expected pd.Period, got {type(start)}"
-            )
-            freq = start.freqstr
-            history = np.asarray(target, dtype=np.float32)
+                assert isinstance(start, pd.Period), (
+                    f"Expected pd.Period, got {type(start)}"
+                )
+                freq = start.freqstr
+                history = np.asarray(target, dtype=np.float32)
+            except Exception as e:
+                logger.error(
+                    f"Error processing data_entry: {type(data_entry)}, error: {str(e)}"
+                )
+                raise
 
             if history.ndim == 1:
                 history = history.reshape(1, -1)
@@ -233,14 +247,17 @@ class GiftEvaluator:
         self.predictor.set_prediction_len(dataset.prediction_length)
         self.predictor.set_ds_freq(ds_freq)
 
-        test_data_for_plot, test_data_for_eval = tee(dataset.test_data)
-        plot_samples = list(islice(test_data_for_plot, 3))
+        # Convert test data to list to avoid tee issues with GluonTS evaluate_model
+        test_data_list = list(dataset.test_data)
+
+        # Get only the first sample (first window) for plotting
+        plot_samples = test_data_list[:1] if test_data_list else []
         forecasts = self.predictor.predict(plot_samples) if plot_samples else []
 
         season_length = get_seasonality(dataset.freq)
         res = evaluate_model(
             self.predictor,
-            test_data=test_data_for_eval,
+            test_data=test_data_list,  # Pass the list directly
             metrics=METRICS,
             axis=None,
             batch_size=128,
@@ -271,26 +288,47 @@ class GiftEvaluator:
 
         # Only plot the first window (first sample) for each dataset
         if plot_samples and forecasts:
-            data_entry = plot_samples[0]
-            forecast = forecasts[0]
+            try:
+                data_entry = plot_samples[0]
+                forecast = forecasts[0]
 
-            full_target = data_entry["target"]
-            history_values = full_target[:, :-pred_len]
-            if history_values.shape[1] > max_context:
-                history_values = history_values[:, -max_context:]
+                # Handle both test data format (tuples) and regular dataset format (dicts)
+                if isinstance(data_entry, tuple):
+                    # Test data format: (input_data, expected_output)
+                    input_data = data_entry[0]
+                    full_target = input_data["target"]
+                else:
+                    # Regular dataset format: dictionary
+                    full_target = data_entry["target"]
 
-            future_values = full_target[:, -pred_len:]
-            predicted_values = forecast.samples
+                # Ensure target is a 2D numpy array [num_dims, seq_len]
+                if isinstance(full_target, np.ndarray):
+                    if full_target.ndim == 1:
+                        full_target = full_target.reshape(1, -1)
+                else:
+                    full_target = np.asarray(full_target, dtype=np.float32)
+                    if full_target.ndim == 1:
+                        full_target = full_target.reshape(1, -1)
 
-            fig = plot_multivariate_timeseries(
-                history_values=history_values.T,
-                future_values=future_values.T,
-                predicted_values=predicted_values.T,
-                title=f"GIFT-Eval: {ds_name}/{term} - Epoch {epoch}",
-                show=False,
-            )
-            # Use clear prefix for GIFT-eval plots to distinguish from synthetic validation
-            wandb.log(
-                {f"gift_eval/{ds_name.replace('/', '_')}_{term}": wandb.Image(fig)}
-            )
-            plt.close(fig)
+                history_values = full_target[:, :-pred_len]
+                if history_values.shape[1] > max_context:
+                    history_values = history_values[:, -max_context:]
+
+                future_values = full_target[:, -pred_len:]
+                predicted_values = forecast.samples
+
+                fig = plot_multivariate_timeseries(
+                    history_values=history_values.T,
+                    future_values=future_values.T,
+                    predicted_values=predicted_values.T,
+                    title=f"GIFT-Eval: {ds_name}/{term} - Epoch {epoch}",
+                    show=False,
+                )
+                # Use clear prefix for GIFT-eval plots to distinguish from synthetic validation
+                wandb.log(
+                    {f"gift_eval/{ds_name.replace('/', '_')}_{term}": wandb.Image(fig)}
+                )
+                plt.close(fig)
+            except Exception as e:
+                logger.warning(f"Failed to plot sample for {ds_name}/{term}: {str(e)}")
+                # Continue without plotting rather than failing the entire evaluation

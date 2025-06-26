@@ -477,12 +477,12 @@ class TrainingPipeline:
         logger.info(f"EPOCH {epoch + 1} SUMMARY")
         logger.info("=" * 80)
         logger.info(f"Training Loss: {train_loss:.4f}")
-        logger.info(f"Validation Loss: {val_loss:.4f}")
+        logger.info(f"Synthetic Validation Loss: {val_loss:.4f}")
         logger.info(
             f"Training MAPE: {epoch_metrics['train_mape']:.4f}, MSE: {epoch_metrics['train_mse']:.4f}, SMAPE: {epoch_metrics['train_smape']:.4f}"
         )
         logger.info(
-            f"Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
+            f"Synthetic Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
         )
         logger.info(f"Learning Rate: {epoch_metrics['learning_rate']:.8f}")
         logger.info(f"Epoch Time: {epoch_metrics['epoch_time_minutes']:.2f} minutes")
