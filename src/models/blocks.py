@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from fla.layers.delta_net import DeltaNet
-from fla.layers.gated_deltanet import GatedDeltaNet
+from fla.models.gated_deltaproduct.modeling_gated_deltaproduct import GatedDeltaProductBlock
+from fla.models.gated_deltaproduct import GatedDeltaProductConfig
 
 
 class PositionExpansion(nn.Module):
@@ -237,22 +238,22 @@ class BaseEncoder(nn.Module):
 
 class GatedDeltaNetEncoder(BaseEncoder):
     def __init__(
-        self, token_embed_dim, head_dim=256, num_heads=4, block_expansion=2.0, **kwargs
+        self, layer_idx, token_embed_dim, num_heads=4, **kwargs
     ):
         super().__init__(token_embed_dim=token_embed_dim, **kwargs)
-        self.encoder_layer = GatedDeltaNet(
-            mode="chunk",
+        config = GatedDeltaProductConfig(
+            attn_mode="chunk",
             hidden_size=token_embed_dim,
-            expand_v=block_expansion,
-            head_dim=head_dim,
-            num_heads=num_heads,
-            use_gate=True,
+            expand_v=1.0,
+            use_gate=False,
             use_short_conv=True,
             conv_size=4,
-            norm_first=self.norm,
-            norm_eps=1e-6,
-            allow_neg_eigval=False,
+            head_dim=token_embed_dim // num_heads,
+            num_heads=num_heads,
+            allow_neg_eigval=True,
+            use_forget_gate=True,
         )
+        self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
 
 
 class DeltaNetEncoder(BaseEncoder):
@@ -276,10 +277,10 @@ class DeltaNetEncoder(BaseEncoder):
 
 class EncoderFactory:
     @staticmethod
-    def create_encoder(encoder_type, **encoder_config):
+    def create_encoder(encoder_type, layer_idx, **encoder_config):
         if encoder_type == "GatedDeltaNet":
-            return GatedDeltaNetEncoder(**encoder_config)
+            return GatedDeltaNetEncoder(layer_idx, **encoder_config)
         elif encoder_type == "DeltaNet":
-            return DeltaNetEncoder(**encoder_config)
+            return DeltaNetEncoder(layer_idx, **encoder_config)
         else:
             raise ValueError(f"Unknown encoder type: {encoder_type}")

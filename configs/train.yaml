@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: Multivariate_DeltaNet_KI-Kluster
+model_name: Multivariate_DeltaNet_KI-Kluster2
 continue_training: false
 seed: 2025
 debugging: false
@@ -8,19 +8,19 @@ wandb: true # whether to log to wandb
 
 
 lr_scheduler: cosine
-initial_lr: 0.00001 # 1e-5
+initial_lr: 0.001 # 1e-5
 learning_rate: 0.0000001 # 1e-7
 loss: mse # mae
 scaler: custom_robust  
 adaptive_loss_normalization: false 
-gradient_clip_val: 0.5
+gradient_clip_val: 100
 
-gradient_accumulation_enabled: true
+gradient_accumulation_enabled: false
 accumulation_steps: 2  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
-batch_size: 2
+batch_size: 256
 num_epochs: 50
-num_training_iterations_per_epoch: 2
+num_training_iterations_per_epoch: 20
 log_interval: 1
 
 BaseModelConfig:
@@ -51,7 +51,7 @@ MultiStepModel:
   cross_channel_attention_layers: 2
 
 EncoderConfig:
-  encoder_type: DeltaNet
+  encoder_type: GatedDeltaNet
   token_embed_dim: 256 # TODO: remove duplicate
   num_layers: 2
   num_heads: 4  
@@ -65,16 +65,16 @@ EncoderConfig:
 
 
 range_proportions:
-  short: 0.34
-  medium: 0.33
-  long: 0.33
+  short: 1.0
+  medium: 0.0
+  long: 0.0
 
 generator_proportions:
   short:    
-    forecast_pfn: 0.05
-    gp: 0.25
-    kernel: 0.25
-    lmc: 0.45
+    forecast_pfn: 0.0
+    gp: 1.0
+    kernel: 0.0
+    lmc: 0.0
   medium:
     forecast_pfn: 0.05
     gp: 0.3

@@ -405,8 +405,8 @@ class MultiStepModel(BaseModel):
 
         self.encoder_layers = nn.ModuleList(
             [
-                EncoderFactory.create_encoder(**encoder_config)
-                for _ in range(num_encoder_layers)
+                EncoderFactory.create_encoder(layer_idx=layer_idx, **encoder_config)
+                for layer_idx in range(num_encoder_layers)
             ]
         )
 
