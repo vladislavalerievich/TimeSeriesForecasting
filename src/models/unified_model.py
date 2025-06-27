@@ -290,52 +290,6 @@ class TimeSeriesModel(nn.Module):
 
         return all_channels_embedded
 
-    def _process_single_channel(
-        self,
-        channel_embedded: torch.Tensor,
-        target_repr: torch.Tensor,
-        prediction_length: int,
-        history_padding_mask: torch.Tensor = None,
-    ):
-        """Process a single channel through the encoder and generate predictions."""
-        x = self.input_projection_layer(channel_embedded)
-
-        # Apply padding mask
-        if history_padding_mask is not None:
-            x = x * history_padding_mask.unsqueeze(-1).float()
-
-        # Apply global residual if enabled
-        glob_res = 0.0
-        if self.global_residual is not None:
-            glob_res = self._compute_global_residual(
-                channel_embedded, history_padding_mask, prediction_length
-            )
-
-        # Pass through encoder layers
-        for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)
-            if history_padding_mask is not None:
-                x = x * history_padding_mask.unsqueeze(-1).float()
-
-        # Apply normalization and activation
-        if self.use_gelu and self.initial_gelu is not None:
-            x = self.input_projection_norm(x)
-            x = self.initial_gelu(x)
-
-        # Generate predictions
-        if x.shape[1] >= prediction_length:
-            x_sliced = x[:, -prediction_length:, :]
-        else:
-            x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
-            x_sliced = x_last
-
-        final_representation = x_sliced + target_repr
-        if self.global_residual is not None:
-            final_representation += glob_res
-
-        channel_predictions = self.final_output_layer(final_representation).squeeze(-1)
-        return channel_predictions
-
     def _compute_global_residual(
         self,
         channel_embedded: torch.Tensor,
@@ -393,21 +347,75 @@ class TimeSeriesModel(nn.Module):
         num_channels: int,
         history_padding_mask: torch.Tensor = None,
     ):
-        """Generate predictions for all channels."""
+        """
+        Generate predictions for all channels using vectorized operations.
+        """
         batch_size, seq_len, _ = embedded.shape
+        # embedded shape: [B, S, N*E] -> Reshape to [B, S, N, E]
         embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
 
-        channel_outputs = []
-        for channel_idx in range(num_channels):
-            channel_embedded = embedded[:, :, channel_idx, :]
-            target_repr = self.target_projection(target_pos_embed[:, :, channel_idx, :])
+        # Vectorize across channels by merging the batch and channel dimensions.
+        # [B, S, N, E] -> [B*N, S, E]
+        channel_embedded = (
+            embedded.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, seq_len, self.embed_size)
+        )
 
-            channel_predictions = self._process_single_channel(
-                channel_embedded, target_repr, prediction_length, history_padding_mask
+        # Reshape target positional embeddings similarly: [B, P, N, E] -> [B*N, P, E]
+        target_pos_embed = (
+            target_pos_embed.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size * num_channels, prediction_length, self.embed_size)
+        )
+        target_repr = self.target_projection(target_pos_embed)
+
+        # Reshape padding mask to match the vectorized input: [B, S] -> [B*N, S]
+        if history_padding_mask is not None:
+            history_padding_mask = (
+                history_padding_mask.unsqueeze(1)
+                .expand(-1, num_channels, -1)
+                .reshape(batch_size * num_channels, seq_len)
             )
-            channel_outputs.append(channel_predictions)
 
-        return torch.stack(channel_outputs, dim=-1)
+        # --- Process all channels in a single pass ---
+        x = self.input_projection_layer(channel_embedded)
+
+        if history_padding_mask is not None:
+            x = x * history_padding_mask.unsqueeze(-1).float()
+
+        glob_res = 0.0
+        if self.global_residual is not None:
+            glob_res = self._compute_global_residual(
+                channel_embedded, history_padding_mask, prediction_length
+            )
+
+        for encoder_layer in self.encoder_layers:
+            x = encoder_layer(x)
+            if history_padding_mask is not None:
+                x = x * history_padding_mask.unsqueeze(-1).float()
+
+        if self.use_gelu and self.initial_gelu is not None:
+            x = self.input_projection_norm(x)
+            x = self.initial_gelu(x)
+
+        if x.shape[1] >= prediction_length:
+            x_sliced = x[:, -prediction_length:, :]
+        else:
+            x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
+            x_sliced = x_last
+
+        final_representation = x_sliced + target_repr
+        if self.global_residual is not None:
+            final_representation += glob_res
+
+        predictions = self.final_output_layer(final_representation)
+
+        # Reshape the output back to [B, P, N]
+        predictions = predictions.view(batch_size, num_channels, prediction_length)
+        predictions = predictions.permute(0, 2, 1)
+
+        return predictions
 
     def forward(
         self, data_container: BatchTimeSeriesContainer, drop_enc_allow: bool = False
