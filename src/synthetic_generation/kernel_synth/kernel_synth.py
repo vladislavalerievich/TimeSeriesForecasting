@@ -153,6 +153,7 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         Draw a sample from GP prior using the selected backend.
         """
         if self.use_gpytorch:
+            import ipdb; ipdb.set_trace()  # noqa: E702
             return self._sample_from_gpytorch(kernel, X, random_seed)
         else:
             return self._sample_from_sklearn(kernel, X, random_seed)
@@ -219,6 +220,7 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         try:
             ts = self._sample_from_gp_prior(composite, X, random_seed=random_seed)
         except (np.linalg.LinAlgError, torch.linalg.LinAlgError) as e:
+            import ipdb; ipdb.set_trace()
             new_seed = (random_seed + 1) if random_seed is not None else None
             return self.generate_time_series(new_seed)
 

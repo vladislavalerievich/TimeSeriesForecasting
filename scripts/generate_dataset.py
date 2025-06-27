@@ -82,7 +82,7 @@ def parse_args():
     group.add_argument(
         "--validation_dataset",
         action="store_true",
-        default=True,
+        default=False,
         help="Generate only a validation dataset",
     )
 

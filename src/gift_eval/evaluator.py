@@ -126,7 +126,7 @@ class MultiStepModelWrapper:
                 frequency=frequency,
             )
 
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                 with torch.no_grad():
                     output = self.model(batch, drop_enc_allow=False)
                     predictions = (
