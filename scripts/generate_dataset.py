@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=2048,
+        default=1024,  # Max batch size that fits on L40S GPU (44GB)
         help="Number of time series per batch",
     )
 
