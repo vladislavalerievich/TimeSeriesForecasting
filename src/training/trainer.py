@@ -8,7 +8,6 @@ from typing import Dict
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torchmetrics
 import yaml
@@ -142,7 +141,6 @@ class TrainingPipeline:
         )
 
         # Setup loss function, metrics, wandb
-        self._setup_loss_function()
         self._setup_metrics()
         self._setup_wandb()
 
@@ -161,15 +159,6 @@ class TrainingPipeline:
             self.optimizer = optim.AdamW(
                 self.model.parameters(), lr=self.config["learning_rate"]
             )
-
-    def _setup_loss_function(self) -> None:
-        """Configure loss function based on config."""
-        if self.config["loss"] == "mae":
-            self.criterion = nn.L1Loss().to(self.device)
-        elif self.config["loss"] == "mse":
-            self.criterion = nn.MSELoss().to(self.device)
-        else:
-            raise ValueError("Loss function not supported")
 
     def _setup_metrics(self) -> None:
         """Initialize training and validation metrics."""
@@ -720,12 +709,15 @@ class TrainingPipeline:
         else:
             logger.info("Gradient Accumulation: Disabled")
         logger.info(f"Learning Rate: {self.config['learning_rate']}")
-        logger.info(f"Loss Function: {self.config['loss']}")
         logger.info(f"Scaler: {self.config['scaler']}")
         logger.info(f"Device: {self.device}")
         logger.info(
             f"WandB Logging: {'Enabled' if self.config['wandb'] else 'Disabled'}"
         )
+        model_params = sum(
+            p.numel() for p in self.model.parameters() if p.requires_grad
+        )
+        logger.info(f"Model Parameters: {model_params:,}")
         logger.info("=" * 80)
 
         for epoch in range(self.initial_epoch, self.config["num_epochs"]):

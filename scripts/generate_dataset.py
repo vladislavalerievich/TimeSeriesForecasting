@@ -27,21 +27,21 @@ def parse_args():
     parser.add_argument(
         "--train_batches",
         type=int,
-        default=100,
+        default=1000,
         help="Number of batches for the training dataset",
     )
 
     parser.add_argument(
         "--val_batches",
         type=int,
-        default=32,
+        default=100,
         help="Number of batches for the validation dataset",
     )
 
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=128,
+        default=256,
         help="Number of time series per batch",
     )
 
@@ -101,24 +101,24 @@ def main():
     generator_proportions = {
         "short": {
             "forecast_pfn": 0.00,
-            "gp": 0.5,
+            "gp": 0.0,
             "kernel": 0.00,
             "lmc": 0.00,
-            "sine_wave": 0.50,
+            "sine_wave": 0.10,
         },
         "medium": {
             "forecast_pfn": 0.00,
-            "gp": 0.5,
+            "gp": 0.0,
             "kernel": 0.00,
             "lmc": 0.00,
-            "sine_wave": 0.50,
+            "sine_wave": 0.10,
         },
         "long": {
             "forecast_pfn": 0.00,
-            "gp": 1,
+            "gp": 0.0,
             "kernel": 0.00,
             "lmc": 0.00,
-            "sine_wave": 0.00,
+            "sine_wave": 0.10,
         },
     }
 

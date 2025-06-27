@@ -1,202 +1,163 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from matplotlib.figure import Figure
+
+from src.data_handling.data_containers import BatchTimeSeriesContainer
 
 
 def plot_multivariate_timeseries(
     history_values: np.ndarray,
     future_values: Optional[np.ndarray] = None,
     predicted_values: Optional[np.ndarray] = None,
-    max_channels: int = 10,
-    figsize: Tuple[int, int] = (12, 6),
-    title: str = "Multivariate Time Series",
+    title: Optional[str] = None,
     output_file: Optional[str] = None,
-    dpi: int = 300,
-    show: bool = False,
+    show: bool = True,
 ) -> Figure:
     """
-    Plot multivariate time series with history and optional future values and predictions.
-    All channels are plotted up to max_channels.
+    Plots a multivariate time series with history, future, and predicted values.
 
-    Parameters
-    ----------
-    history_values : np.ndarray
-        Historical values with shape [seq_len, num_channels].
-    future_values : np.ndarray, optional
-        Future values with shape [pred_len, num_channels].
-    predicted_values : np.ndarray, optional
-        Model's predicted values with shape [pred_len, num_channels].
-    max_channels : int
-        Maximum number of channels to plot.
-    figsize : Tuple[int, int]
-        Figure size in inches.
-    title : str
-        Title for the plot.
-    output_file : str, optional
-        Path to save the plot, if provided.
-    dpi : int
-        DPI for saved figure.
-    show : bool
-        Whether to display the plot.
+    Args:
+        history_values : np.ndarray
+            Historical observations with shape [seq_len, num_channels]
+        future_values : np.ndarray, optional
+            Ground truth future observations with shape [pred_len, num_channels]
+        predicted_values : np.ndarray, optional
+            Model's predicted values with shape [pred_len, num_channels]
+        title : str, optional
+            Title for the plot.
+        output_file : str, optional
+            Path to save the plot, if provided.
+        show : bool
+            Whether to display the plot.
 
     Returns
-    -------
-    Figure
-        The matplotlib figure object.
+        matplotlib.figure.Figure: The plot figure.
     """
-    # Validate and prepare inputs
-    history_values = np.asarray(history_values)
-    if history_values.ndim == 1:
-        history_values = history_values.reshape(-1, 1)
     num_channels = history_values.shape[1]
+    seq_len = history_values.shape[0]
 
-    # Set up time values
-    history_len = history_values.shape[0]
-    history_time = np.arange(history_len)
+    # Use a color-blind friendly palette
+    colors = plt.cm.viridis(np.linspace(0, 1, 5))
 
-    # Set up future time if available
-    future_time = None
+    fig, axes = plt.subplots(
+        num_channels, 1, figsize=(15, 3 * num_channels), sharex=True
+    )
+    if num_channels == 1:
+        axes = [axes]
+
+    # Create date range for plotting
+    history_dates = pd.date_range(end=pd.Timestamp.now(), periods=seq_len, freq="D")
     if future_values is not None:
-        future_values = np.asarray(future_values)
-        if future_values.ndim == 1:
-            future_values = future_values.reshape(-1, 1)
-        future_len = future_values.shape[0]
-        future_time = np.arange(history_len, history_len + future_len)
+        pred_len = future_values.shape[0]
+        future_dates = pd.date_range(
+            start=history_dates[-1] + pd.Timedelta(days=1), periods=pred_len, freq="D"
+        )
+    elif predicted_values is not None:
+        pred_len = predicted_values.shape[0]
+        future_dates = pd.date_range(
+            start=history_dates[-1] + pd.Timedelta(days=1), periods=pred_len, freq="D"
+        )
 
-    if predicted_values is not None:
-        predicted_values = np.asarray(predicted_values)
-        if predicted_values.ndim == 1:
-            predicted_values = predicted_values.reshape(-1, 1)
-
-    # Create figure
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Plot each channel
-    channels_to_plot = min(num_channels, max_channels)
-    for ch in range(channels_to_plot):
+    for i, ax in enumerate(axes):
         # Plot history
         ax.plot(
-            history_time,
-            history_values[:, ch],
-            color=f"C{ch % 10}",
-            linestyle="-",
-            label=f"Ch{ch} History" if ch < 5 else None,  # Avoid too many labels
+            history_dates,
+            history_values[:, i],
+            label="History",
+            color=colors[0],
         )
 
-        if future_values is not None and ch < future_values.shape[1]:
-            # Create continuous time and values arrays to ensure visual continuity
-            # Include the last history point to connect the lines
-            continuous_time = np.concatenate([[history_len - 1], future_time])
-            continuous_values = np.concatenate(
-                [[history_values[-1, ch]], future_values[:, ch]]
-            )
-
+        # Plot future values if provided
+        if future_values is not None:
             ax.plot(
-                continuous_time,
-                continuous_values,
-                color=f"C{ch % 10}",
-                linestyle=":",  # dotted lines for true future values
-                alpha=0.6,  # Make future values more transparent
-                linewidth=1.0,
-                label=f"Ch{ch} Future" if ch < 5 else None,
+                future_dates,
+                future_values[:, i],
+                label="Future (Ground Truth)",
+                color=colors[2],
             )
 
-        # Plot predicted values with continuity (bright solid lines)
-        if predicted_values is not None and ch < predicted_values.shape[1]:
-            # Create continuous time and values arrays to ensure visual continuity
-            continuous_time = np.concatenate([[history_len - 1], future_time])
-            continuous_values = np.concatenate(
-                [[history_values[-1, ch]], predicted_values[:, ch]]
-            )
-
+        # Plot predicted values if provided
+        if predicted_values is not None:
+            pred_len = predicted_values.shape[0]
+            current_future_dates = future_dates[:pred_len]
             ax.plot(
-                continuous_time,
-                continuous_values,
-                color=f"C{ch % 10}",
-                linestyle="-",  # Solid lines for predictions
-                alpha=1.0,  # Full opacity for bright appearance
-                linewidth=1.5,  # Thicker lines for better visibility
-                label=f"Ch{ch} Prediction" if ch < 5 else None,
+                current_future_dates,
+                predicted_values[:, i],
+                label="Predicted",
+                color=colors[1],
+                linestyle="--",
             )
 
-    # Add history/future separator
-    if future_time is not None:
-        ax.axvline(
-            x=history_len
-            - 0.5,  # Adjust to be between the last history and first future point
-            color="red",
-            linestyle=":",
-            alpha=0.7,
-            label="History/Future Split",
-        )
-        ax.axvspan(
-            history_len - 0.5,
-            future_time[-1],
-            alpha=0.1,
-            color="gray",
-        )
+        # Formatting
+        ax.set_title(f"Channel {i + 1}")
+        ax.legend()
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5)
 
-    # Set title and labels
-    ax.set_title(f"{title} (Showing {channels_to_plot}/{num_channels} channels)")
-    ax.set_xlabel("Time Steps")
-    ax.set_ylabel("Value")
-    ax.legend(loc="best")
-    ax.grid(True, alpha=0.3)
+    if title:
+        fig.suptitle(title, fontsize=16)
 
-    # Adjust layout
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95] if title else None)
 
-    # Save figure if requested
     if output_file:
-        plt.savefig(output_file, dpi=dpi, bbox_inches="tight")
+        plt.savefig(output_file, dpi=300)
 
-    # Show plot if requested
     if show:
         plt.show()
+    else:
+        plt.close(fig)
 
     return fig
 
 
 def plot_from_container(
-    ts_data,
-    sample_idx: int = 0,
+    ts_data: BatchTimeSeriesContainer,
+    sample_idx: int,
     predicted_values: Optional[np.ndarray] = None,
-    **kwargs,
+    title: Optional[str] = None,
+    output_file: Optional[str] = None,
+    show: bool = True,
 ) -> Figure:
     """
-    Helper function to plot from a BatchTimeSeriesContainer.
+    Wrapper to plot a single sample from a BatchTimeSeriesContainer.
 
-    Parameters
-    ----------
-    ts_data : BatchTimeSeriesContainer
-        The batch time series data container.
-    sample_idx : int
-        Index of the sample in the batch to plot.
-    predicted_values : np.ndarray, optional
-        Model's predicted values with shape [batch_size, pred_len, num_targets]
-        If provided, will extract the predictions for sample_idx.
-    **kwargs :
-        Additional arguments to pass to plot_multivariate_timeseries.
+    Args:
+        ts_data : BatchTimeSeriesContainer
+            Container with the time series data.
+        sample_idx: int
+            The index of the sample to plot from the batch.
+        predicted_values : np.ndarray, optional
+            Model's predicted values with shape [batch_size, pred_len, num_targets]
+            If provided, will extract the predictions for sample_idx.
+        title : str, optional
+            Title for the plot.
+        output_file : str, optional
+            Path to save the plot, if provided.
+        show : bool
+            Whether to display the plot.
 
     Returns
-    -------
-    Figure
-        The matplotlib figure object.
+        matplotlib.figure.Figure: The plot figure.
     """
-    # Extract data for the specified sample
-    history_values = ts_data.history_values[sample_idx].detach().cpu().numpy()
-    future_values = ts_data.future_values[sample_idx].detach().cpu().numpy()
+    # Extract data for the specified sample index
+    history_values = ts_data.history_values[sample_idx].cpu().numpy()
+    future_values = ts_data.future_values[sample_idx].cpu().numpy()
+
+    # Extract predictions for the sample if provided
     if predicted_values is not None:
         if isinstance(predicted_values, torch.Tensor):
             predicted_values = predicted_values.detach().cpu().numpy()
         if predicted_values.ndim == 3:
             predicted_values = predicted_values[sample_idx]
+
     return plot_multivariate_timeseries(
         history_values=history_values,
         future_values=future_values,
         predicted_values=predicted_values,
-        **kwargs,
+        title=title,
+        output_file=output_file,
+        show=show,
     )
