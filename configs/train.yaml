@@ -1,10 +1,10 @@
 data_dir: ./data
 model_path: ./models
-model_name: Univariate_GatedDeltaNet_
+model_name: Univariate_GatedDeltaNet
 continue_training: false
 seed: 2025
 debugging: false
-wandb: true # whether to log to wandb
+wandb: false # whether to log to wandb
 
 
 lr_scheduler: cosine
@@ -20,7 +20,7 @@ accumulation_steps: 2  # Number of batches to accumulate before updating (effect
 
 max_history_length: 1024
 max_prediction_length: 900
-batch_size: 128
+# batch_size: 128 # Using pregenerated data with batch size 128
 num_epochs: 100
 num_training_iterations_per_epoch: 10
 log_interval: 1
