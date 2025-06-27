@@ -185,10 +185,6 @@ class BaseModel(nn.Module):
                 history_mask.unsqueeze(-1), self.max_history_length, pad_value=0.0
             )
             padded_history_mask = padded_history_mask.squeeze(-1)
-            # Combine original mask with padding mask
-            combined_history_mask = padded_history_mask * history_padding_mask.float()
-        else:
-            combined_history_mask = history_padding_mask.float()
 
         # Pad future values if present (for training)
         if future_values is not None:
