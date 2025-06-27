@@ -136,8 +136,8 @@ class BatchTimeSeriesContainer:
             Shape: [batch_size, seq_len, num_channels]
         future_values: Tensor of future observations to predict.
             Shape: [batch_size, pred_len, num_channels]
-        start: Timestamps of the first history value.
-            Shape: [batch_size]
+        start: Timestamp of the first history value.
+            Type: np.datetime64
         frequency: Frequency of the time series.
             Type: Frequency enum (D=Daily, W=Weekly, H=Hourly, ME=Month End, S=Seconds)
         static_features: Optional StaticFeaturesDataContainer of features constant over time.
@@ -150,7 +150,7 @@ class BatchTimeSeriesContainer:
 
     history_values: torch.Tensor
     future_values: torch.Tensor
-    start: np.ndarray[np.datetime64]
+    start: np.datetime64
     frequency: Frequency
 
     static_features: Optional[StaticFeaturesDataContainer] = None
@@ -165,10 +165,8 @@ class BatchTimeSeriesContainer:
             raise TypeError("history_values must be a torch.Tensor")
         if not isinstance(self.future_values, torch.Tensor):
             raise TypeError("future_values must be a torch.Tensor")
-        if not isinstance(self.start, np.ndarray):
-            raise TypeError("start must be a np.ndarray")
-        if not all(isinstance(s, np.datetime64) for s in self.start):
-            raise TypeError("start must be a list of np.datetime64")
+        if not isinstance(self.start, np.datetime64):
+            raise TypeError("start must be a np.datetime64")
         if not isinstance(self.frequency, Frequency):
             raise TypeError("frequency must be a Frequency enum")
 

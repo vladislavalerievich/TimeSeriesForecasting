@@ -385,25 +385,25 @@ class TimeFeatureGenerator:
 def compute_batch_time_features(
     start,
     history_length,
-    target_length,
-    batch_size,
+    future_length,
     frequency,
     K_max=6,
     time_feature_config: Optional[Dict[str, Any]] = None,
 ):
     """
-    Compute enhanced time features from start timestamps and frequency.
+    Compute enhanced time features from start timestamp and frequency.
+
+    Since history_length, future_length, and start are the same across the batch,
+    compute features once and return single tensors that can be expanded to batch size.
 
     Parameters
     ----------
-    start : array-like, shape (batch_size,)
-        Start timestamps for each batch item.
+    start : np.datetime64
+        Start timestamp (same for all batch items).
     history_length : int
         Length of history sequence.
-    target_length : int
-        Length of target sequence.
-    batch_size : int
-        Batch size.
+    future_length : int
+        Length of future sequence.
     frequency : Frequency
         Frequency of the time series.
     K_max : int, optional
@@ -414,8 +414,8 @@ def compute_batch_time_features(
     Returns
     -------
     tuple
-        (history_time_features, target_time_features) where each is a torch.Tensor
-        of shape (batch_size, length, K_max).
+        (history_time_features, future_time_features) where each is a torch.Tensor
+        of shape (length, K_max).
     """
     freq_str = FREQUENCY_STR_MAPPING[frequency]
     period_freq_str = PERIOD_FREQUENCY_STR_MAPPING[frequency]
@@ -432,55 +432,35 @@ def compute_batch_time_features(
     min_timestamp = pd.Timestamp("1900-01-01")
     max_timestamp = pd.Timestamp("2200-12-31")
 
-    # Generate timestamps and features
-    history_features_list = []
-    future_features_list = []
+    try:
+        # Validate start timestamp is within safe bounds
+        start_ts = pd.Timestamp(start)
+        if start_ts < min_timestamp or start_ts > max_timestamp:
+            start_ts = pd.Timestamp("2000-01-01")
 
-    for i in range(batch_size):
-        try:
-            # Validate start timestamp is within safe bounds
-            start_ts = pd.Timestamp(start[i])
-            if start_ts < min_timestamp or start_ts > max_timestamp:
-                start_ts = pd.Timestamp("2000-01-01")
+        # Create history range with bounds checking
+        history_range = pd.date_range(
+            start=start_ts, periods=history_length, freq=freq_str
+        )
 
-            # Create history range with bounds checking
+        # Check if history range goes beyond safe bounds
+        if history_range[-1] > max_timestamp:
+            safe_start = max_timestamp - pd.tseries.frequencies.to_offset(freq_str) * (
+                history_length + future_length
+            )
+            if safe_start < min_timestamp:
+                safe_start = min_timestamp
             history_range = pd.date_range(
-                start=start_ts, periods=history_length, freq=freq_str
+                start=safe_start, periods=history_length, freq=freq_str
             )
 
-            # Check if history range goes beyond safe bounds
-            if history_range[-1] > max_timestamp:
-                safe_start = max_timestamp - pd.tseries.frequencies.to_offset(
-                    freq_str
-                ) * (history_length + target_length)
-                if safe_start < min_timestamp:
-                    safe_start = min_timestamp
-                history_range = pd.date_range(
-                    start=safe_start, periods=history_length, freq=freq_str
-                )
+        future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
+        future_range = pd.date_range(
+            start=future_start, periods=future_length, freq=freq_str
+        )
 
-            future_start = history_range[-1] + pd.tseries.frequencies.to_offset(
-                freq_str
-            )
-            future_range = pd.date_range(
-                start=future_start, periods=target_length, freq=freq_str
-            )
-
-            # Final bounds check
-            if future_range[-1] > max_timestamp:
-                safe_start = pd.Timestamp("2000-01-01")
-                history_range = pd.date_range(
-                    start=safe_start, periods=history_length, freq=freq_str
-                )
-                future_start = history_range[-1] + pd.tseries.frequencies.to_offset(
-                    freq_str
-                )
-                future_range = pd.date_range(
-                    start=future_start, periods=target_length, freq=freq_str
-                )
-
-        except (pd.errors.OutOfBoundsDatetime, OverflowError, ValueError):
-            # Fallback to safe default timestamps
+        # Final bounds check
+        if future_range[-1] > max_timestamp:
             safe_start = pd.Timestamp("2000-01-01")
             history_range = pd.date_range(
                 start=safe_start, periods=history_length, freq=freq_str
@@ -489,35 +469,39 @@ def compute_batch_time_features(
                 freq_str
             )
             future_range = pd.date_range(
-                start=future_start, periods=target_length, freq=freq_str
+                start=future_start, periods=future_length, freq=freq_str
             )
 
-        # Convert to period indices
-        history_period_idx = history_range.to_period(period_freq_str)
-        future_period_idx = future_range.to_period(period_freq_str)
-
-        # Compute enhanced features
-        history_features = feature_generator.compute_features(
-            history_period_idx, history_range, freq_str
+    except (pd.errors.OutOfBoundsDatetime, OverflowError, ValueError):
+        # Fallback to safe default timestamps
+        safe_start = pd.Timestamp("1800-01-01")
+        history_range = pd.date_range(
+            start=safe_start, periods=history_length, freq=freq_str
         )
-        future_features = feature_generator.compute_features(
-            future_period_idx, future_range, freq_str
+        future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
+        future_range = pd.date_range(
+            start=future_start, periods=future_length, freq=freq_str
         )
 
-        # Pad or truncate to K_max
-        history_features = _pad_or_truncate_features(history_features, K_max)
-        future_features = _pad_or_truncate_features(future_features, K_max)
+    # Convert to period indices
+    history_period_idx = history_range.to_period(period_freq_str)
+    future_period_idx = future_range.to_period(period_freq_str)
 
-        history_features_list.append(history_features)
-        future_features_list.append(future_features)
+    # Compute enhanced features
+    history_features = feature_generator.compute_features(
+        history_period_idx, history_range, freq_str
+    )
+    future_features = feature_generator.compute_features(
+        future_period_idx, future_range, freq_str
+    )
 
-    # Stack into batch tensors
-    history_time_features = np.stack(history_features_list, axis=0)
-    target_time_features = np.stack(future_features_list, axis=0)
+    # Pad or truncate to K_max
+    history_features = _pad_or_truncate_features(history_features, K_max)
+    future_features = _pad_or_truncate_features(future_features, K_max)
 
     return (
-        torch.from_numpy(history_time_features).float().to(device),
-        torch.from_numpy(target_time_features).float().to(device),
+        torch.from_numpy(history_features).float().to(device),
+        torch.from_numpy(future_features).float().to(device),
     )
 
 

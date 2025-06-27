@@ -125,30 +125,37 @@ class BaseModel(nn.Module):
         return padded_sequence, padding_mask
 
     def get_positional_embeddings(
-        self, time_features, num_channels, drop_enc_allow=False
+        self, time_features, num_channels, batch_size, drop_enc_allow=False
     ):
         """
         Generate positional embeddings from GluonTS time features.
 
         Args:
-            time_features: Tensor [batch_size, seq_len, K_max]
+            time_features: Tensor [seq_len, K_max] (single time features for the batch)
             num_channels: Number of channels
+            batch_size: Batch size to expand to
             drop_enc_allow: Whether to allow dropout of encodings
 
         Returns:
             Tensor [batch_size, seq_len, num_channels, embed_size]
         """
-        batch_size, seq_len, _ = time_features.shape
+        seq_len, _ = time_features.shape
+
+        # Expand time features to batch size: [seq_len, K_max] -> [batch_size, seq_len, K_max]
+        expanded_time_features = time_features.unsqueeze(0).expand(batch_size, -1, -1)
+
         if (torch.rand(1).item() < self.encoding_dropout) and drop_enc_allow:
             return torch.zeros(
                 batch_size, seq_len, num_channels, self.embed_size, device=device
             ).to(torch.float32)
 
         if self.sin_pos_flag and self.sin_pos_encoder is not None:
-            return self.sin_pos_encoder(time_features, num_channels).to(torch.float32)
+            return self.sin_pos_encoder(expanded_time_features, num_channels).to(
+                torch.float32
+            )
 
         # Project GluonTS time features to embed_size
-        pos_embed = self.time_feature_projection(time_features)
+        pos_embed = self.time_feature_projection(expanded_time_features)
 
         return pos_embed.unsqueeze(2).expand(-1, -1, num_channels, -1)
 
@@ -200,7 +207,6 @@ class BaseModel(nn.Module):
             data_container.start,
             self.max_history_length,  # Use max length
             self.max_prediction_length,  # Use max length
-            data_container.batch_size,
             data_container.frequency,
             K_max=self.K_max,
             time_feature_config=self.time_feature_config,
@@ -249,10 +255,10 @@ class BaseModel(nn.Module):
 
         # Get positional embeddings
         history_pos_embed = self.get_positional_embeddings(
-            history_time_features, num_channels, drop_enc_allow
+            history_time_features, num_channels, batch_size, drop_enc_allow
         )
         target_pos_embed = self.get_positional_embeddings(
-            target_time_features, num_channels, drop_enc_allow
+            target_time_features, num_channels, batch_size, drop_enc_allow
         )
 
         # Process embeddings

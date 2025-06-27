@@ -65,6 +65,8 @@ def visualize_batch_sample(
     logger.info(
         f"[{generator_name}] Batch future values shape: {batch.future_values.shape}"
     )
+    logger.info(f"[{generator_name}] Batch start: {batch.start}")
+    logger.info(f"[{generator_name}] Batch frequency: {batch.frequency}")
 
     # Create artificial predictions if requested
     predicted_values = None

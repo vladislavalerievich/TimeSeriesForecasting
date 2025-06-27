@@ -259,10 +259,14 @@ class TimeSeriesModel(nn.Module):
         self,
         time_features: torch.Tensor,
         num_channels: int,
+        batch_size: int,
         drop_enc_allow: bool = False,
     ):
         """Generate positional embeddings from time features."""
-        batch_size, seq_len, _ = time_features.shape
+        seq_len, _ = time_features.shape
+
+        # Expand time features to batch size: [seq_len, K_max] -> [batch_size, seq_len, K_max]
+        expanded_time_features = time_features.unsqueeze(0).expand(batch_size, -1, -1)
 
         if (torch.rand(1).item() < self.encoding_dropout) and drop_enc_allow:
             return torch.zeros(
@@ -270,9 +274,11 @@ class TimeSeriesModel(nn.Module):
             ).to(torch.float32)
 
         if self.sin_pos_flag and self.sin_pos_encoder is not None:
-            return self.sin_pos_encoder(time_features, num_channels).to(torch.float32)
+            return self.sin_pos_encoder(expanded_time_features, num_channels).to(
+                torch.float32
+            )
 
-        pos_embed = self.time_feature_projection(time_features)
+        pos_embed = self.time_feature_projection(expanded_time_features)
         return pos_embed.unsqueeze(2).expand(-1, -1, num_channels, -1)
 
     def _compute_embeddings(
@@ -426,11 +432,10 @@ class TimeSeriesModel(nn.Module):
 
         # Compute time features
         history_time_features, target_time_features = compute_batch_time_features(
-            data_container.start,
-            self.max_history_length,
-            self.max_prediction_length,
-            data_container.batch_size,
-            data_container.frequency,
+            start=data_container.start,
+            history_length=self.max_history_length,
+            future_length=self.max_prediction_length,
+            frequency=data_container.frequency,
             K_max=self.K_max,
             time_feature_config=self.time_feature_config,
         )
@@ -455,11 +460,18 @@ class TimeSeriesModel(nn.Module):
             )
 
         # Get positional embeddings
+        batch_size = preprocessed["padded_history_values"].shape[0]
         history_pos_embed = self._get_positional_embeddings(
-            history_time_features, preprocessed["num_channels"], drop_enc_allow
+            history_time_features,
+            preprocessed["num_channels"],
+            batch_size,
+            drop_enc_allow,
         )
         target_pos_embed = self._get_positional_embeddings(
-            target_time_features, preprocessed["num_channels"], drop_enc_allow
+            target_time_features,
+            preprocessed["num_channels"],
+            batch_size,
+            drop_enc_allow,
         )
 
         # Compute embeddings
