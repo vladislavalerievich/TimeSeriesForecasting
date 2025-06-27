@@ -51,7 +51,7 @@ class TestForecastPFNTimestampIssues:
                 history_features, target_features = compute_batch_time_features(
                     start=batch.start,
                     history_length=batch.history_length,
-                    target_length=batch.future_length,
+                    future_length=batch.future_length,
                     batch_size=batch.batch_size,
                     frequency=batch.frequency,
                 )
@@ -119,7 +119,7 @@ class TestForecastPFNTimestampIssues:
                 history_features, target_features = compute_batch_time_features(
                     start=batch.start,
                     history_length=batch.history_length,
-                    target_length=batch.future_length,
+                    future_length=batch.future_length,
                     batch_size=batch.batch_size,
                     frequency=batch.frequency,
                 )
@@ -175,7 +175,7 @@ class TestForecastPFNTimestampIssues:
                 history_features, target_features = compute_batch_time_features(
                     start=batch.start,
                     history_length=batch.history_length,
-                    target_length=batch.future_length,
+                    future_length=batch.future_length,
                     batch_size=batch.batch_size,
                     frequency=batch.frequency,
                 )
@@ -206,7 +206,7 @@ class TestForecastPFNTimestampIssues:
                 history_features, target_features = compute_batch_time_features(
                     start=np.array([ts]),
                     history_length=50,
-                    target_length=20,
+                    future_length=20,
                     batch_size=1,
                     frequency=Frequency.A,  # Annual is most problematic
                 )
@@ -221,20 +221,20 @@ class TestForecastPFNTimestampIssues:
         print("\n=== Testing Constants Validation ===")
 
         from src.synthetic_generation.common.constants import (
-            BASE_END,
-            BASE_START,
+            BASE_END_DATE,
+            BASE_START_DATE,
             DEFAULT_END_DATE,
             DEFAULT_START_DATE,
         )
 
         print(f"DEFAULT_START_DATE: {DEFAULT_START_DATE}")
         print(f"DEFAULT_END_DATE: {DEFAULT_END_DATE}")
-        print(f"BASE_START: {BASE_START} (ordinal)")
-        print(f"BASE_END: {BASE_END} (ordinal)")
+        print(f"BASE_START: {BASE_START_DATE} (ordinal)")
+        print(f"BASE_END: {BASE_END_DATE} (ordinal)")
 
         # Convert back to dates for validation
-        start_date = datetime.fromordinal(BASE_START)
-        end_date = datetime.fromordinal(BASE_END)
+        start_date = datetime.fromordinal(BASE_START_DATE)
+        end_date = datetime.fromordinal(BASE_END_DATE)
 
         print(f"Converted BASE_START: {start_date}")
         print(f"Converted BASE_END: {end_date}")
@@ -249,7 +249,8 @@ class TestForecastPFNTimestampIssues:
             from scipy.stats import beta
 
             sampled_ordinal = int(
-                (BASE_END - BASE_START) * beta.rvs(5, 1, random_state=rng) + BASE_START
+                (BASE_END_DATE - BASE_START_DATE) * beta.rvs(5, 1, random_state=rng)
+                + BASE_START_DATE
             )
             sampled_date = datetime.fromordinal(sampled_ordinal)
             print(f"  Sample {i + 1}: {sampled_date}")
@@ -330,7 +331,7 @@ class TestForecastPFNTimestampIssues:
                 history_features, target_features = compute_batch_time_features(
                     start=batch.start,
                     history_length=batch.history_length,
-                    target_length=batch.future_length,
+                    future_length=batch.future_length,
                     batch_size=batch.batch_size,
                     frequency=batch.frequency,
                 )

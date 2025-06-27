@@ -2,9 +2,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from src.data_handling.data_containers import Frequency
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.common.constants import DEFAULT_START_DATE
 
 
 class SineWaveGenerator(AbstractTimeSeriesGenerator):
@@ -47,7 +45,7 @@ class SineWaveGenerator(AbstractTimeSeriesGenerator):
         self.rng = np.random.default_rng(random_seed)
 
     def generate_time_series(
-        self, random_seed: Optional[int] = None, periodicity: Frequency = Frequency.D
+        self, random_seed: Optional[int] = None
     ) -> Dict[str, np.ndarray]:
         """
         Generate a single univariate sine wave time series.
@@ -56,15 +54,12 @@ class SineWaveGenerator(AbstractTimeSeriesGenerator):
         ----------
         random_seed : int, optional
             Random seed for reproducible generation.
-        periodicity : Frequency, optional
-            Time unit for timestamp generation. Defaults to Frequency.D (Daily).
+
 
         Returns
         -------
-        dict
-            Dictionary containing:
-            - 'start': np.datetime64 timestamp
-            - 'values': np.ndarray of sine wave values
+        np.ndarray
+            Shape: [seq_len]
         """
         if random_seed is not None:
             self.rng = np.random.default_rng(random_seed)
@@ -85,7 +80,4 @@ class SineWaveGenerator(AbstractTimeSeriesGenerator):
             noise = self.rng.normal(0, amplitude * self.noise_level, size=self.length)
             values += noise
 
-        # Create start timestamp
-        start_time = np.datetime64(DEFAULT_START_DATE, "s")
-
-        return {"start": start_time, "values": values}
+        return values

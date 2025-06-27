@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional
 
 import numpy as np
-import pandas as pd
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
@@ -38,15 +37,17 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
     def _generate_univariate_time_series(
         self,
         generator: ForecastPFNGenerator,
+        start: Optional[np.datetime64] = None,
         seed: Optional[int] = None,
     ) -> Dict:
-        return generator.generate_time_series(random_seed=seed)
+        return generator.generate_time_series(start=start, random_seed=seed)
 
     def _generate_multivariate_time_series(
         self, num_channels: int, length: int, seed: Optional[int] = None, **params
     ) -> tuple:
         values = []
-        start = None
+        start_date = params.get("start")
+
         generator = ForecastPFNGenerator(
             ForecastPFNGeneratorParams(**params),
             length=length,
@@ -54,18 +55,13 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         )
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
-            result = self._generate_univariate_time_series(generator, channel_seed)
-            values.append(result["values"])
-            if start is None:
-                start = result["start"]
-                # Update the generator's start time to ensure all channels in a multivariate series have the same start time
-                generator_params = generator.params
-                generator = ForecastPFNGenerator(generator_params, length=length)
-                generator._generate_series(
-                    start=pd.Timestamp(start), random_seed=channel_seed
-                )
+            result = self._generate_univariate_time_series(
+                generator, start_date, channel_seed
+            )
+            values.append(result)
+
         values = np.column_stack(values) if num_channels > 1 else np.array(values[0])
-        return values, start
+        return values
 
     def _generate_damping(
         self, input_size: int, p: list = [0.4, 0.5, 0.1]
@@ -196,20 +192,25 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
             self._set_random_seeds(seed)
         if params is None:
             params = self._sample_parameters()
+
         history_length = params["history_length"]
         future_length = params["future_length"]
         num_channels = params["num_channels"]
+        frequency = params["frequency"]
+        start_date = params["start"]
 
         total_length = history_length + future_length
+
         batch_values = []
-        batch_start = []
+
         for i in range(batch_size):
             batch_seed = None if seed is None else seed + i * num_channels
-            values, start = self._generate_multivariate_time_series(
+            values = self._generate_multivariate_time_series(
                 num_channels=num_channels,
                 length=total_length,
                 seed=batch_seed,
-                frequency=params["frequency"],
+                start=start_date,
+                frequency=frequency,
                 trend_exp=params["trend_exp"],
                 scale_noise=params["scale_noise"],
                 harmonic_scale_ratio=params["harmonic_scale_ratio"],
@@ -223,7 +224,6 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
             if num_channels == 1:
                 values = values.reshape(-1, 1)
             batch_values.append(values)
-            batch_start.append(start)
         batch_values = np.array(batch_values)
 
         # Apply augmentations if parameters are provided
@@ -242,8 +242,8 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
         return self._format_to_container(
             values=batch_values,
-            start=np.array(batch_start),
+            start=params["start"],
             history_length=history_length,
             future_length=future_length,
-            frequency=params["frequency"],
+            frequency=frequency,
         )

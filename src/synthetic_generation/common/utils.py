@@ -1,10 +1,13 @@
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 import torch
 from numpy.random import Generator
+from pandas.tseries.frequencies import to_offset
 
 from src.data_handling.data_containers import Frequency
+from src.synthetic_generation.common.constants import BASE_END_DATE, BASE_START_DATE
 
 # Cap the total length for low-frequency series to prevent timestamp overflow
 # Pandas datetime range is roughly 1677-2262, so we need conservative limits
@@ -34,6 +37,21 @@ HIGH_FREQUENCY_MAX_LENGTHS = {
 ALL_FREQUENCY_MAX_LENGTHS = {
     **SHORT_FREQUENCY_MAX_LENGTHS,
     **HIGH_FREQUENCY_MAX_LENGTHS,
+}
+
+# Frequency to pandas offset mapping for calculating time deltas
+FREQUENCY_TO_OFFSET = {
+    Frequency.A: "AS",  # Annual start
+    Frequency.Q: "QS",  # Quarter start
+    Frequency.M: "MS",  # Month start
+    Frequency.W: "W",  # Weekly
+    Frequency.D: "D",  # Daily
+    Frequency.H: "H",  # Hourly
+    Frequency.T1: "1T",  # 1 minute
+    Frequency.T5: "5T",  # 5 minutes
+    Frequency.T10: "10T",  # 10 minutes
+    Frequency.T15: "15T",  # 15 minutes
+    Frequency.S: "S",  # Seconds
 }
 
 GIFT_EVAL_FREQUENCY_WEIGHTS = {
@@ -187,6 +205,172 @@ def select_safe_random_frequency(total_length: int, rng: Generator) -> Frequency
     probabilities = scores / scores.sum()
 
     return rng.choice(valid_frequencies, p=probabilities)
+
+
+def select_safe_start_date(
+    history_length: int,
+    future_length: int,
+    frequency: Frequency,
+    rng: Generator,
+    max_retries: int = 3,
+) -> np.datetime64:
+    """
+    Select a safe start date that ensures the entire time series (history + future)
+    will not exceed pandas' datetime bounds and won't cause OutOfBoundsDatetime errors
+    in time_features.py, preventing the errors seen in training.
+
+    This function:
+    1. Calculates safe bounds based on the series length and frequency
+    2. Randomly selects start dates within those bounds
+    3. Tests each candidate against time_features.py logic to ensure compatibility
+    4. Retries until a safe start date is found
+
+    Parameters
+    ----------
+    history_length : int
+        Length of the history window
+    future_length : int
+        Length of the future window
+    frequency : Frequency
+        Time series frequency
+    rng : np.random.Generator
+        Random number generator instance
+    max_retries : int, optional
+        Maximum number of retry attempts (default: 50)
+
+    Returns
+    -------
+    np.datetime64
+        A safe start date that prevents timestamp overflow
+    """
+    total_length = history_length + future_length
+
+    # Get the pandas offset string for the frequency
+    offset_str = FREQUENCY_TO_OFFSET.get(frequency, "D")
+
+    # Define the time_features.py safe bounds for validation
+    time_features_min = pd.Timestamp("1900-01-01")
+    time_features_max = pd.Timestamp("2200-12-31")
+
+    for attempt in range(max_retries):
+        try:
+            # Calculate the time span that the total series will cover
+            test_start = pd.Timestamp("2000-01-01")
+            test_end = test_start + pd.Timedelta(
+                to_offset(offset_str) * (total_length - 1)
+            )
+            series_duration = test_end - test_start
+
+            # Calculate bounds considering both our constants and time_features.py constraints
+            earliest_start = max(pd.Timestamp(BASE_START_DATE), time_features_min)
+            latest_start = min(
+                pd.Timestamp(BASE_END_DATE) - series_duration,
+                time_features_max - series_duration,
+            )
+
+            if latest_start < earliest_start:
+                # If the series is too long, use a fallback in the middle of safe range
+                mid_point = earliest_start + (time_features_max - earliest_start) / 4
+                candidate_start = mid_point
+            else:
+                # Select a random date between earliest_start and latest_start
+                date_range_days = (latest_start - earliest_start).days
+                if date_range_days <= 0:
+                    candidate_start = earliest_start
+                else:
+                    random_days = rng.integers(0, date_range_days + 1)
+                    candidate_start = earliest_start + pd.Timedelta(days=random_days)
+
+            # Test the candidate start date by simulating time_features.py logic
+            if _check_start_date_safety(
+                candidate_start, history_length, future_length, offset_str
+            ):
+                return np.datetime64(candidate_start.strftime("%Y-%m-%d"))
+
+        except (ValueError, OverflowError, pd.errors.OutOfBoundsDatetime):
+            # Continue to next attempt
+            pass
+
+    # If all retries failed, return the base start date
+    return BASE_START_DATE
+
+
+def _check_start_date_safety(
+    start_ts: pd.Timestamp, history_length: int, future_length: int, offset_str: str
+) -> bool:
+    """
+    Test if a start date is safe by simulating the time_features.py logic.
+
+    This function replicates the key parts of time_features.py that can cause
+    OutOfBoundsDatetime errors to ensure our selected start date is safe.
+
+    Parameters
+    ----------
+    start_ts : pd.Timestamp
+        The candidate start timestamp to test
+    history_length : int
+        Length of history sequence
+    future_length : int
+        Length of future sequence
+    offset_str : str
+        Pandas frequency offset string
+
+    Returns
+    -------
+    bool
+        True if the start date is safe, False otherwise
+    """
+    try:
+        # Test creating history range (matches time_features.py logic)
+        history_range = pd.date_range(
+            start=start_ts, periods=history_length, freq=offset_str
+        )
+
+        # Test creating future range (matches time_features.py logic)
+        future_start = history_range[-1] + pd.tseries.frequencies.to_offset(offset_str)
+        future_range = pd.date_range(
+            start=future_start, periods=future_length, freq=offset_str
+        )
+
+        # Verify all timestamps are within time_features.py bounds
+        time_features_min = pd.Timestamp(BASE_START_DATE)
+        time_features_max = pd.Timestamp(BASE_END_DATE)
+
+        if (
+            history_range[0] < time_features_min
+            or history_range[-1] > time_features_max
+            or future_range[0] < time_features_min
+            or future_range[-1] > time_features_max
+        ):
+            return False
+
+        # Test period index conversion (another source of potential errors)
+        # Use a mapping similar to time_features.py
+        period_freq_mapping = {
+            "AS": "A",
+            "QS": "Q",
+            "MS": "M",
+            "W": "W",
+            "D": "D",
+            "H": "H",
+            "h": "H",
+            "1T": "T",
+            "5T": "5T",
+            "10T": "10T",
+            "15T": "15T",
+            "S": "S",
+            "s": "S",
+        }
+        period_freq = period_freq_mapping.get(offset_str, "D")
+
+        # Test period index creation
+        _ = history_range.to_period(period_freq)
+        _ = future_range.to_period(period_freq)
+
+        return True
+
+    except (pd.errors.OutOfBoundsDatetime, OverflowError, ValueError):
+        return False
 
 
 def generate_spikes(

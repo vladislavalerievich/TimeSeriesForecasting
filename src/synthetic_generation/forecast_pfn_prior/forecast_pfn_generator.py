@@ -3,15 +3,9 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
-from scipy.stats import beta
 
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.common.constants import (
-    BASE_END,
-    BASE_START,
-    FREQUENCY_MAPPING,
-    Frequency,
-)
+from src.synthetic_generation.common.constants import FREQUENCY_MAPPING, Frequency
 from src.synthetic_generation.forecast_pfn_prior.series_config import (
     ComponentNoise,
     ComponentScale,
@@ -40,7 +34,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         self.frequency = params.frequency
 
     def _generate_series(
-        self, start: pd.Timestamp = None, random_seed: Optional[int] = None
+        self, start: np.datetime64, random_seed: Optional[int] = None
     ) -> Dict[str, np.ndarray]:
         if random_seed is not None:
             self.rng = np.random.default_rng(random_seed)
@@ -82,14 +76,6 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
             a = self.rng.uniform(0.0, 1.0)
         else:
             raise NotImplementedError(f"Frequency {self.frequency} not supported")
-
-        if start is None:
-            start = pd.Timestamp.fromordinal(
-                int(
-                    (BASE_END - BASE_START) * beta.rvs(5, 1, random_state=self.rng)
-                    + BASE_START
-                )
-            )
 
         scale_config = ComponentScale(
             base=1.0,
@@ -181,13 +167,13 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         else:
             values = series1["values"]
 
-        return {"start": np.datetime64(start), "values": values}
+        return values
 
     def _make_series(
         self,
         series: SeriesConfig,
         freq: pd.DateOffset,
-        start: pd.Timestamp,
+        start: np.datetime64,
         options: dict,
         random_walk: bool,
     ) -> Dict:
@@ -324,8 +310,11 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         return return_val
 
     def generate_time_series(
-        self, random_seed: Optional[int] = None, periodicity: Frequency = None
+        self,
+        start: np.datetime64,
+        random_seed: Optional[int] = None,
+        periodicity: Frequency = None,
     ) -> Dict[str, np.ndarray]:
         if periodicity is not None:
             self.frequency = periodicity
-        return self._generate_series(random_seed=random_seed)
+        return self._generate_series(start=start, random_seed=random_seed)

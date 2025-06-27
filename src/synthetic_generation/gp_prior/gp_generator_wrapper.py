@@ -49,7 +49,7 @@ class GPGeneratorWrapper(GeneratorWrapper):
         **params,
     ) -> tuple:
         values = []
-        start = None
+
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
             generator = GPGenerator(
@@ -58,12 +58,10 @@ class GPGeneratorWrapper(GeneratorWrapper):
                 random_seed=channel_seed,
             )
             result = self._generate_univariate_time_series(generator, channel_seed)
-            values.append(result["values"])
-            if start is None:
-                start = result["start"]
+            values.append(result)
 
         values = np.column_stack(values) if num_channels > 1 else np.array(values[0])
-        return values, start
+        return values
 
     def generate_batch(
         self,
@@ -75,16 +73,18 @@ class GPGeneratorWrapper(GeneratorWrapper):
             self._set_random_seeds(seed)
         if params is None:
             params = self._sample_parameters()
+
         history_length = params["history_length"]
         future_length = params["future_length"]
         num_channels = params["num_channels"]
+
         total_length = history_length + future_length
+
         batch_values = []
-        batch_start = []
 
         for i in range(batch_size):
             batch_seed = None if seed is None else seed + i * num_channels
-            values, start = self._generate_multivariate_time_series(
+            values = self._generate_multivariate_time_series(
                 num_channels=num_channels,
                 length=total_length,
                 seed=batch_seed,
@@ -107,12 +107,12 @@ class GPGeneratorWrapper(GeneratorWrapper):
                 values = values.reshape(-1, 1)
 
             batch_values.append(values)
-            batch_start.append(start)
 
         batch_values = np.array(batch_values)
+
         return self._format_to_container(
             values=batch_values,
-            start=np.array(batch_start),
+            start=params["start"],
             history_length=history_length,
             future_length=future_length,
             frequency=params["frequency"],

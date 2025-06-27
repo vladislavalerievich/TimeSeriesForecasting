@@ -13,7 +13,6 @@ from sklearn.gaussian_process.kernels import (
 )
 
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.common.constants import DEFAULT_START_DATE
 
 
 class LMCSynthGenerator(AbstractTimeSeriesGenerator):
@@ -171,10 +170,8 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
 
         Returns
         -------
-        dict
-            Dictionary containing:
-            - 'start': Start timestamp (np.datetime64)
-            - 'values': Generated time series (np.ndarray of shape (num_channels, length))
+        np.ndarray
+            Shape: [seq_len, num_channels]
         """
         if random_seed is not None:
             self.rng = np.random.default_rng(random_seed)
@@ -226,9 +223,7 @@ class LMCSynthGenerator(AbstractTimeSeriesGenerator):
                 ts = np.dot(weights, latent_functions)  # Shape: [num_channels, length]
                 ts = ts.T  # Transpose to [length, num_channels]
 
-                start_time = np.datetime64(DEFAULT_START_DATE, "s")
-
-                return {"start": start_time, "values": ts}
+                return ts
 
             except np.linalg.LinAlgError as err:
                 print("Error caught:", err)

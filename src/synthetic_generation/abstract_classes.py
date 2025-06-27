@@ -5,7 +5,10 @@ import numpy as np
 import torch
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
-from src.synthetic_generation.common.utils import select_safe_random_frequency
+from src.synthetic_generation.common.utils import (
+    select_safe_random_frequency,
+    select_safe_start_date,
+)
 from src.synthetic_generation.generator_params import GeneratorParams
 
 
@@ -162,11 +165,20 @@ class GeneratorWrapper:
         total_length = history_length + future_length
         frequency = select_safe_random_frequency(total_length, self.rng)
 
+        # Select a safe start date that prevents timestamp overflow
+        if self.params.start is not None:
+            start = self.params.start
+        else:
+            start = select_safe_start_date(
+                history_length, future_length, frequency, self.rng
+            )
+
         return {
             "history_length": history_length,
             "future_length": future_length,
             "num_channels": num_channels,
             "frequency": frequency,
+            "start": start,
         }
 
     def _get_all_possible_values(

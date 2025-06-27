@@ -67,11 +67,10 @@ class LMCGeneratorWrapper(GeneratorWrapper):
 
         Returns
         -------
-        Tuple[np.ndarray, np.ndarray]
-            Tuple containing (batch_values, batch_start).
+        np.ndarray
+            Shape: [seq_len, num_channels]
         """
         batch_values = []
-        batch_start = []
 
         for i in range(batch_size):
             # Generate a single time series with a unique seed
@@ -79,11 +78,10 @@ class LMCGeneratorWrapper(GeneratorWrapper):
             result = generator.generate_time_series(
                 random_seed=batch_seed,
             )
-            batch_values.append(result["values"])
-            batch_start.append(result["start"])
+            batch_values.append(result)
 
         # Convert to numpy arrays
-        return np.array(batch_values), np.array(batch_start)
+        return np.array(batch_values)
 
     def generate_batch(
         self,
@@ -143,13 +141,11 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         )
 
         # Generate batch of time series
-        batch_values, batch_start = self._generate_time_series_batch(
-            generator, batch_size, seed
-        )
+        batch_values = self._generate_time_series_batch(generator, batch_size, seed)
 
         return self._format_to_container(
             values=batch_values,
-            start=batch_start,
+            start=params["start"],
             history_length=history_length,
             future_length=future_length,
             frequency=frequency,

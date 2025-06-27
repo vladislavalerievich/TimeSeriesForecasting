@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from src.synthetic_generation.common.constants import Frequency
+from src.data_handling.data_containers import Frequency
 
 
 @dataclass
@@ -22,6 +22,7 @@ class GeneratorParams:
         default_factory=lambda: 1  # TODO: revert to (1, 21)
     )
     frequency: Frequency = Frequency.D
+    start: Optional[np.datetime64] = None  # If None, will be auto-selected safely
 
     def update(self, **kwargs):
         """Update parameters from keyword arguments."""

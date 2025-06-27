@@ -3,15 +3,9 @@ from typing import Dict, Optional
 
 import gpytorch
 import numpy as np
-import pandas as pd
 import torch
-from scipy.stats import beta
 
-from src.synthetic_generation.common.constants import (
-    BASE_END,
-    BASE_START,
-    FREQUENCY_MAPPING,
-)
+from src.synthetic_generation.common.constants import FREQUENCY_MAPPING
 from src.synthetic_generation.common.utils import generate_peak_spikes
 from src.synthetic_generation.generator_params import GPGeneratorParams
 from src.synthetic_generation.gp_prior.constants import (
@@ -203,11 +197,4 @@ class GPGenerator:
                     else:
                         y_sample = y_sample * spikes
 
-            # Generate start time
-            start = np.datetime64(
-                pd.Timestamp.fromordinal(
-                    int((BASE_START - BASE_END) * beta.rvs(5, 1) + BASE_START)
-                )
-            )
-
-            return {"start": start, "values": y_sample}
+            return y_sample

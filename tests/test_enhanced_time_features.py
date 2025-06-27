@@ -22,8 +22,8 @@ def test_basic_vs_enhanced_features():
 
     # Test parameters
     batch_size = 3
-    history_length = 48  # 2 days of hourly data
-    target_length = 24  # 1 day prediction
+    history_length = 1024
+    future_length = 900
     frequency = Frequency.H
 
     # Create test timestamps
@@ -37,7 +37,7 @@ def test_basic_vs_enhanced_features():
     print("Test setup:")
     print(f"  Batch size: {batch_size}")
     print(f"  History length: {history_length}")
-    print(f"  Target length: {target_length}")
+    print(f"  Future length: {future_length}")
     print(f"  Frequency: {frequency.value}")
     print(f"  Start dates: {[str(d) for d in start_dates]}")
     print()
@@ -79,17 +79,17 @@ def test_basic_vs_enhanced_features():
 
     for test_config in configs:
         print(f"Computing {test_config['name']}...")
-        enhanced_hist, enhanced_target = compute_batch_time_features(
+        enhanced_hist, enhanced_future = compute_batch_time_features(
             start,
             history_length,
-            target_length,
+            future_length,
             batch_size,
             frequency,
             time_feature_config=test_config["config"],
         )
 
         print(
-            f"Enhanced features shape - History: {enhanced_hist.shape}, Target: {enhanced_target.shape}"
+            f"Enhanced features shape - History: {enhanced_hist.shape}, Future: {enhanced_future.shape}"
         )
         print("Enhanced features example (first timestep, first batch):")
         print(f"  {enhanced_hist[0, 0, :].detach().cpu().numpy()}")

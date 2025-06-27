@@ -26,7 +26,6 @@ from sklearn.gaussian_process.kernels import (
 )
 
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
-from src.synthetic_generation.common.constants import DEFAULT_START_DATE
 
 
 class KernelSynthGenerator(AbstractTimeSeriesGenerator):
@@ -204,8 +203,8 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
 
         Returns
         -------
-        dict
-            { 'start': np.datetime64, 'values': np.ndarray }
+        np.ndarray
+            Shape: [seq_len]
         """
         if random_seed is not None:
             self.rng = np.random.default_rng(random_seed)
@@ -217,12 +216,9 @@ class KernelSynthGenerator(AbstractTimeSeriesGenerator):
         composite = functools.reduce(self._random_binary_map, selected)
 
         try:
-            ts = self._sample_from_gp_prior(composite, X, random_seed=random_seed)
+            values = self._sample_from_gp_prior(composite, X, random_seed=random_seed)
         except (np.linalg.LinAlgError, torch.linalg.LinAlgError) as e:
             new_seed = (random_seed + 1) if random_seed is not None else None
             return self.generate_time_series(new_seed)
 
-        # Create timestamps using the frequency parameter
-        start_time = np.datetime64(DEFAULT_START_DATE, "s")
-
-        return {"start": start_time, "values": ts}
+        return values
