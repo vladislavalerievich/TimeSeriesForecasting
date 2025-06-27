@@ -21,7 +21,12 @@ from src.gift_eval.evaluator import GiftEvaluator
 from src.models.models import MultiStepModel
 from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.synthetic_generation.data_loaders import (
+    SyntheticTrainDataLoader,
     SyntheticValidationDataLoader,
+)
+from src.synthetic_generation.dataset_composer import (
+    DefaultSyntheticComposer,
+    OnTheFlyDatasetGenerator,
 )
 from src.utils.utils import (
     device,
@@ -106,31 +111,36 @@ class TrainingPipeline:
         self.config["model_name"] = generate_descriptive_model_name(self.config)
         self._load_checkpoint()
 
-        # --- Sine wave dataset setup ---
-        # Training data loader (load pre-generated sine wave training data)
-        train_data_path = self.config.get(
-            "train_data_path",
-            "data/sine_wave_dataset/train/train_dataset.pt",
+        # --- Synthetic training data generation setup ---
+        composer = DefaultSyntheticComposer(
+            seed=self.config["seed"],
+            range_proportions=self.config.get("range_proportions", None),
+            generator_proportions=self.config.get("generator_proportions", None),
+        ).composer
+
+        # On-the-fly training data loader
+        on_the_fly_gen = OnTheFlyDatasetGenerator(
+            composer=composer,
+            batch_size=self.config["batch_size"],
+            buffer_size=2,
+            global_seed=self.config["seed"],
         )
-        self.train_loader = SyntheticValidationDataLoader(
-            data_path=train_data_path,
-            batch_size=1,
+        self.train_loader = SyntheticTrainDataLoader(
+            generator=on_the_fly_gen,
+            num_batches_per_epoch=self.config["num_training_iterations_per_epoch"],
             device=self.device,
-            single_file=True,
-            shuffle=True,  # Shuffle training data
         )
 
-        # Validation data loader (load pre-generated sine wave validation data)
+        # Fixed synthetic validation data loader (load all batches from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/sine_wave_dataset/val/val_dataset.pt",
+            "data/synthetic_validation_dataset/dataset.pt",
         )
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,
             batch_size=1,
             device=self.device,
             single_file=True,
-            shuffle=False,  # Don't shuffle validation data
         )
 
         # --- Setup GIFT evaluator ---
@@ -399,17 +409,20 @@ class TrainingPipeline:
         }
 
         # Calculate global step
-        total_batches_per_epoch = self.config.get(
-            "num_training_iterations_per_epoch", len(self.train_loader)
-        )
-
         if self.gradient_accumulation_enabled:
             global_step = (
-                epoch * (total_batches_per_epoch // self.accumulation_steps) + step_idx
+                epoch
+                * (
+                    self.config["num_training_iterations_per_epoch"]
+                    // self.accumulation_steps
+                )
+                + step_idx
             )
             extra_info = f"Effective Step: {step_idx + 1}"
         else:
-            global_step = epoch * total_batches_per_epoch + step_idx
+            global_step = (
+                epoch * self.config["num_training_iterations_per_epoch"] + step_idx
+            )
             extra_info = f"Batch: {step_idx + 1}"
 
         self._log_metrics(train_metrics, "train", epoch, global_step, extra_info)
@@ -423,7 +436,7 @@ class TrainingPipeline:
             "smape": self.val_metrics["smape"].compute().item(),
         }
 
-        self._log_metrics(val_metrics, "val", epoch, extra_info="Sine Wave Validation")
+        self._log_metrics(val_metrics, "val", epoch, extra_info="Synthetic Validation")
 
     def _log_gift_eval_metrics(self, epoch: int, gift_metrics: Dict) -> None:
         """Log GIFT evaluation metrics."""
@@ -464,12 +477,12 @@ class TrainingPipeline:
         logger.info(f"EPOCH {epoch + 1} SUMMARY")
         logger.info("=" * 80)
         logger.info(f"Training Loss: {train_loss:.4f}")
-        logger.info(f"Sine Wave Validation Loss: {val_loss:.4f}")
+        logger.info(f"Synthetic Validation Loss: {val_loss:.4f}")
         logger.info(
             f"Training MAPE: {epoch_metrics['train_mape']:.4f}, MSE: {epoch_metrics['train_mse']:.4f}, SMAPE: {epoch_metrics['train_smape']:.4f}"
         )
         logger.info(
-            f"Sine Wave Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
+            f"Synthetic Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
         )
         logger.info(f"Learning Rate: {epoch_metrics['learning_rate']:.8f}")
         logger.info(f"Epoch Time: {epoch_metrics['epoch_time_minutes']:.2f} minutes")
@@ -527,16 +540,16 @@ class TrainingPipeline:
 
         # --- GIFT-eval validation ---
 
-        # logger.info("Running GIFT-eval validation...")
-        # gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
-        #     datasets_to_eval=ALL_DATASETS,
-        #     term="short",
-        #     epoch=epoch,
-        #     plot=self.config["wandb"],  # Only plot if wandb is enabled
-        # )
-        # # Log GIFT eval metrics (always to logger, optionally to wandb)
-        # self._log_gift_eval_metrics(epoch, gift_eval_metrics)
-        # logger.info("GIFT-eval validation finished.")
+        logger.info("Running GIFT-eval validation...")
+        gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
+            datasets_to_eval=ALL_DATASETS,
+            term="short",
+            epoch=epoch,
+            plot=self.config["wandb"],  # Only plot if wandb is enabled
+        )
+        # Log GIFT eval metrics (always to logger, optionally to wandb)
+        self._log_gift_eval_metrics(epoch, gift_eval_metrics)
+        logger.info("GIFT-eval validation finished.")
 
         return avg_val_loss
 
@@ -551,12 +564,8 @@ class TrainingPipeline:
         # Initialize gradients for the first accumulation step
         self.optimizer.zero_grad()
 
-        # For pre-generated datasets, we iterate through all available batches
-        # and optionally limit by num_training_iterations_per_epoch if specified
-        max_batches = self.config.get("num_training_iterations_per_epoch", float("inf"))
-
         for batch_idx, batch in enumerate(self.train_loader):
-            if batch_idx >= max_batches:
+            if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
             data, target = self._prepare_batch(batch)
@@ -637,7 +646,9 @@ class TrainingPipeline:
                     running_loss = 0.0
 
         # Calculate average epoch loss
-        total_batches = min(batch_idx + 1, max_batches)
+        total_batches = min(
+            batch_idx + 1, self.config["num_training_iterations_per_epoch"]
+        )
         if self.gradient_accumulation_enabled:
             # For gradient accumulation, we want the average loss per effective update
             effective_updates = (
@@ -654,7 +665,6 @@ class TrainingPipeline:
         logger.info("TRAINING CONFIGURATION")
         logger.info("=" * 80)
         logger.info(f"Model: {self.config['model_name']}")
-        logger.info("Dataset: Sine Wave (Pre-generated)")
         logger.info(f"Epochs: {self.config['num_epochs']}")
         logger.info(f"Batch Size: {self.config['batch_size']}")
         if self.gradient_accumulation_enabled:
@@ -670,12 +680,6 @@ class TrainingPipeline:
         logger.info(f"Loss Function: {self.config['loss']}")
         logger.info(f"Scaler: {self.config['scaler']}")
         logger.info(f"Device: {self.device}")
-        logger.info(
-            f"Training Data: {self.config.get('train_data_path', 'data/sine_wave_dataset/train/train_dataset.pt')}"
-        )
-        logger.info(
-            f"Validation Data: {self.config.get('val_data_path', 'data/sine_wave_dataset/val/val_dataset.pt')}"
-        )
         logger.info(
             f"WandB Logging: {'Enabled' if self.config['wandb'] else 'Disabled'}"
         )
