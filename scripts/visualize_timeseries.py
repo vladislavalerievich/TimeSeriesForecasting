@@ -39,7 +39,7 @@ def visualize_batch_sample(
     batch_size: int = 2,
     output_dir: str = "outputs/plots",
     sample_idx: int = 0,
-    add_artificial_predictions: bool = False,
+    add_artificial_predictions: bool = True,
 ) -> None:
     """
     Visualize a sample from a batch of synthetic multivariate time series from any generator.

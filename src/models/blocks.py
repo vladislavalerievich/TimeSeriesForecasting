@@ -171,33 +171,13 @@ class ConcatLayer(nn.Module):
         return torch.cat(inputs, dim=self.dim)
 
 
-class BaseEncoder(nn.Module):
-    """Base class for encoders with common functionality"""
+class GatedDeltaNetEncoder(nn.Module):
+    """
+    GatedDeltaNet encoder using GatedDeltaProductBlock for sequence modeling.
+    """
 
-    def __init__(
-        self,
-        token_embed_dim=1024,
-        norm=True,
-        norm_type="layernorm",
-        residual=False,
-        enc_conv=False,
-        dilated_conv_kernel_size=5,
-        dilated_conv_max_dilation=0,
-        **kwargs,
-    ):
-        super().__init__()
-
-    def setup_encoder_layer(self, **kwargs):
-        raise NotImplementedError("Subclasses must implement setup_encoder_layer")
-
-    def forward(self, x):
-        x, _, _ = self.encoder_layer(x)
-        return x
-
-
-class GatedDeltaNetEncoder(BaseEncoder):
     def __init__(self, layer_idx, token_embed_dim, num_heads=4, **kwargs):
-        super().__init__(token_embed_dim=token_embed_dim, **kwargs)
+        super().__init__()
         config = GatedDeltaProductConfig(
             attn_mode="chunk",
             hidden_size=token_embed_dim,
@@ -211,3 +191,16 @@ class GatedDeltaNetEncoder(BaseEncoder):
             use_forget_gate=True,
         )
         self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
+
+    def forward(self, x):
+        """
+        Forward pass through the GatedDeltaProductBlock.
+
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_size]
+
+        Returns:
+            Output tensor of same shape as input
+        """
+        x, _, _ = self.encoder_layer(x)
+        return x

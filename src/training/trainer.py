@@ -3,7 +3,7 @@ import logging
 import os
 import time
 import warnings
-from typing import Dict, Tuple
+from typing import Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,18 +16,13 @@ from linear_operator.utils.cholesky import NumericalWarning
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
-from src.data_handling.data_containers import BatchTimeSeriesContainer
-from src.gift_eval.evaluator import GiftEvaluator
-from src.models.models import MultiStepModel
-from src.plotting.plot_multivariate_timeseries import plot_from_container
-from src.synthetic_generation.data_loaders import (
+from src.data_handling.data_loaders import (
     SyntheticTrainDataLoader,
     SyntheticValidationDataLoader,
 )
-from src.synthetic_generation.dataset_composer import (
-    DefaultSyntheticComposer,
-    OnTheFlyDatasetGenerator,
-)
+from src.gift_eval.evaluator import GiftEvaluator
+from src.models.models import MultiStepModel
+from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.utils.utils import (
     device,
     generate_descriptive_model_name,
@@ -40,7 +35,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -111,34 +106,31 @@ class TrainingPipeline:
         self.config["model_name"] = generate_descriptive_model_name(self.config)
         self._load_checkpoint()
 
-        # --- Synthetic training data generation setup ---
-        composer = DefaultSyntheticComposer(
-            seed=self.config["seed"],
-            range_proportions=self.config.get("range_proportions", None),
-            generator_proportions=self.config.get("generator_proportions", None),
-        ).composer
+        # --- Load pre-generated synthetic datasets from disk ---
+        logger.info("Loading pre-generated synthetic datasets from disk...")
 
-        # On-the-fly training data loader
-        on_the_fly_gen = OnTheFlyDatasetGenerator(
-            composer=composer,
-            batch_size=self.config["batch_size"],
-            buffer_size=2,
-            global_seed=self.config["seed"],
+        # Training data loader (load from disk)
+        train_data_path = self.config.get(
+            "train_data_path",
+            "data/synthetic_validation_dataset/train/dataset.pt",
         )
+        logger.info(f"Training data path: {train_data_path}")
         self.train_loader = SyntheticTrainDataLoader(
-            generator=on_the_fly_gen,
+            data_path=train_data_path,
             num_batches_per_epoch=self.config["num_training_iterations_per_epoch"],
             device=self.device,
+            single_file=True,
+            shuffle=False,
         )
 
-        # Fixed synthetic validation data loader (load all batches from disk)
+        # Validation data loader (load from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_validation_dataset/dataset.pt",
+            "data/synthetic_validation_dataset/val/dataset.pt",
         )
+        logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
             data_path=val_data_path,
-            batch_size=1,
             device=self.device,
             single_file=True,
         )
@@ -276,13 +268,6 @@ class TrainingPipeline:
         )
 
         return loss, inv_scaled_output
-
-    def _prepare_batch(
-        self, batch: BatchTimeSeriesContainer
-    ) -> Tuple[BatchTimeSeriesContainer, torch.Tensor]:
-        """Prepare batch data for model input."""
-        batch.to_device(self.device)
-        return batch, batch.future_values
 
     def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
         """Plot selected series from every validation batch and log to WandB."""
@@ -518,15 +503,19 @@ class TrainingPipeline:
 
         with torch.no_grad():
             for batch in self.val_loader:
-                data, target = self._prepare_batch(batch)
-                output = self.model(data)
+                batch.to_device(self.device)
+                output = self.model(batch)
 
                 # Compute normalized loss and get inverse scaled output
-                loss, inv_scaled_output = self._compute_normalized_loss(output, target)
+                loss, inv_scaled_output = self._compute_normalized_loss(
+                    output, batch.future_values
+                )
                 total_val_loss += loss.item()
 
                 # Update metrics with inverse scaled predictions
-                self._update_metrics(self.val_metrics, inv_scaled_output, target)
+                self._update_metrics(
+                    self.val_metrics, inv_scaled_output, batch.future_values
+                )
                 num_batches += 1
 
         avg_val_loss = total_val_loss / max(1, num_batches)
@@ -571,31 +560,35 @@ class TrainingPipeline:
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
-            print(f"\n--- Batch {batch_idx} Timing Analysis ---")
+            logger.debug(f"--- Batch {batch_idx} Timing Analysis ---")
 
             # --- Measure Data Loading and Preparation ---
             data_loading_end_time = time.time()
-            print(
+            logger.debug(
                 f"  - Data Loading & Prep : {data_loading_end_time - batch_start_time:.4f}s"
             )
-            data, target = self._prepare_batch(batch)
-            print(
-                f"  - Data Shape: {data.history_values.shape}, Target Shape: {target.shape}"
+            batch.to_device(self.device)
+            logger.debug(
+                f"  - History Shape: {batch.history_values.shape}, Future Shape: {batch.future_values.shape}"
             )
 
             # --- Measure Forward Pass ---
             forward_start_time = time.time()
-            output = self.model(data)
+            output = self.model(batch)
             forward_end_time = time.time()
-            print(
+            logger.debug(
                 f"  - Forward Pass        : {forward_end_time - forward_start_time:.4f}s"
             )
 
             # --- Measure Loss Computation ---
             loss_start_time = time.time()
-            loss, inv_scaled_output = self._compute_normalized_loss(output, target)
+            loss, inv_scaled_output = self._compute_normalized_loss(
+                output, batch.future_values
+            )
             loss_end_time = time.time()
-            print(f"  - Loss Computation    : {loss_end_time - loss_start_time:.4f}s")
+            logger.debug(
+                f"  - Loss Computation    : {loss_end_time - loss_start_time:.4f}s"
+            )
 
             # Scale loss for gradient accumulation
             if self.gradient_accumulation_enabled:
@@ -605,7 +598,7 @@ class TrainingPipeline:
             backward_start_time = time.time()
             loss.backward()
             backward_end_time = time.time()
-            print(
+            logger.debug(
                 f"  - Backward Pass       : {backward_end_time - backward_start_time:.4f}s"
             )
 
@@ -633,7 +626,7 @@ class TrainingPipeline:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 optimizer_step_end_time = time.time()
-                print(
+                logger.debug(
                     f"  - Optimizer Step      : {optimizer_step_end_time - optimizer_step_start_time:.4f}s"
                 )
                 # --- End Measure Optimizer Step ---
@@ -647,14 +640,18 @@ class TrainingPipeline:
                     running_loss += loss.item()
                     epoch_loss += loss.item()
             else:
-                # If optimizer doesn't step, print a placeholder
-                print(f"  - Optimizer Step      : 0.0000s (Accumulating Gradients)")
+                # If optimizer doesn't step, log a placeholder
+                logger.debug(
+                    "  - Optimizer Step      : 0.0000s (Accumulating Gradients)"
+                )
 
             # --- Measure Metrics Update ---
             metrics_update_start_time = time.time()
-            self._update_metrics(self.train_metrics, inv_scaled_output, target)
+            self._update_metrics(
+                self.train_metrics, inv_scaled_output, batch.future_values
+            )
             metrics_update_end_time = time.time()
-            print(
+            logger.debug(
                 f"  - Metrics Update      : {metrics_update_end_time - metrics_update_start_time:.4f}s"
             )
 

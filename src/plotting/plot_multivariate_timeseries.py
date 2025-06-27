@@ -86,7 +86,6 @@ def plot_multivariate_timeseries(
             label=f"Ch{ch} History" if ch < 5 else None,  # Avoid too many labels
         )
 
-        # Plot future values with continuity
         if future_values is not None and ch < future_values.shape[1]:
             # Create continuous time and values arrays to ensure visual continuity
             # Include the last history point to connect the lines
@@ -99,11 +98,13 @@ def plot_multivariate_timeseries(
                 continuous_time,
                 continuous_values,
                 color=f"C{ch % 10}",
-                linestyle="--",
+                linestyle=":",  # dotted lines for true future values
+                alpha=0.6,  # Make future values more transparent
+                linewidth=1.0,
                 label=f"Ch{ch} Future" if ch < 5 else None,
             )
 
-        # Plot predicted values with continuity
+        # Plot predicted values with continuity (bright solid lines)
         if predicted_values is not None and ch < predicted_values.shape[1]:
             # Create continuous time and values arrays to ensure visual continuity
             continuous_time = np.concatenate([[history_len - 1], future_time])
@@ -115,7 +116,9 @@ def plot_multivariate_timeseries(
                 continuous_time,
                 continuous_values,
                 color=f"C{ch % 10}",
-                linestyle=":",
+                linestyle="-",  # Solid lines for predictions
+                alpha=1.0,  # Full opacity for bright appearance
+                linewidth=1.5,  # Thicker lines for better visibility
                 label=f"Ch{ch} Prediction" if ch < 5 else None,
             )
 

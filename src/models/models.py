@@ -293,35 +293,6 @@ class BaseModel(nn.Module):
         # Stack channel predictions: [B, P, N]
         predictions = torch.stack(channel_outputs, dim=-1)
 
-        # Apply cross-channel attention if enabled (simplified approach)
-        if self.cross_channel_attention_layers > 0:
-            # Apply attention across channels at each timestep
-            batch_size, pred_len, num_channels = predictions.shape
-
-            # Reshape for attention: [B*P, N, 1] -> we need to expand to token_embed_dim
-            predictions_expanded = predictions.unsqueeze(-1).expand(
-                -1, -1, -1, self.final_output_layer.in_features
-            )
-            predictions_reshaped = predictions_expanded.view(
-                batch_size * pred_len, num_channels, -1
-            )
-
-            for i in range(self.cross_channel_attention_layers):
-                attended_channels, _ = self.cross_channel_attentions[i](
-                    query=predictions_reshaped,
-                    key=predictions_reshaped,
-                    value=predictions_reshaped,
-                )
-
-                # Add residual connection and layer norm
-                predictions_reshaped = self.channel_attention_norms[i](
-                    predictions_reshaped + attended_channels
-                )
-
-            # Project back to single dimension and reshape
-            predictions = self.final_output_layer(predictions_reshaped).squeeze(-1)
-            predictions = predictions.view(batch_size, pred_len, num_channels)
-
         return predictions
 
 
@@ -345,8 +316,6 @@ class MultiStepModel(BaseModel):
         use_dilated_conv=True,
         dilated_conv_kernel_size=3,
         dilated_conv_max_dilation=3,
-        cross_channel_attention_heads: int = 4,
-        cross_channel_attention_layers: int = 2,
         **kwargs,
     ):
         super().__init__(scaler=scaler, **base_model_config)
@@ -355,26 +324,6 @@ class MultiStepModel(BaseModel):
         self.hidden_dim = hidden_dim
         self.channel_embed_dim = self.embed_size
         self.use_dilated_conv = use_dilated_conv
-        self.cross_channel_attention_layers = cross_channel_attention_layers
-
-        # Create multiple cross-channel attention layers with layer norms
-        self.cross_channel_attentions = nn.ModuleList(
-            [
-                nn.MultiheadAttention(
-                    embed_dim=token_embed_dim,  # Use token_embed_dim instead of channel_embed_dim
-                    num_heads=cross_channel_attention_heads,
-                    batch_first=True,
-                )
-                for _ in range(cross_channel_attention_layers)
-            ]
-        )
-
-        self.channel_attention_norms = nn.ModuleList(
-            [
-                nn.LayerNorm(token_embed_dim)
-                for _ in range(cross_channel_attention_layers)
-            ]
-        )
 
         self.input_projection_layer = None
         if use_dilated_conv:
@@ -432,7 +381,6 @@ class MultiStepModel(BaseModel):
     def forecast(self, embedded, target_pos_embed, prediction_length, num_channels):
         """
         Generate forecasts for all channels simultaneously.
-        Optimized version with reduced reshaping for better gradient flow.
 
         Args:
             embedded: Embedded history values [batch_size, seq_len, num_channels * embed_size]
@@ -448,7 +396,7 @@ class MultiStepModel(BaseModel):
         # Reshape embedded to separate channels: [B, S, N, E]
         embedded = embedded.view(batch_size, seq_len, num_channels, self.embed_size)
 
-        # Process each channel independently to reduce complex reshaping
+        # Process each channel independently
         channel_outputs = []
 
         for channel_idx in range(num_channels):
@@ -502,34 +450,5 @@ class MultiStepModel(BaseModel):
 
         # Stack channel predictions: [B, P, N]
         predictions = torch.stack(channel_outputs, dim=-1)
-
-        # Apply cross-channel attention if enabled (simplified approach)
-        if self.cross_channel_attention_layers > 0:
-            # Apply attention across channels at each timestep
-            batch_size, pred_len, num_channels = predictions.shape
-
-            # Reshape for attention: [B*P, N, 1] -> we need to expand to token_embed_dim
-            predictions_expanded = predictions.unsqueeze(-1).expand(
-                -1, -1, -1, self.final_output_layer.in_features
-            )
-            predictions_reshaped = predictions_expanded.view(
-                batch_size * pred_len, num_channels, -1
-            )
-
-            for i in range(self.cross_channel_attention_layers):
-                attended_channels, _ = self.cross_channel_attentions[i](
-                    query=predictions_reshaped,
-                    key=predictions_reshaped,
-                    value=predictions_reshaped,
-                )
-
-                # Add residual connection and layer norm
-                predictions_reshaped = self.channel_attention_norms[i](
-                    predictions_reshaped + attended_channels
-                )
-
-            # Project back to single dimension and reshape
-            predictions = self.final_output_layer(predictions_reshaped).squeeze(-1)
-            predictions = predictions.view(batch_size, pred_len, num_channels)
 
         return predictions
