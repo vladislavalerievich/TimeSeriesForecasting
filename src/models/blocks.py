@@ -211,12 +211,3 @@ class GatedDeltaNetEncoder(BaseEncoder):
             use_forget_gate=True,
         )
         self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
-
-
-class EncoderFactory:
-    @staticmethod
-    def create_encoder(encoder_type, layer_idx, **encoder_config):
-        if encoder_type == "GatedDeltaNet":
-            return GatedDeltaNetEncoder(layer_idx, **encoder_config)
-        else:
-            raise ValueError(f"Unknown encoder type: {encoder_type}")

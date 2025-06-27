@@ -7,7 +7,7 @@ from src.data_handling.time_features import compute_batch_time_features
 from src.models.blocks import (
     ConcatLayer,
     DilatedConv1dBlock,
-    EncoderFactory,
+    GatedDeltaNetEncoder,
     SinPositionalEncoding,
 )
 from src.utils.utils import device
@@ -404,7 +404,7 @@ class MultiStepModel(BaseModel):
 
         self.encoder_layers = nn.ModuleList(
             [
-                EncoderFactory.create_encoder(layer_idx=layer_idx, **encoder_config)
+                GatedDeltaNetEncoder(layer_idx=layer_idx, **encoder_config)
                 for layer_idx in range(num_encoder_layers)
             ]
         )

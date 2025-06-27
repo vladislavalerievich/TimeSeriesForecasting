@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: SineWave_DeltaNet_
+model_name: Univariate_GatedDeltaNet_
 continue_training: false
 seed: 2025
 debugging: false
@@ -20,7 +20,7 @@ accumulation_steps: 2  # Number of batches to accumulate before updating (effect
 
 max_history_length: 1024
 max_prediction_length: 900
-batch_size: 256
+batch_size: 128
 num_epochs: 100
 num_training_iterations_per_epoch: 10
 log_interval: 1
@@ -49,7 +49,6 @@ MultiStepModel:
   
 
 EncoderConfig:
-  encoder_type: DeltaNet
   token_embed_dim: 256 # TODO: remove duplicate
   num_layers: 2
   num_heads: 4  

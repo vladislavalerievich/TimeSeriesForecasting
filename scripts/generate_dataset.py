@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 import os
 
@@ -35,7 +34,7 @@ def parse_args():
     parser.add_argument(
         "--val_batches",
         type=int,
-        default=20,
+        default=32,
         help="Number of batches for the validation dataset",
     )
 
@@ -76,13 +75,13 @@ def parse_args():
     group.add_argument(
         "--full_dataset",
         action="store_true",
-        default=False,
+        default=True,
         help="Generate both training and validation datasets",
     )
     group.add_argument(
         "--validation_dataset",
         action="store_true",
-        default=True,
+        default=False,
         help="Generate only a validation dataset",
     )
 
@@ -93,12 +92,35 @@ def main():
     """Main function to generate synthetic datasets."""
     args = parse_args()
 
-    range_proportions = (
-        json.loads(args.range_proportions) if args.range_proportions else None
-    )
-    generator_proportions = (
-        json.loads(args.generator_proportions) if args.generator_proportions else None
-    )
+    range_proportions = {
+        "short": 0.34,
+        "medium": 0.33,
+        "long": 0.33,
+    }
+
+    generator_proportions = {
+        "short": {
+            "forecast_pfn": 0.00,
+            "gp": 0.5,
+            "kernel": 0.00,
+            "lmc": 0.00,
+            "sine_wave": 0.50,
+        },
+        "medium": {
+            "forecast_pfn": 0.00,
+            "gp": 0.5,
+            "kernel": 0.00,
+            "lmc": 0.00,
+            "sine_wave": 0.50,
+        },
+        "long": {
+            "forecast_pfn": 0.00,
+            "gp": 1,
+            "kernel": 0.00,
+            "lmc": 0.00,
+            "sine_wave": 0.00,
+        },
+    }
 
     # Create dataset composer
     composer = DefaultSyntheticComposer(

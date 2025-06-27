@@ -16,10 +16,10 @@ class GeneratorParams:
         default_factory=lambda: (32, 1024)
     )
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (6, 1024)
+        default_factory=lambda: (6, 900)
     )
     num_channels: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (1, 7)
+        default_factory=lambda: 1  # TODO: revert to (1, 21)
     )
     frequency: Frequency = Frequency.D
 
@@ -150,7 +150,7 @@ class GPGeneratorParams(GeneratorParams):
     """
 
     max_kernels: int = 6
-    likelihood_noise_level: float = 0.1  # Reduced for numerical stability
+    likelihood_noise_level: float = 0.1
     noise_level: str = "low"  # Options: ["random", "high", "moderate", "low"]
     use_original_gp: bool = False
     gaussians_periodic: bool = True
@@ -158,7 +158,7 @@ class GPGeneratorParams(GeneratorParams):
     subfreq_ratio: float = 0.2
     periods_per_freq: float = 0.5
     gaussian_sampling_ratio: float = 0.2
-    max_period_ratio: float = 0.5  # Reduced from 1.0 for stability
+    max_period_ratio: float = 0.5
     kernel_periods: Tuple[int, ...] = (4, 5, 7, 21, 24, 30, 60, 120)
     kernel_bank: Dict[str, float] = field(
         default_factory=lambda: {
