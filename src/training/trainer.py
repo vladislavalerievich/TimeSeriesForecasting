@@ -560,15 +560,15 @@ class TrainingPipeline:
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
-            logger.debug(f"--- Batch {batch_idx} Timing Analysis ---")
+            logger.info(f"--- Batch {batch_idx} Timing Analysis ---")
 
             # --- Measure Data Loading and Preparation ---
             data_loading_end_time = time.time()
-            logger.debug(
+            logger.info(
                 f"  - Data Loading & Prep : {data_loading_end_time - batch_start_time:.4f}s"
             )
             batch.to_device(self.device)
-            logger.debug(
+            logger.info(
                 f"  - History Shape: {batch.history_values.shape}, Future Shape: {batch.future_values.shape}"
             )
 
@@ -576,7 +576,7 @@ class TrainingPipeline:
             forward_start_time = time.time()
             output = self.model(batch)
             forward_end_time = time.time()
-            logger.debug(
+            logger.info(
                 f"  - Forward Pass        : {forward_end_time - forward_start_time:.4f}s"
             )
 
@@ -586,7 +586,7 @@ class TrainingPipeline:
                 output, batch.future_values
             )
             loss_end_time = time.time()
-            logger.debug(
+            logger.info(
                 f"  - Loss Computation    : {loss_end_time - loss_start_time:.4f}s"
             )
 
@@ -598,7 +598,7 @@ class TrainingPipeline:
             backward_start_time = time.time()
             loss.backward()
             backward_end_time = time.time()
-            logger.debug(
+            logger.info(
                 f"  - Backward Pass       : {backward_end_time - backward_start_time:.4f}s"
             )
 
@@ -626,7 +626,7 @@ class TrainingPipeline:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 optimizer_step_end_time = time.time()
-                logger.debug(
+                logger.info(
                     f"  - Optimizer Step      : {optimizer_step_end_time - optimizer_step_start_time:.4f}s"
                 )
                 # --- End Measure Optimizer Step ---
@@ -641,7 +641,7 @@ class TrainingPipeline:
                     epoch_loss += loss.item()
             else:
                 # If optimizer doesn't step, log a placeholder
-                logger.debug(
+                logger.info(
                     "  - Optimizer Step      : 0.0000s (Accumulating Gradients)"
                 )
 
@@ -651,7 +651,7 @@ class TrainingPipeline:
                 self.train_metrics, inv_scaled_output, batch.future_values
             )
             metrics_update_end_time = time.time()
-            logger.debug(
+            logger.info(
                 f"  - Metrics Update      : {metrics_update_end_time - metrics_update_start_time:.4f}s"
             )
 
@@ -704,13 +704,9 @@ class TrainingPipeline:
         logger.info("=" * 80)
         logger.info(f"Model: {self.config['model_name']}")
         logger.info(f"Epochs: {self.config['num_epochs']}")
-        logger.info(f"Batch Size: {self.config['batch_size']}")
         if self.gradient_accumulation_enabled:
             logger.info(
                 f"Gradient Accumulation: Enabled ({self.accumulation_steps} steps)"
-            )
-            logger.info(
-                f"Effective Batch Size: {self.config['batch_size'] * self.accumulation_steps}"
             )
         else:
             logger.info("Gradient Accumulation: Disabled")
