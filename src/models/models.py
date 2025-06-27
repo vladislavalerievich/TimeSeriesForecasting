@@ -450,7 +450,10 @@ class MultiStepModel(BaseModel):
 
         # Process each channel independently to reduce complex reshaping
         channel_outputs = []
-        assert num_channels == 1, print(f'num_channels is {num_channels}, expected 1 for MultiStepModel')
+        try:
+            assert num_channels == 1, print(f'num_channels is {num_channels}, expected 1 for MultiStepModel')
+        except AssertionError as e:
+            import ipdb; ipdb.set_trace()
         for channel_idx in range(num_channels):
             # Extract single channel: [B, S, E]
             channel_embedded = embedded[:, :, channel_idx, :]

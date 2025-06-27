@@ -208,8 +208,7 @@ class TrainingPipeline:
                     name=self.config["model_name"] + datetime.datetime.now().strftime(
                         "%Y-%m-%d_%H-%M-%S"
                     ),
-                    resume="allow",
-                    id=self.config["model_name"],
+                    resume="allow"
                 )
             except Exception as e:
                 logger.error(f"WandB initialization failed: {e}")
