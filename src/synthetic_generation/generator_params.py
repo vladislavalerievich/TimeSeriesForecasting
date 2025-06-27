@@ -62,22 +62,24 @@ class GeneratorParams:
 class ShortRangeGeneratorParams(GeneratorParams):
     """Parameters for short-range forecasting (aligned with GIFT eval patterns)."""
 
-    history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (25, 1024)
-    )
-    future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [
-            6,
-            8,
-            12,
-            13,
-            14,
-            18,
-            30,
-            48,
-            60,
-        ]
-    )
+    # history_length: Union[int, Tuple[int, int], List[int]] = field(
+    #    default_factory=lambda: (25, 1024)
+    #)
+    # future_length: Union[int, Tuple[int, int], List[int]] = field(
+    #     default_factory=lambda: [
+    #        6,
+    #        8,
+    #        12,
+    #        13,
+    #        14,
+    #        18,
+    #        30,
+    #        48,
+    #        60,
+    #    ]
+    # )
+    history_length = 100
+    future_length = 13
     num_channels: int = 1
     print("Using ShortRangeGeneratorParams with num_channels set to 1 for single-channel short-range forecasting.")
 
