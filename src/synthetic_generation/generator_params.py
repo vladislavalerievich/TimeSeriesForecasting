@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Union
 
+import numpy as np
+
 from src.synthetic_generation.common.constants import Frequency
 
 
@@ -194,3 +196,19 @@ class ForecastPFNGeneratorParams(GeneratorParams):
         0.05  # Probability of replacing series with spike-only signal
     )
     spike_batch_ratio: float = 0.05  # Fraction of batch to replace with spike-only signals if spike_signal_ratio is triggered
+
+
+@dataclass
+class SineWaveGeneratorParams(GeneratorParams):
+    """Parameters for the SineWaveGenerator."""
+
+    period_range: Union[
+        Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]
+    ] = (10.0, 100.0)
+    amplitude_range: Union[
+        Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]
+    ] = (0.5, 3.0)
+    phase_range: Union[
+        Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]
+    ] = (0.0, 2.0 * np.pi)
+    noise_level: Union[float, Tuple[float, float]] = 0.0

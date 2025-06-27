@@ -12,6 +12,7 @@ from src.synthetic_generation.generator_params import (
     GPGeneratorParams,
     KernelGeneratorParams,
     LMCGeneratorParams,
+    SineWaveGeneratorParams,
 )
 from src.synthetic_generation.gp_prior.gp_generator_wrapper import (
     GPGeneratorWrapper,
@@ -21,6 +22,9 @@ from src.synthetic_generation.kernel_synth.kernel_generator_wrapper import (
 )
 from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
     LMCGeneratorWrapper,
+)
+from src.synthetic_generation.sine_waves.sine_wave_generator_wrapper import (
+    SineWaveGeneratorWrapper,
 )
 
 # Configure logging
@@ -97,8 +101,8 @@ def visualize_batch_sample(
 if __name__ == "__main__":
     # Configuration
     batch_size = 2
-    history_length = 1024
-    future_length = 512
+    history_length = 256
+    future_length = 64
     output_dir = "outputs/plots"
     global_seed = 2025
 
@@ -166,6 +170,22 @@ if __name__ == "__main__":
         forecast_pfn_multivariate_params
     )
 
+    sine_wave_params = SineWaveGeneratorParams(
+        global_seed=global_seed,
+        history_length=history_length,
+        future_length=future_length,
+        num_channels=1,
+    )
+    sine_wave_univariate_gen = SineWaveGeneratorWrapper(sine_wave_params)
+
+    sine_wave_params_multivariate = SineWaveGeneratorParams(
+        global_seed=global_seed,
+        history_length=history_length,
+        future_length=future_length,
+        num_channels=5,
+    )
+    sine_wave_gen_multivariate = SineWaveGeneratorWrapper(sine_wave_params_multivariate)
+
     # Visualize samples from all generators
     visualize_batch_sample(lmc_gen, batch_size=batch_size, output_dir=output_dir)
     visualize_batch_sample(
@@ -185,4 +205,10 @@ if __name__ == "__main__":
     )
     visualize_batch_sample(
         forecast_pfn_multivariate_gen, batch_size=batch_size, output_dir=output_dir
+    )
+    visualize_batch_sample(
+        sine_wave_univariate_gen, batch_size=batch_size, output_dir=output_dir
+    )
+    visualize_batch_sample(
+        sine_wave_gen_multivariate, batch_size=batch_size, output_dir=output_dir
     )

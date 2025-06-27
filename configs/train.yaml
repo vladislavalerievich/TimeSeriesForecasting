@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: Multivariate_DeltaNet_KI-Kluster
+model_name: SineWave_DeltaNet_
 continue_training: false
 seed: 2025
 debugging: false
@@ -13,14 +13,14 @@ learning_rate: 0.0000001 # 1e-7
 loss: mse # mae
 scaler: custom_robust  
 adaptive_loss_normalization: false 
-gradient_clip_val: 0.5
+gradient_clip_val: 5.0
 
-gradient_accumulation_enabled: true
+gradient_accumulation_enabled: false
 accumulation_steps: 2  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
 batch_size: 2
-num_epochs: 50
-num_training_iterations_per_epoch: 2
+num_epochs: 100
+num_training_iterations_per_epoch: 1
 log_interval: 1
 
 BaseModelConfig:
@@ -33,7 +33,7 @@ BaseModelConfig:
     use_enhanced_features: true
     use_holiday_features: false
     use_index_features: true
-    k_max: 1
+    k_max: 6
     include_seasonality_info: true 
 
 MultiStepModel:  
@@ -71,19 +71,22 @@ range_proportions:
 
 generator_proportions:
   short:    
-    forecast_pfn: 0.05
-    gp: 0.25
-    kernel: 0.25
-    lmc: 0.45
+    forecast_pfn: 0.00
+    gp: 0.00
+    kernel: 0.00
+    lmc: 0.00
+    sine_wave: 1.0
   medium:
-    forecast_pfn: 0.05
-    gp: 0.3
-    kernel: 0.25
-    lmc: 0.45
+    forecast_pfn: 0.00
+    gp: 0.00
+    kernel: 0.00
+    lmc: 0.00
+    sine_wave: 1.0
   long:   
-    forecast_pfn: 0.05
-    gp: 0.3
-    kernel: 0.25
-    lmc: 0.45
+    forecast_pfn: 0.00
+    gp: 0.0
+    kernel: 0.00
+    lmc: 0.00
+    sine_wave: 1.0
 
 max_context_length: 1024

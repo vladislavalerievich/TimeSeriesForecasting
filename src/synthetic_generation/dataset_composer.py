@@ -20,6 +20,7 @@ from src.synthetic_generation.generator_params import (
     LongRangeGeneratorParams,
     MediumRangeGeneratorParams,
     ShortRangeGeneratorParams,
+    SineWaveGeneratorParams,
 )
 from src.synthetic_generation.gp_prior.gp_generator_wrapper import (
     GPGeneratorWrapper,
@@ -29,6 +30,9 @@ from src.synthetic_generation.kernel_synth.kernel_generator_wrapper import (
 )
 from src.synthetic_generation.lmc_synth.lmc_generator_wrapper import (
     LMCGeneratorWrapper,
+)
+from src.synthetic_generation.sine_waves.sine_wave_generator_wrapper import (
+    SineWaveGeneratorWrapper,
 )
 
 # Configure logging
@@ -478,14 +482,27 @@ class DefaultSyntheticComposer:
     def _setup_proportions(self, range_proportions, generator_proportions):
         default_range_proportions = {"short": 0.34, "medium": 0.33, "long": 0.33}
         default_generator_proportions = {
-            "short": {"forecast_pfn": 0.05, "gp": 0.25, "kernel": 0.25, "lmc": 0.45},
-            "medium": {
-                "forecast_pfn": 0.05,
-                "gp": 0.3,
-                "kernel": 0.25,
-                "lmc": 0.45,
+            "short": {
+                "forecast_pfn": 0.04,
+                "gp": 0.24,
+                "kernel": 0.24,
+                "lmc": 0.43,
+                "sine_wave": 0.05,
             },
-            "long": {"forecast_pfn": 0.05, "gp": 0.3, "kernel": 0.25, "lmc": 0.45},
+            "medium": {
+                "forecast_pfn": 0.04,
+                "gp": 0.29,
+                "kernel": 0.24,
+                "lmc": 0.43,
+                "sine_wave": 0.0,  # Sine waves may not be suitable for very long sequences
+            },
+            "long": {
+                "forecast_pfn": 0.04,
+                "gp": 0.29,
+                "kernel": 0.24,
+                "lmc": 0.43,
+                "sine_wave": 0.0,
+            },
         }
         self.range_proportions = range_proportions or default_range_proportions
         self.generator_proportions = (
@@ -523,6 +540,7 @@ class DefaultSyntheticComposer:
                 ForecastPFNGeneratorWrapper,
                 ForecastPFNGeneratorParams,
             ),
+            "sine_wave": (SineWaveGeneratorWrapper, SineWaveGeneratorParams),
         }
 
         wrappers = {}
