@@ -147,7 +147,7 @@ class TrainingPipeline:
         self.gift_evaluator = GiftEvaluator(
             model=self.model,
             device=self.device,
-            max_context_length=self.config["max_context_length"],
+            max_context_length=self.config["max_history_length"],
         )
 
         # Setup loss function, metrics, wandb

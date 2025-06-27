@@ -18,6 +18,8 @@ gradient_clip_val: 5.0
 gradient_accumulation_enabled: false
 accumulation_steps: 2  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
+max_history_length: 1024
+max_prediction_length: 900
 batch_size: 2
 num_epochs: 100
 num_training_iterations_per_epoch: 1
@@ -72,21 +74,20 @@ range_proportions:
 generator_proportions:
   short:    
     forecast_pfn: 0.00
-    gp: 0.00
+    gp: 0.50
     kernel: 0.00
-    lmc: 0.00
-    sine_wave: 1.0
+    lmc: 0.
+    sine_wave: 0.5
   medium:
     forecast_pfn: 0.00
-    gp: 0.00
+    gp: 0.50
     kernel: 0.00
-    lmc: 0.00
-    sine_wave: 1.0
+    lmc: 0.
+    sine_wave: 0.5
   long:   
     forecast_pfn: 0.00
-    gp: 0.0
+    gp: 0.50
     kernel: 0.00
-    lmc: 0.00
-    sine_wave: 1.0
-
-max_context_length: 1024
+    lmc: 0.
+    sine_wave: 0.5
+    
