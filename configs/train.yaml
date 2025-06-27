@@ -25,40 +25,43 @@ num_epochs: 100
 num_training_iterations_per_epoch: 10
 log_interval: 1
 
-BaseModelConfig:
-  sin_pos_enc: false
-  sin_pos_const: 100
-  encoding_dropout: 0.0
-  handle_constants_model: false
-
+# TimeSeriesModel Configuration
+TimeSeriesModel:
+  # Core architecture
+  embed_size: 128
+  token_embed_dim: 256
+  num_encoder_layers: 2
+  
+  # Scaling and preprocessing
+  epsilon: 0.001
+  scaler_clamp_value: null
+  handle_constants: false
+  
+  # Time features
+  K_max: 6
   time_feature_config:
     use_enhanced_features: true
     use_holiday_features: false
     use_index_features: true
     k_max: 6
-    include_seasonality_info: true 
-
-MultiStepModel:  
-  residual: false
-  num_encoder_layers: 2
-  token_embed_dim: 256  
+    include_seasonality_info: true
+  sin_pos_enc: false
+  sin_pos_const: 100
+  encoding_dropout: 0.0
   
+  # Model architecture
+  use_gelu: true
   use_input_projection_norm: false
   use_global_residual: false
   linear_sequence_length: 15
-  
-
-EncoderConfig:
-  token_embed_dim: 256 # TODO: remove duplicate
-  num_layers: 2
-  num_heads: 4  
-  norm: true
-  norm_type: layernorm
-  residual: true
-  enc_conv: true
-  dilated_conv_kernel_size: 5  
+  use_dilated_conv: true
+  dilated_conv_kernel_size: 5
   dilated_conv_max_dilation: 3
-  block_expansion: 2.0
+  
+  # Encoder configuration
+  encoder_config:
+    token_embed_dim: 256
+    num_heads: 4
 
 
 range_proportions:

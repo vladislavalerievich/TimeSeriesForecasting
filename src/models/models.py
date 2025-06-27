@@ -422,7 +422,6 @@ class MultiStepModel(BaseModel):
         self.target_projection = nn.Linear(self.embed_size, token_embed_dim)
         # Output layer now predicts all channels jointly
         self.final_output_layer = nn.Linear(token_embed_dim, 1)
-        self.final_activation = nn.Identity()
 
     def forecast(
         self,

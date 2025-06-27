@@ -21,7 +21,7 @@ from src.data_handling.data_loaders import (
     SyntheticValidationDataLoader,
 )
 from src.gift_eval.evaluator import GiftEvaluator
-from src.models.models import MultiStepModel
+from src.models.unified_model import TimeSeriesModel
 from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.utils.utils import (
     device,
@@ -91,14 +91,11 @@ class TrainingPipeline:
         seed_everything(self.config["seed"])
 
         # Initialize model
-        self.model = MultiStepModel(
-            base_model_config=self.config["BaseModelConfig"],
-            encoder_config=self.config["EncoderConfig"],
+        self.model = TimeSeriesModel(
             scaler=self.config["scaler"],
-            time_feature_config=self.config.get("time_feature_config", {}),
             max_history_length=self.config["max_history_length"],
             max_prediction_length=self.config["max_prediction_length"],
-            **self.config["MultiStepModel"],
+            **self.config["TimeSeriesModel"],
         ).to(self.device)
 
         # Setup optimizer and scheduler
