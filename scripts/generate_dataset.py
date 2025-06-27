@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=256,
+        default=2048,
         help="Number of time series per batch",
     )
 
