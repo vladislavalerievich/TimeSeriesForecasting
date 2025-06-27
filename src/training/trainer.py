@@ -96,6 +96,8 @@ class TrainingPipeline:
             encoder_config=self.config["EncoderConfig"],
             scaler=self.config["scaler"],
             time_feature_config=self.config.get("time_feature_config", {}),
+            max_history_length=self.config["max_history_length"],
+            max_prediction_length=self.config["max_prediction_length"],
             **self.config["MultiStepModel"],
         ).to(self.device)
 
@@ -317,6 +319,16 @@ class TrainingPipeline:
         """Update metric calculations for multivariate data."""
         predictions = predictions.contiguous()
         targets = targets.contiguous()
+
+        # Ensure predictions and targets have the same shape
+        # Predictions might be truncated to original length already
+        if predictions.shape != targets.shape:
+            # If shapes don't match, truncate predictions to target shape
+            if predictions.shape[1] > targets.shape[1]:
+                predictions = predictions[:, : targets.shape[1], :]
+            elif targets.shape[1] > predictions.shape[1]:
+                # This shouldn't happen, but handle it just in case
+                targets = targets[:, : predictions.shape[1], :]
 
         # Both predictions and targets should be [batch_size, pred_len, num_channels]
         # For metrics, we flatten the channel dimension to compute across all channels
