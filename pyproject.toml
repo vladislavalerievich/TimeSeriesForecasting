@@ -16,6 +16,7 @@ dependencies = [
     "numpy",
     "gpytorch",
     "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention@main",
+    "causal-conv1d>=1.4.0",
     "scikit-learn",
     "matplotlib",
     "gluonts",
