@@ -8,21 +8,21 @@ wandb: true # whether to log to wandb
 
 
 lr_scheduler: cosine
-initial_lr: 0.00001 # 1e-5
+initial_lr: 0.0001 # 1e-4
 learning_rate: 0.0000001 # 1e-7
 loss: mse # mae
 scaler: custom_robust  
 adaptive_loss_normalization: false 
-gradient_clip_val: 5.0
+gradient_clip_val: 100
 
 gradient_accumulation_enabled: false
 accumulation_steps: 2  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
 max_history_length: 1024
 max_prediction_length: 900
-batch_size: 2
+batch_size: 256
 num_epochs: 100
-num_training_iterations_per_epoch: 1
+num_training_iterations_per_epoch: 10
 log_interval: 1
 
 BaseModelConfig:
@@ -42,15 +42,11 @@ MultiStepModel:
   residual: false
   num_encoder_layers: 2
   token_embed_dim: 256  
-  use_gelu: true
+  
   use_input_projection_norm: false
   use_global_residual: false
   linear_sequence_length: 15
-  use_dilated_conv: true
-  dilated_conv_kernel_size: 5
-  dilated_conv_max_dilation: 3
-  cross_channel_attention_heads: 4
-  cross_channel_attention_layers: 2
+  
 
 EncoderConfig:
   encoder_type: DeltaNet

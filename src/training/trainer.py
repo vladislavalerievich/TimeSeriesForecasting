@@ -206,7 +206,6 @@ class TrainingPipeline:
                     config=self.config,
                     name=self.config["model_name"],
                     resume="allow",
-                    id=self.config["model_name"],
                 )
             except Exception as e:
                 logger.error(f"WandB initialization failed: {e}")
@@ -293,7 +292,9 @@ class TrainingPipeline:
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
                 batch.to_device(self.device)
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                with torch.autocast(
+                    device_type="cuda", dtype=torch.bfloat16, enabled=True
+                ):
                     output = self.model(batch)
                     inv_scaled_output = self._inverse_scale(
                         output["result"], output["scale_statistics"]
@@ -518,8 +519,7 @@ class TrainingPipeline:
         with torch.no_grad():
             for batch in self.val_loader:
                 data, target = self._prepare_batch(batch)
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data)
+                output = self.model(data)
 
                 # Compute normalized loss and get inverse scaled output
                 loss, inv_scaled_output = self._compute_normalized_loss(output, target)
@@ -554,7 +554,7 @@ class TrainingPipeline:
         return avg_val_loss
 
     def _train_epoch(self, epoch: int) -> float:
-        """Train for one epoch."""
+        """Train for one epoch with per-batch performance timing."""
         self.model.train()
         running_loss = 0.0
         epoch_loss = 0.0
@@ -564,25 +564,54 @@ class TrainingPipeline:
         # Initialize gradients for the first accumulation step
         self.optimizer.zero_grad()
 
+        # Start timer for the first batch's data loading
+        batch_start_time = time.time()
+
         for batch_idx, batch in enumerate(self.train_loader):
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
+            print(f"\n--- Batch {batch_idx} Timing Analysis ---")
+
+            # --- Measure Data Loading and Preparation ---
+            data_loading_end_time = time.time()
+            print(
+                f"  - Data Loading & Prep : {data_loading_end_time - batch_start_time:.4f}s"
+            )
             data, target = self._prepare_batch(batch)
+            print(
+                f"  - Data Shape: {data.history_values.shape}, Target Shape: {target.shape}"
+            )
 
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                output = self.model(data)
-                # Compute normalized loss for a robust training signal
-                loss, inv_scaled_output = self._compute_normalized_loss(output, target)
+            # --- Measure Forward Pass ---
+            forward_start_time = time.time()
+            output = self.model(data)
+            forward_end_time = time.time()
+            print(
+                f"  - Forward Pass        : {forward_end_time - forward_start_time:.4f}s"
+            )
 
-            # Scale loss by accumulation steps if gradient accumulation is enabled
+            # --- Measure Loss Computation ---
+            loss_start_time = time.time()
+            loss, inv_scaled_output = self._compute_normalized_loss(output, target)
+            loss_end_time = time.time()
+            print(f"  - Loss Computation    : {loss_end_time - loss_start_time:.4f}s")
+
+            # Scale loss for gradient accumulation
             if self.gradient_accumulation_enabled:
                 loss = loss / self.accumulation_steps
 
+            # --- Measure Backward Pass ---
+            backward_start_time = time.time()
             loss.backward()
+            backward_end_time = time.time()
+            print(
+                f"  - Backward Pass       : {backward_end_time - backward_start_time:.4f}s"
+            )
+
             accumulated_loss += loss.item()
 
-            # Check if we should update weights (every accumulation_steps or at the end)
+            # Check if we should update weights
             is_accumulation_step = (batch_idx + 1) % self.accumulation_steps == 0
             is_last_batch = (
                 batch_idx + 1 >= self.config["num_training_iterations_per_epoch"]
@@ -593,7 +622,8 @@ class TrainingPipeline:
                 or is_accumulation_step
                 or is_last_batch
             ):
-                # Gradient clipping for stability
+                # --- Measure Optimizer Step (includes grad clipping) ---
+                optimizer_step_start_time = time.time()
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     max_norm=self.config.get("gradient_clip_val", 1.0),
@@ -602,31 +632,38 @@ class TrainingPipeline:
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
+                optimizer_step_end_time = time.time()
+                print(
+                    f"  - Optimizer Step      : {optimizer_step_end_time - optimizer_step_start_time:.4f}s"
+                )
+                # --- End Measure Optimizer Step ---
 
-                # For logging purposes, use the accumulated loss
+                # Log accumulated loss
                 if self.gradient_accumulation_enabled:
-                    running_loss += (
-                        accumulated_loss * self.accumulation_steps
-                    )  # Scale back for logging
+                    running_loss += accumulated_loss * self.accumulation_steps
                     epoch_loss += accumulated_loss * self.accumulation_steps
                     accumulated_loss = 0.0
                 else:
                     running_loss += loss.item()
                     epoch_loss += loss.item()
+            else:
+                # If optimizer doesn't step, print a placeholder
+                print(f"  - Optimizer Step      : 0.0000s (Accumulating Gradients)")
 
-            # Only clear cache every 10 effective updates to reduce overhead
+            # --- Measure Metrics Update ---
+            metrics_update_start_time = time.time()
+            self._update_metrics(self.train_metrics, inv_scaled_output, target)
+            metrics_update_end_time = time.time()
+            print(
+                f"  - Metrics Update      : {metrics_update_end_time - metrics_update_start_time:.4f}s"
+            )
+
+            # Log progress based on effective updates
             effective_step = (
                 batch_idx // self.accumulation_steps
                 if self.gradient_accumulation_enabled
                 else batch_idx
             )
-            if (effective_step + 1) % 10 == 0:
-                torch.cuda.empty_cache()
-
-            # Update metrics with inverse transformed predictions (every batch)
-            self._update_metrics(self.train_metrics, inv_scaled_output, target)
-
-            # Log progress based on effective updates
             if self.gradient_accumulation_enabled:
                 if (
                     is_accumulation_step
@@ -645,12 +682,16 @@ class TrainingPipeline:
                     )
                     running_loss = 0.0
 
+            # --- Reset batch timer for the next iteration's data loading ---
+            batch_start_time = time.time()
+
+        # The end-of-epoch summary is removed in this version.
+
         # Calculate average epoch loss
         total_batches = min(
             batch_idx + 1, self.config["num_training_iterations_per_epoch"]
         )
         if self.gradient_accumulation_enabled:
-            # For gradient accumulation, we want the average loss per effective update
             effective_updates = (
                 total_batches + self.accumulation_steps - 1
             ) // self.accumulation_steps
@@ -689,10 +730,11 @@ class TrainingPipeline:
             start_time = time.time()
 
             # Training
-            train_loss = self._train_epoch(epoch)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                train_loss = self._train_epoch(epoch)
 
-            # Validation
-            val_loss = self._validate_epoch(epoch)
+                # Validation
+                val_loss = self._validate_epoch(epoch)
 
             # Epoch summary
             epoch_time = time.time() - start_time

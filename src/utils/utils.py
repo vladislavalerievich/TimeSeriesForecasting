@@ -1,3 +1,4 @@
+import datetime
 import os
 import random
 
@@ -24,4 +25,5 @@ def generate_descriptive_model_name(config):
         f"num_epochs_{config['num_epochs']}_"
         f"initial_lr{config['initial_lr']}_"
         f"learning_rate_{config['learning_rate']}_"
+        f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     )
