@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.stats import beta
+from torch.nn import BatchNorm1d
 
 from src.synthetic_generation.common.constants import (
     BASE_END,
@@ -69,6 +70,13 @@ class GPGenerator:
             if random_seed is not None:
                 self.rng = np.random.default_rng(random_seed)
                 torch.manual_seed(random_seed)
+
+###
+            Batch1
+            hhhtt####
+
+            Batch2
+            hhhhtttt#
 
             # Determine kernel_bank and gaussians_periodic
             if self.use_original_gp:

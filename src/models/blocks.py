@@ -185,55 +185,13 @@ class BaseEncoder(nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self.norm = norm
-        self.residual = residual
-
-        if self.norm:
-            if norm_type == "layernorm":
-                self.norm_layer_1 = nn.LayerNorm(token_embed_dim)
-                self.norm_layer_2 = nn.LayerNorm(token_embed_dim)
-            elif norm_type == "rmsnorm":
-                self.norm_layer_1 = SimpleRMSNorm(token_embed_dim)
-                self.norm_layer_2 = SimpleRMSNorm(token_embed_dim)
-
-        if enc_conv:
-            self.stage_2_layer = DilatedConv1dBlock(
-                token_embed_dim,
-                token_embed_dim,
-                dilated_conv_kernel_size,
-                dilated_conv_max_dilation,
-                single_conv=False,
-            )
-        else:
-            self.stage_2_layer = nn.Sequential(
-                nn.Linear(token_embed_dim, token_embed_dim), nn.GELU()
-            )
 
     def setup_encoder_layer(self, **kwargs):
         raise NotImplementedError("Subclasses must implement setup_encoder_layer")
 
     def forward(self, x):
-        # Apply normalization before encoder if enabled
-        if self.norm:
-            x_enc, _, _ = self.encoder_layer(self.norm_layer_1(x))
-        else:
-            x_enc, _, _ = self.encoder_layer(x)
-
-        # Apply residual connection if enabled
-        if self.residual:
-            x = x + x_enc
-        else:
-            x = x_enc
-
-        if self.norm:
-            x_out = self.stage_2_layer(self.norm_layer_2(x))
-        else:
-            x_out = self.stage_2_layer(x)
-
-        if self.residual:
-            x_out = x_out + x
-
-        return x_out
+        x, _, _ = self.encoder_layer(x)
+        return x
 
 
 class GatedDeltaNetEncoder(BaseEncoder):
@@ -256,31 +214,10 @@ class GatedDeltaNetEncoder(BaseEncoder):
         self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
 
 
-class DeltaNetEncoder(BaseEncoder):
-    def __init__(
-        self, token_embed_dim, head_dim=256, num_heads=4, block_expansion=2.0, **kwargs
-    ):
-        super().__init__(token_embed_dim=token_embed_dim, **kwargs)
-        self.encoder_layer = DeltaNet(
-            mode="chunk",
-            hidden_size=token_embed_dim,
-            expand_k=1.0,
-            expand_v=block_expansion,
-            head_dim=head_dim,
-            num_heads=num_heads,
-            use_gate=True,
-            use_short_conv=True,
-            allow_neg_eigval=True,
-            conv_size=4,
-        )
-
-
 class EncoderFactory:
     @staticmethod
     def create_encoder(encoder_type, layer_idx, **encoder_config):
         if encoder_type == "GatedDeltaNet":
             return GatedDeltaNetEncoder(layer_idx, **encoder_config)
-        elif encoder_type == "DeltaNet":
-            return DeltaNetEncoder(layer_idx, **encoder_config)
         else:
             raise ValueError(f"Unknown encoder type: {encoder_type}")
