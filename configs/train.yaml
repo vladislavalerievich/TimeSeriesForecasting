@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: Multivariate_DeltaNet_KI-Kluster2
+model_name: Multivariate_DeltaProduct_KI-Kluster3_bs_256
 continue_training: false
 seed: 2025
 debugging: false
@@ -8,7 +8,7 @@ wandb: true # whether to log to wandb
 
 
 lr_scheduler: cosine
-initial_lr: 0.001 # 1e-5
+initial_lr: 0.0001 # 1e-4
 learning_rate: 0.0000001 # 1e-7
 loss: mse # mae
 scaler: custom_robust  
@@ -20,7 +20,7 @@ accumulation_steps: 2  # Number of batches to accumulate before updating (effect
 
 batch_size: 256
 num_epochs: 50
-num_training_iterations_per_epoch: 20
+num_training_iterations_per_epoch: 10
 log_interval: 1
 
 BaseModelConfig:
@@ -40,15 +40,15 @@ MultiStepModel:
   residual: false
   num_encoder_layers: 2
   token_embed_dim: 256  
-  use_gelu: true
+  use_gelu: false
   use_input_projection_norm: false
   use_global_residual: false
   linear_sequence_length: 15
-  use_dilated_conv: true
+  use_dilated_conv: false
   dilated_conv_kernel_size: 5
   dilated_conv_max_dilation: 3
   cross_channel_attention_heads: 4
-  cross_channel_attention_layers: 2
+  cross_channel_attention_layers: 0
 
 EncoderConfig:
   encoder_type: GatedDeltaNet

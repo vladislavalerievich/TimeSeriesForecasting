@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import os
 import time
@@ -204,7 +205,9 @@ class TrainingPipeline:
                 self.run = wandb.init(
                     project="TimeSeriesForecasting",
                     config=self.config,
-                    name=self.config["model_name"],
+                    name=self.config["model_name"] + datetime.datetime.now().strftime(
+                        "%Y-%m-%d_%H-%M-%S"
+                    ),
                     resume="allow",
                     id=self.config["model_name"],
                 )
@@ -293,7 +296,7 @@ class TrainingPipeline:
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
                 batch.to_device(self.device)
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                     output = self.model(batch)
                     inv_scaled_output = self._inverse_scale(
                         output["result"], output["scale_statistics"]
@@ -518,8 +521,7 @@ class TrainingPipeline:
         with torch.no_grad():
             for batch in self.val_loader:
                 data, target = self._prepare_batch(batch)
-                with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                    output = self.model(data)
+                output = self.model(data)
 
                 # Compute normalized loss and get inverse scaled output
                 loss, inv_scaled_output = self._compute_normalized_loss(output, target)
@@ -563,17 +565,15 @@ class TrainingPipeline:
 
         # Initialize gradients for the first accumulation step
         self.optimizer.zero_grad()
-
         for batch_idx, batch in enumerate(self.train_loader):
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
             data, target = self._prepare_batch(batch)
 
-            with torch.autocast(device_type="cuda", dtype=torch.half, enabled=True):
-                output = self.model(data)
-                # Compute normalized loss for a robust training signal
-                loss, inv_scaled_output = self._compute_normalized_loss(output, target)
+            output = self.model(data)
+            # Compute normalized loss for a robust training signal
+            loss, inv_scaled_output = self._compute_normalized_loss(output, target)
 
             # Scale loss by accumulation steps if gradient accumulation is enabled
             if self.gradient_accumulation_enabled:
@@ -620,8 +620,8 @@ class TrainingPipeline:
                 if self.gradient_accumulation_enabled
                 else batch_idx
             )
-            if (effective_step + 1) % 10 == 0:
-                torch.cuda.empty_cache()
+            # if (effective_step + 1) % 10 == 0:
+            #    torch.cuda.empty_cache()
 
             # Update metrics with inverse transformed predictions (every batch)
             self._update_metrics(self.train_metrics, inv_scaled_output, target)
@@ -689,10 +689,11 @@ class TrainingPipeline:
             start_time = time.time()
 
             # Training
-            train_loss = self._train_epoch(epoch)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                train_loss = self._train_epoch(epoch)
 
-            # Validation
-            val_loss = self._validate_epoch(epoch)
+                # Validation
+                val_loss = self._validate_epoch(epoch)
 
             # Epoch summary
             epoch_time = time.time() - start_time

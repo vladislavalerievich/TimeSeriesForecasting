@@ -78,6 +78,8 @@ class ShortRangeGeneratorParams(GeneratorParams):
             60,
         ]
     )
+    num_channels: int = 1
+    print("Using ShortRangeGeneratorParams with num_channels set to 1 for single-channel short-range forecasting.")
 
 
 @dataclass
