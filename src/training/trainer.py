@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import os
 import time
@@ -128,7 +129,7 @@ class TrainingPipeline:
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
-            data_path=val_data_path,
+            data_path=train_data_path,
             device=self.device,
             single_file=True,
         )
@@ -184,7 +185,9 @@ class TrainingPipeline:
                 self.run = wandb.init(
                     project="TimeSeriesForecasting",
                     config=self.config,
-                    name=self.config["model_name"],
+                    name=self.config["model_name"] + datetime.datetime.now().strftime(
+                        "%Y%m%d_%H%M%S"
+                    ),
                     resume="allow",
                 )
             except Exception as e:

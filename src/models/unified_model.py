@@ -216,7 +216,6 @@ class TimeSeriesModel(nn.Module):
             padded_future_values, _ = pad_sequence(
                 future_values, self.max_prediction_length, pad_value=0.0
             )
-
         # Handle constants
         if self.handle_constants:
             padded_history_values = apply_channel_noise(padded_history_values)
@@ -346,12 +345,12 @@ class TimeSeriesModel(nn.Module):
         )
 
     def _generate_predictions(
-        self,
-        embedded: torch.Tensor,
-        target_pos_embed: torch.Tensor,
-        prediction_length: int,
-        num_channels: int,
-        history_padding_mask: torch.Tensor = None,
+            self,
+            embedded: torch.Tensor,
+            target_pos_embed: torch.Tensor,
+            prediction_length: int,
+            num_channels: int,
+            history_padding_mask: torch.Tensor = None,
     ):
         """
         Generate predictions for all channels using vectorized operations.
@@ -387,9 +386,6 @@ class TimeSeriesModel(nn.Module):
         # --- Process all channels in a single pass ---
         x = self.input_projection_layer(channel_embedded)
 
-        if history_padding_mask is not None:
-            x = x * history_padding_mask.unsqueeze(-1).float()
-
         glob_res = 0.0
         if self.global_residual is not None:
             glob_res = self._compute_global_residual(
@@ -398,19 +394,12 @@ class TimeSeriesModel(nn.Module):
 
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
-            if history_padding_mask is not None:
-                x = x * history_padding_mask.unsqueeze(-1).float()
 
         if self.use_gelu and self.initial_gelu is not None:
-            x = self.input_projection_norm(x)
             x = self.initial_gelu(x)
 
-        if x.shape[1] >= prediction_length:
-            x_sliced = x[:, -prediction_length:, :]
-        else:
-            x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
-            x_sliced = x_last
-
+        x_sliced = x[:, :174, :].mean(dim=1, keepdim=True)
+        target_repr = self.input_projection_norm(target_repr)
         final_representation = x_sliced + target_repr
         if self.global_residual is not None:
             final_representation += glob_res
@@ -518,5 +507,4 @@ class TimeSeriesModel(nn.Module):
             raise ValueError(
                 f"Shape mismatch: predictions {predictions.shape} vs future_scaled {future_scaled.shape}"
             )
-
         return nn.functional.huber_loss(predictions, future_scaled)

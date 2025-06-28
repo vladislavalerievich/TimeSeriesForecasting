@@ -93,9 +93,9 @@ def main():
     args = parse_args()
 
     range_proportions = {
-        "short": 0.34,
-        "medium": 0.33,
-        "long": 0.33,
+        "short": 0.0,
+        "medium": 1.0,
+        "long": 0.0,
     }
 
     generator_proportions = {
@@ -104,14 +104,14 @@ def main():
             "gp": 0.0,
             "kernel": 0.00,
             "lmc": 0.00,
-            "sine_wave": 0.10,
+            "sine_wave": 0.1,
         },
         "medium": {
             "forecast_pfn": 0.00,
             "gp": 0.0,
             "kernel": 0.00,
             "lmc": 0.00,
-            "sine_wave": 0.10,
+            "sine_wave": 1.0,
         },
         "long": {
             "forecast_pfn": 0.00,
