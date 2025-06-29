@@ -473,14 +473,19 @@ def compute_batch_time_features(
             )
 
     except (pd.errors.OutOfBoundsDatetime, OverflowError, ValueError):
-        # Fallback to safe default timestamps
-        safe_start = pd.Timestamp("1800-01-01")
+        # Fallback to a safe default that accounts for the total length
+        max_timestamp = pd.Timestamp("2200-12-31")  # A safe upper bound
+        total_periods = history_length + future_length
+        # Calculate the offset for the entire duration
+        total_offset = pd.tseries.frequencies.to_offset(freq_str) * total_periods
+        # Set a start date that guarantees the end date will be in bounds
+        safe_start = max_timestamp - total_offset
         history_range = pd.date_range(
-            start=safe_start, periods=history_length, freq=freq_str
+            start=safe_start, periods=history_length, freq=freq_str, unit='s'
         )
         future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
         future_range = pd.date_range(
-            start=future_start, periods=future_length, freq=freq_str
+            start=future_start, periods=future_length, freq=freq_str, unit='s'
         )
 
     # Convert to period indices
