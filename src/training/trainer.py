@@ -455,6 +455,7 @@ class TrainingPipeline:
             "val_mape": self.val_metrics["mape"].compute().item(),
             "val_mse": self.val_metrics["mse"].compute().item(),
             "val_smape": self.val_metrics["smape"].compute().item(),
+            "init_norm": self.model.init_hidden_state.norm().item(),
             "learning_rate": self.optimizer.param_groups[0]["lr"],
             "epoch_time_minutes": epoch_time / 60,
         }

@@ -109,6 +109,7 @@ class TimeSeriesModel(nn.Module):
         self.encoding_dropout = encoding_dropout
         self.K_max = K_max
         self.time_feature_config = time_feature_config or {}
+        self.encoder_config = encoder_config or {}
 
         # Architecture flags
         self.use_gelu = use_gelu
@@ -157,10 +158,14 @@ class TimeSeriesModel(nn.Module):
             self.input_projection_layer = nn.Linear(
                 self.embed_size, self.token_embed_dim
             )
-
         self.target_projection = nn.Linear(self.embed_size, self.token_embed_dim)
         self.final_output_layer = nn.Linear(self.token_embed_dim, 1)
         self.mlp = GatedMLP(hidden_size=self.token_embed_dim, hidden_ratio=4, hidden_act='swish', fuse_swiglu=True)
+        self.init_hidden_state = nn.Parameter(
+            torch.randn(1, self.encoder_config['num_heads'],
+                        self.token_embed_dim // self.encoder_config['num_heads'],
+                        self.token_embed_dim // self.encoder_config['num_heads']), requires_grad=True
+        )
 
     def _init_positional_encoding(self, sin_pos_enc: bool, sin_pos_const: float):
         """Initialize positional encoding components."""
@@ -396,8 +401,9 @@ class TimeSeriesModel(nn.Module):
 
         target_repr = self.input_projection_norm(target_repr)
         x = torch.concatenate([x, target_repr], dim=1)
+        hidden_state = self.init_hidden_state.repeat(batch_size, 1, 1, 1)
         for encoder_layer in self.encoder_layers:
-            x = encoder_layer(x)
+            x, hidden_state = encoder_layer(x, hidden_state)
 
         if self.use_gelu and self.initial_gelu is not None:
             x = self.initial_gelu(x)
