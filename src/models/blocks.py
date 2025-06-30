@@ -176,19 +176,34 @@ class GatedDeltaNetEncoder(nn.Module):
     GatedDeltaNet encoder using GatedDeltaProductBlock for sequence modeling.
     """
 
-    def __init__(self, layer_idx, token_embed_dim, num_heads=4, **kwargs):
+    def __init__(
+        self,
+        layer_idx: int,
+        token_embed_dim: int,
+        num_heads: int = 4,
+        attn_mode: str = "chunk",
+        expand_v: float = 1.0,
+        use_gate: bool = False,
+        use_short_conv: bool = True,
+        conv_size: int = 4,
+        allow_neg_eigval: bool = True,
+        use_forget_gate: bool = True,
+        num_householder: int = 1,
+        **kwargs,
+    ):
         super().__init__()
         config = GatedDeltaProductConfig(
-            attn_mode="chunk",
+            attn_mode=attn_mode,
             hidden_size=token_embed_dim,
-            expand_v=1.0,
-            use_gate=False,
-            use_short_conv=True,
-            conv_size=4,
+            expand_v=expand_v,
+            use_gate=use_gate,
+            use_short_conv=use_short_conv,
+            conv_size=conv_size,
             head_dim=token_embed_dim // num_heads,
             num_heads=num_heads,
-            allow_neg_eigval=True,
-            use_forget_gate=True,
+            allow_neg_eigval=allow_neg_eigval,
+            use_forget_gate=use_forget_gate,
+            num_householder=num_householder,
         )
         self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
 

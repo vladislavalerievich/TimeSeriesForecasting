@@ -148,11 +148,15 @@ class TimeSeriesModel(nn.Module):
 
         # Initialize learnable initial hidden state for the first encoder layer
         # This will be expanded to match batch size during forward pass
-        head_dim = self.token_embed_dim // self.encoder_config["num_heads"]
+        head_k_dim = self.token_embed_dim // self.encoder_config["num_heads"]
+
+        # Get expand_v from encoder_config, default to 1.0 if not present
+        expand_v = self.encoder_config.get("expand_v", 1.0)
+        head_v_dim = int(head_k_dim * expand_v)
 
         self.initial_hidden_state = nn.Parameter(
-            torch.randn(1, self.encoder_config["num_heads"], head_dim, head_dim)
-            / head_dim,
+            torch.randn(1, self.encoder_config["num_heads"], head_k_dim, head_v_dim)
+            / head_k_dim,
             requires_grad=True,
         )
 

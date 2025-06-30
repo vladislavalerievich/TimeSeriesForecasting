@@ -59,4 +59,12 @@ TimeSeriesModel:
   
   # Encoder configuration
   encoder_config:
+    attn_mode: chunk
     num_heads: 4
+    expand_v: 1.0
+    use_gate: false
+    use_short_conv: true
+    conv_size: 4
+    allow_neg_eigval: true
+    use_forget_gate: true
+    num_householder: 1
