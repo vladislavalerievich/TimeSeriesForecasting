@@ -74,11 +74,7 @@ class GPGeneratorWrapper(GeneratorWrapper):
         if params is None:
             params = self._sample_parameters()
 
-        history_length = params["history_length"]
-        future_length = params["future_length"]
         num_channels = params["num_channels"]
-
-        total_length = history_length + future_length
 
         batch_values = []
 
@@ -86,7 +82,7 @@ class GPGeneratorWrapper(GeneratorWrapper):
             batch_seed = None if seed is None else seed + i * num_channels
             values = self._generate_multivariate_time_series(
                 num_channels=num_channels,
-                length=total_length,
+                length=params["total_length"],
                 seed=batch_seed,
                 frequency=params["frequency"],
                 max_kernels=params["max_kernels"],
@@ -113,7 +109,7 @@ class GPGeneratorWrapper(GeneratorWrapper):
         return self._format_to_container(
             values=batch_values,
             start=params["start"],
-            history_length=history_length,
-            future_length=future_length,
+            history_length=params["history_length"],
+            future_length=params["future_length"],
             frequency=params["frequency"],
         )

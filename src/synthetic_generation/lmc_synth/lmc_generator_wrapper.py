@@ -114,29 +114,16 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         if params is None:
             params = self._sample_parameters()
 
-        history_length = params["history_length"]
-        future_length = params["future_length"]
-        num_channels = params["num_channels"]
-        max_kernels = params["max_kernels"]
-        dirichlet_min = params["dirichlet_min"]
-        dirichlet_max = params["dirichlet_max"]
-        scale = params["scale"]
-        weibull_shape = params["weibull_shape"]
-        weibull_scale = params["weibull_scale"]
-        frequency = params["frequency"]
-
-        total_length = history_length + future_length
-
         # Initialize LMCSynthGenerator with the specified parameters
         generator = LMCSynthGenerator(
-            length=total_length,
-            max_kernels=max_kernels,
-            num_channels=num_channels,
-            dirichlet_min=dirichlet_min,
-            dirichlet_max=dirichlet_max,
-            scale=scale,
-            weibull_shape=weibull_shape,
-            weibull_scale=weibull_scale,
+            length=params["total_length"],
+            max_kernels=params["max_kernels"],
+            num_channels=params["num_channels"],
+            dirichlet_min=params["dirichlet_min"],
+            dirichlet_max=params["dirichlet_max"],
+            scale=params["scale"],
+            weibull_shape=params["weibull_shape"],
+            weibull_scale=params["weibull_scale"],
             random_seed=seed,
         )
 
@@ -146,7 +133,7 @@ class LMCGeneratorWrapper(GeneratorWrapper):
         return self._format_to_container(
             values=batch_values,
             start=params["start"],
-            history_length=history_length,
-            future_length=future_length,
-            frequency=frequency,
+            history_length=params["history_length"],
+            future_length=params["future_length"],
+            frequency=params["frequency"],
         )

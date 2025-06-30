@@ -122,7 +122,7 @@ class MultiStepModelWrapper:
             batch = BatchTimeSeriesContainer(
                 history_values=history_values,
                 future_values=future_values,
-                start=np.array([start.to_timestamp()], dtype="datetime64[ns]"),
+                start=start.to_timestamp().to_numpy(),
                 frequency=frequency,
             )
 
@@ -296,6 +296,7 @@ class GiftEvaluator:
         return metrics, forecasts, plot_samples_with_labels
 
     def _plot_and_log_samples(self, plot_samples, forecasts, task, epoch):
+        """Generate and log sample plots for GIFT evaluation datasets."""
         ds_name, term = task["ds_name"], task["term"]
         max_context = self.predictor.max_context_length
 
@@ -332,18 +333,34 @@ class GiftEvaluator:
 
                 predicted_values = forecast.samples
 
+                # Extract start and frequency from the input data for proper timestamps
+                start_timestamp = input_data["start"]
+                frequency = task["ds_freq"]
+
                 fig = plot_multivariate_timeseries(
                     history_values=history_values.T,
                     future_values=future_values.T,
                     predicted_values=predicted_values.T,
-                    title=f"GIFT-Eval: {ds_name}/{term} - Epoch {epoch}",
+                    start=start_timestamp.to_timestamp()
+                    if hasattr(start_timestamp, "to_timestamp")
+                    else start_timestamp,
+                    frequency=frequency,
+                    title=f"GIFT-Eval: {ds_name} ({term}) - Epoch {epoch}",
                     show=False,
                 )
-                # Use clear prefix for GIFT-eval plots to distinguish from synthetic validation
-                wandb.log(
-                    {f"gift_eval/{ds_name.replace('/', '_')}_{term}": wandb.Image(fig)}
-                )
+
+                # Use standard API prefix for GIFT-eval plots with hierarchical organization
+                clean_dataset_name = ds_name.replace("/", "_").replace(" ", "_")
+                plot_key = f"gift_eval_plots/{term}/{clean_dataset_name}"
+
+                # Log only the plot to wandb
+                wandb.log({plot_key: wandb.Image(fig)})
+
                 plt.close(fig)
+                logger.debug(
+                    f"Successfully logged plot for {ds_name} ({term}) - Epoch {epoch}"
+                )
+
             except Exception as e:
                 logger.warning(f"Failed to plot sample for {ds_name}/{term}: {str(e)}")
                 # Continue without plotting rather than failing the entire evaluation

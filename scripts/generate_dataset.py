@@ -1,8 +1,9 @@
 import argparse
+import json
 import logging
 import os
 
-from src.synthetic_generation.dataset_composer import DefaultSyntheticComposer
+from src.synthetic_generation.dataset_composer import DatasetComposer
 
 # Configure logging
 logging.basicConfig(
@@ -27,21 +28,21 @@ def parse_args():
     parser.add_argument(
         "--train_batches",
         type=int,
-        default=1000,
+        default=1,
         help="Number of batches for the training dataset",
     )
 
     parser.add_argument(
         "--val_batches",
         type=int,
-        default=100,
+        default=1,
         help="Number of batches for the validation dataset",
     )
 
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=1024,  # Max batch size that fits on L40S GPU (44GB)
+        default=16,
         help="Number of time series per batch",
     )
 
@@ -53,16 +54,10 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--range_proportions",
-        type=str,
-        default=None,
-        help='JSON string for range proportions (e.g., \'{"short": 0.34, "medium": 0.33, "long": 0.33}\')',
-    )
-    parser.add_argument(
         "--generator_proportions",
         type=str,
         default=None,
-        help='JSON string for generator proportions (e.g., \'{"short": {...}, "medium": {...}, "long": {...}}\')',
+        help='JSON string for generator proportions (e.g., \'{"lmc": 0.43, "gp": 0.27, "kernel": 0.24, "forecast_pfn": 0.04, "sine_wave": 0.02}\')',
     )
     parser.add_argument(
         "--save_as_single_file",
@@ -92,42 +87,23 @@ def main():
     """Main function to generate synthetic datasets."""
     args = parse_args()
 
-    range_proportions = {
-        "short": 0.0,
-        "medium": 1.0,
-        "long": 0.0,
-    }
-
-    generator_proportions = {
-        "short": {
+    # Parse generator proportions from command line or use defaults
+    if args.generator_proportions:
+        generator_proportions = json.loads(args.generator_proportions)
+    else:
+        generator_proportions = {
             "forecast_pfn": 0.00,
-            "gp": 0.0,
+            "gp": 0.00,
             "kernel": 0.00,
             "lmc": 0.00,
-            "sine_wave": 0.1,
-        },
-        "medium": {
-            "forecast_pfn": 0.00,
-            "gp": 0.0,
-            "kernel": 0.00,
-            "lmc": 0.00,
-            "sine_wave": 1.0,
-        },
-        "long": {
-            "forecast_pfn": 0.00,
-            "gp": 0.0,
-            "kernel": 0.00,
-            "lmc": 0.00,
-            "sine_wave": 0.10,
-        },
-    }
+            "sine_wave": 1.00,
+        }
 
     # Create dataset composer
-    composer = DefaultSyntheticComposer(
-        seed=args.seed,
-        range_proportions=range_proportions,
+    composer = DatasetComposer(
         generator_proportions=generator_proportions,
-    ).composer
+        global_seed=args.seed,
+    )
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)

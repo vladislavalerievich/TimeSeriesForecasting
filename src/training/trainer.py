@@ -1,10 +1,9 @@
 import argparse
-import datetime
 import logging
 import os
 import time
 import warnings
-from typing import Dict
+from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -93,8 +92,6 @@ class TrainingPipeline:
         # Initialize model
         self.model = TimeSeriesModel(
             scaler=self.config["scaler"],
-            max_history_length=self.config["max_history_length"],
-            max_prediction_length=self.config["max_prediction_length"],
             **self.config["TimeSeriesModel"],
         ).to(self.device)
 
@@ -129,16 +126,19 @@ class TrainingPipeline:
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
-            data_path=train_data_path,
+            data_path=val_data_path,
             device=self.device,
             single_file=True,
         )
 
         # --- Setup GIFT evaluator ---
+        # Use a reasonable default max context length for GIFT evaluation
+        # This prevents memory issues with very long sequences while allowing dynamic lengths
+        max_context_length = self.config.get("gift_eval_max_context_length", 2048)
         self.gift_evaluator = GiftEvaluator(
             model=self.model,
             device=self.device,
-            max_context_length=self.config["max_history_length"],
+            max_context_length=max_context_length,
         )
 
         # Setup loss function, metrics, wandb
@@ -185,9 +185,7 @@ class TrainingPipeline:
                 self.run = wandb.init(
                     project="TimeSeriesForecasting",
                     config=self.config,
-                    name=self.config["model_name"] + datetime.datetime.now().strftime(
-                        "%Y%m%d_%H%M%S"
-                    ),
+                    name=self.config["model_name"],
                     resume="allow",
                 )
             except Exception as e:
@@ -260,10 +258,22 @@ class TrainingPipeline:
 
         return loss, inv_scaled_output
 
-    def _plot_fixed_examples(self, epoch: int, avg_val_loss: float) -> None:
-        """Plot selected series from every validation batch and log to WandB."""
-        # Selected indices to plot
-        plot_indices = [0, 63]
+    def _plot_validation_examples(
+        self,
+        epoch: int,
+        avg_val_loss: float,
+        plot_indices: List[int] = [0, 1, 2, 3, 4],
+        plot_all: bool = True,
+    ) -> None:
+        """
+        Plot validation examples and log to WandB.
+
+        Args:
+            epoch: Current epoch number
+            avg_val_loss: Average validation loss
+            plot_indices: List of specific indices to plot. If None, uses default [0, 63]
+            plot_all: If True, plots all samples in each batch (ignores plot_indices)
+        """
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
@@ -277,12 +287,16 @@ class TrainingPipeline:
                     )
                 pred_future = inv_scaled_output.cpu().numpy()
 
-                # Plot each selected index and log to wandb
-                for i in plot_indices:
-                    # Check if this index exists in the current batch
-                    if i >= batch.history_values.size(0):
-                        continue
+                # Determine which indices to plot
+                batch_size = batch.history_values.size(0)
+                if plot_all:
+                    indices_to_plot = list(range(batch_size))
+                else:
+                    # Only plot indices that exist in the current batch
+                    indices_to_plot = [i for i in plot_indices if i < batch_size]
 
+                # Plot each selected index and log to wandb
+                for i in indices_to_plot:
                     fig = plot_from_container(
                         ts_data=batch,
                         sample_idx=i,
@@ -295,7 +309,7 @@ class TrainingPipeline:
                     # Log each plot individually with unique names (synthetic validation prefix)
                     wandb.log(
                         {
-                            f"synthetic_val/batch{batch_idx + 1}_sample{i}": wandb.Image(
+                            f"synthetic_validation_plots/batch{batch_idx + 1}_sample{i}": wandb.Image(
                                 fig
                             )
                         }
@@ -342,6 +356,10 @@ class TrainingPipeline:
         for metric in metrics.values():
             metric.update(predictions, targets)
 
+    def _prepare_computed_metrics(self, metrics_dict: Dict) -> Dict[str, float]:
+        """Helper method to compute and extract metric values."""
+        return {name: metric.compute().item() for name, metric in metrics_dict.items()}
+
     def _log_metrics(
         self,
         metrics_dict: Dict,
@@ -387,12 +405,11 @@ class TrainingPipeline:
         avg_loss = running_loss / self.log_interval
 
         # Prepare metrics dictionary
+        computed_metrics = self._prepare_computed_metrics(self.train_metrics)
         train_metrics = {
             "loss": avg_loss,
             "gradient_norm": avg_grad_norm,
-            "mape": self.train_metrics["mape"].compute().item(),
-            "mse": self.train_metrics["mse"].compute().item(),
-            "smape": self.train_metrics["smape"].compute().item(),
+            **computed_metrics,
         }
 
         # Calculate global step
@@ -416,71 +433,99 @@ class TrainingPipeline:
 
     def _log_validation_metrics(self, epoch: int, val_loss: float) -> None:
         """Log validation metrics from synthetic validation data."""
+        computed_metrics = self._prepare_computed_metrics(self.val_metrics)
         val_metrics = {
             "loss": val_loss,
-            "mape": self.val_metrics["mape"].compute().item(),
-            "mse": self.val_metrics["mse"].compute().item(),
-            "smape": self.val_metrics["smape"].compute().item(),
+            **computed_metrics,
         }
 
         self._log_metrics(val_metrics, "val", epoch, extra_info="Synthetic Validation")
 
-    def _log_gift_eval_metrics(self, epoch: int, gift_metrics: Dict) -> None:
-        """Log GIFT evaluation metrics."""
-        # Flatten nested gift eval metrics for logging
-        flattened_metrics = {}
-        for dataset_name, metrics in gift_metrics.items():
-            for metric_name, value in metrics.items():
-                flattened_metrics[f"{dataset_name}_{metric_name}"] = value
+    def _log_gift_eval_to_wandb(self, epoch: int, gift_metrics: Dict) -> None:
+        """Log GIFT evaluation metrics to WandB."""
+        if not self.config["wandb"]:
+            return
 
-        if flattened_metrics:
-            self._log_metrics(
-                flattened_metrics,
-                "gift_eval",
-                epoch,
-                extra_info="Real Dataset Evaluation",
-            )
+        wandb_metrics = {"epoch": epoch}
+
+        for dataset_key, metrics in gift_metrics.items():
+            clean_dataset_name = dataset_key.replace("/", "_").replace(" ", "_")
+            for metric_name, value in metrics.items():
+                wandb_metrics[
+                    f"gift_eval_metrics/{clean_dataset_name}/{metric_name}"
+                ] = value
+
+        wandb.log(wandb_metrics)
+
+    def _log_gift_eval_to_console(self, epoch: int, gift_metrics: Dict) -> None:
+        """Log GIFT evaluation metrics to console."""
+        logger.info("=" * 80)
+        logger.info(f"GIFT-EVAL RESULTS - EPOCH {epoch + 1}")
+        logger.info("=" * 80)
+
+        for dataset_name, metrics in gift_metrics.items():
+            logger.info(f"Dataset: {dataset_name}")
+            formatted_metrics = [
+                f"{name}: {value:.4f}" for name, value in metrics.items()
+            ]
+            logger.info(f"  Metrics: {', '.join(formatted_metrics)}")
+            logger.info("")
+
+        logger.info("=" * 80)
+
+    def _log_gift_eval_metrics(self, epoch: int, gift_metrics: Dict) -> None:
+        """Log GIFT evaluation metrics to both WandB and console."""
+        if not gift_metrics:
+            return
+
+        self._log_gift_eval_to_wandb(epoch, gift_metrics)
+        self._log_gift_eval_to_console(epoch, gift_metrics)
 
     def _log_epoch_summary(
         self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
     ) -> None:
         """Log comprehensive epoch summary."""
-        # Prepare epoch summary metrics
-        epoch_metrics = {
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "train_mape": self.train_metrics["mape"].compute().item(),
-            "train_mse": self.train_metrics["mse"].compute().item(),
-            "train_smape": self.train_metrics["smape"].compute().item(),
-            "val_mape": self.val_metrics["mape"].compute().item(),
-            "val_mse": self.val_metrics["mse"].compute().item(),
-            "val_smape": self.val_metrics["smape"].compute().item(),
-            "init_norm": self.model.init_hidden_state.norm().item(),
+        # Prepare computed metrics
+        train_computed = self._prepare_computed_metrics(self.train_metrics)
+        val_computed = self._prepare_computed_metrics(self.val_metrics)
+
+        # Prepare train metrics for logging
+        train_summary_metrics = {
+            "loss": train_loss,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
             "epoch_time_minutes": epoch_time / 60,
-            "epoch": epoch,
+            **train_computed,
         }
 
-        # Log comprehensive summary
+        # Prepare validation metrics for logging
+        val_summary_metrics = {
+            "loss": val_loss,
+            **val_computed,
+        }
+
+        # Log detailed console summary (custom format for readability)
         logger.info("=" * 80)
         logger.info(f"EPOCH {epoch + 1} SUMMARY")
         logger.info("=" * 80)
         logger.info(f"Training Loss: {train_loss:.4f}")
         logger.info(f"Synthetic Validation Loss: {val_loss:.4f}")
         logger.info(
-            f"Training MAPE: {epoch_metrics['train_mape']:.4f}, MSE: {epoch_metrics['train_mse']:.4f}, SMAPE: {epoch_metrics['train_smape']:.4f}"
+            f"Training MAPE: {train_computed['mape']:.4f}, MSE: {train_computed['mse']:.4f}, SMAPE: {train_computed['smape']:.4f}"
         )
         logger.info(
-            f"Synthetic Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
+            f"Synthetic Validation MAPE: {val_computed['mape']:.4f}, MSE: {val_computed['mse']:.4f}, SMAPE: {val_computed['smape']:.4f}"
         )
-        logger.info(f"Learning Rate: {epoch_metrics['learning_rate']:.8f}")
-        logger.info(f"Epoch Time: {epoch_metrics['epoch_time_minutes']:.2f} minutes")
+        logger.info(f"Learning Rate: {train_summary_metrics['learning_rate']:.8f}")
+        logger.info(
+            f"Epoch Time: {train_summary_metrics['epoch_time_minutes']:.2f} minutes"
+        )
         logger.info("=" * 80)
 
-        # Log to wandb
-        if self.config["wandb"]:
-            # Log structured epoch metrics
-            wandb.log(epoch_metrics)
+        # Log train and validation metrics separately
+        self._log_metrics(
+            train_summary_metrics, "train", epoch, extra_info="Epoch Summary"
+        )
+        self._log_metrics(val_summary_metrics, "val", epoch, extra_info="Epoch Summary")
 
     def _validate_epoch(self, epoch: int) -> float:
         """Validate model on all fixed synthetic validation batches."""
@@ -512,10 +557,9 @@ class TrainingPipeline:
 
         # Plot examples if wandb is enabled
         if self.config["wandb"]:
-            self._plot_fixed_examples(epoch, avg_val_loss)
+            self._plot_validation_examples(epoch, avg_val_loss)
 
         # --- GIFT-eval validation ---
-
         logger.info("Running GIFT-eval validation...")
         gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
             datasets_to_eval=ALL_DATASETS,

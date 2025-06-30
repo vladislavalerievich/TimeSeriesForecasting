@@ -129,21 +129,18 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             self._set_random_seeds(seed)
         if params is None:
             params = self._sample_parameters()
-        history_length = params["history_length"]
-        future_length = params["future_length"]
+
         num_channels = params["num_channels"]
-        max_kernels = params["max_kernels"]
-        use_gpytorch = params["use_gpytorch"]
-        total_length = history_length + future_length
+
         batch_values = []
 
         for i in range(batch_size):
             batch_seed = None if seed is None else seed + i * num_channels
             values = self._generate_multivariate_time_series(
                 num_channels=num_channels,
-                length=total_length,
-                max_kernels=max_kernels,
-                use_gpytorch=use_gpytorch,
+                length=params["total_length"],
+                max_kernels=params["max_kernels"],
+                use_gpytorch=params["use_gpytorch"],
                 seed=batch_seed,
             )
             # Ensure shape for values: (seq_len, num_channels)
@@ -156,8 +153,8 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         return self._format_to_container(
             values=batch_values,
             start=params["start"],
-            history_length=history_length,
-            future_length=future_length,
+            history_length=params["history_length"],
+            future_length=params["future_length"],
             frequency=params["frequency"],
         )
 
