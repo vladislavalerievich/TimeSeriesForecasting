@@ -51,8 +51,6 @@ TimeSeriesModel:
   encoding_dropout: 0.0
   
   # Model architecture
-  use_gelu: false
-  use_input_projection_norm: true
   use_dilated_conv: false
   dilated_conv_kernel_size: 5
   dilated_conv_max_dilation: 3

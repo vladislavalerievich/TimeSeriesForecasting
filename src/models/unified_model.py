@@ -51,8 +51,6 @@ class TimeSeriesModel(nn.Module):
         sin_pos_const: float = 10000.0,
         encoding_dropout: float = 0.0,
         # Model architecture
-        use_gelu: bool = True,
-        use_input_projection_norm: bool = False,
         use_dilated_conv: bool = True,
         dilated_conv_kernel_size: int = 3,
         dilated_conv_max_dilation: int = 3,
@@ -74,7 +72,6 @@ class TimeSeriesModel(nn.Module):
         self.encoder_config = encoder_config or {}
 
         # Architecture flags
-        self.use_gelu = use_gelu
         self.sin_pos_flag = sin_pos_enc
 
         # Validate configuration before initialization
@@ -88,7 +85,6 @@ class TimeSeriesModel(nn.Module):
             use_dilated_conv, dilated_conv_kernel_size, dilated_conv_max_dilation
         )
         self._init_positional_encoding(sin_pos_enc, sin_pos_const)
-        self._init_auxiliary_layers(use_input_projection_norm)
 
     def _validate_configuration(self):
         """Validate essential model configuration parameters."""
@@ -167,15 +163,6 @@ class TimeSeriesModel(nn.Module):
             self.sin_pos_encoder = SinPositionalEncoding(
                 d_model=self.embed_size, max_len=5000, sin_pos_const=sin_pos_const
             )
-
-    def _init_auxiliary_layers(self, use_input_projection_norm: bool):
-        """Initialize auxiliary layers and components."""
-        self.initial_gelu = nn.GELU() if self.use_gelu else None
-        self.input_projection_norm = (
-            nn.LayerNorm(self.token_embed_dim)
-            if use_input_projection_norm
-            else nn.Identity()
-        )
 
     def _preprocess_data(self, data_container: BatchTimeSeriesContainer):
         """Extract data shapes and handle constants without padding."""
@@ -318,10 +305,6 @@ class TimeSeriesModel(nn.Module):
 
             if history_mask is not None:
                 x = x * history_mask.unsqueeze(-1).float()
-
-        if self.use_gelu and self.initial_gelu is not None:
-            x = self.input_projection_norm(x)
-            x = self.initial_gelu(x)
 
         # Use the last prediction_length positions
         x_sliced = x[:, -prediction_length:, :]
