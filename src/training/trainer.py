@@ -91,7 +91,6 @@ class TrainingPipeline:
 
         # Initialize model
         self.model = TimeSeriesModel(
-            scaler=self.config["scaler"],
             **self.config["TimeSeriesModel"],
         ).to(self.device)
 
@@ -309,7 +308,7 @@ class TrainingPipeline:
                     # Log each plot individually with unique names (synthetic validation prefix)
                     wandb.log(
                         {
-                            f"synthetic_validation_plots/batch{batch_idx + 1}_sample{i}": wandb.Image(
+                            f"synthetic_val_plots/batch{batch_idx + 1}_sample{i}": wandb.Image(
                                 fig
                             )
                         }
@@ -393,9 +392,9 @@ class TrainingPipeline:
         # Optionally log to wandb
         if self.config["wandb"]:
             wandb_dict = {f"{metric_type}/{k}": v for k, v in metrics_dict.items()}
-            wandb_dict["epoch"] = epoch
+
             if step is not None:
-                wandb_dict["step"] = step
+                wandb_dict["train/step"] = step
             wandb.log(wandb_dict)
 
     def _log_training_metrics(

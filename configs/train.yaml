@@ -23,7 +23,7 @@ evaluate_on_gift_eval: false
 gift_eval_max_context_length: 2048  
 
 num_epochs: 10
-num_training_iterations_per_epoch: 20
+num_training_iterations_per_epoch: 30
 log_interval: 1
 
 # TimeSeriesModel Configuration
@@ -34,16 +34,17 @@ TimeSeriesModel:
   num_encoder_layers: 2
   
   # Scaling and preprocessing
+  scaler: custom_robust
   epsilon: 0.001
   scaler_clamp_value: null
   handle_constants: false
   
   # Time features
+  K_max: 6
   time_feature_config:
     use_enhanced_features: true
     use_holiday_features: false
     use_index_features: true
-    k_max: 6
     include_seasonality_info: true
   sin_pos_enc: false
   sin_pos_const: 100
@@ -58,5 +59,4 @@ TimeSeriesModel:
   
   # Encoder configuration
   encoder_config:
-    token_embed_dim: 256
     num_heads: 4

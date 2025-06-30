@@ -77,15 +77,29 @@ class TimeSeriesModel(nn.Module):
         self.use_gelu = use_gelu
         self.sin_pos_flag = sin_pos_enc
 
+        # Validate configuration before initialization
+        self._validate_configuration()
+
         # Initialize components
         self.scaler = create_scaler(scaler, epsilon)
         self._init_embedding_layers()
-        self._init_encoder_layers(encoder_config or {}, num_encoder_layers)
+        self._init_encoder_layers(self.encoder_config, num_encoder_layers)
         self._init_projection_layers(
             use_dilated_conv, dilated_conv_kernel_size, dilated_conv_max_dilation
         )
         self._init_positional_encoding(sin_pos_enc, sin_pos_const)
         self._init_auxiliary_layers(use_input_projection_norm)
+
+    def _validate_configuration(self):
+        """Validate essential model configuration parameters."""
+        if "num_heads" not in self.encoder_config:
+            raise ValueError("encoder_config must contain 'num_heads' parameter")
+
+        if self.token_embed_dim % self.encoder_config["num_heads"] != 0:
+            raise ValueError(
+                f"token_embed_dim ({self.token_embed_dim}) must be divisible by "
+                f"num_heads ({self.encoder_config['num_heads']})"
+            )
 
     def _init_embedding_layers(self):
         """Initialize value and time feature embedding layers."""
@@ -95,6 +109,11 @@ class TimeSeriesModel(nn.Module):
     def _init_encoder_layers(self, encoder_config: dict, num_encoder_layers: int):
         """Initialize encoder layers."""
         self.num_encoder_layers = num_encoder_layers
+
+        # Ensure encoder_config has token_embed_dim
+        encoder_config = encoder_config.copy()
+        encoder_config["token_embed_dim"] = self.token_embed_dim
+
         self.encoder_layers = nn.ModuleList(
             [
                 GatedDeltaNetEncoder(layer_idx=layer_idx, **encoder_config)
@@ -130,6 +149,7 @@ class TimeSeriesModel(nn.Module):
         # Initialize learnable initial hidden state for the first encoder layer
         # This will be expanded to match batch size during forward pass
         head_dim = self.token_embed_dim // self.encoder_config["num_heads"]
+
         self.initial_hidden_state = nn.Parameter(
             torch.randn(1, self.encoder_config["num_heads"], head_dim, head_dim)
             / head_dim,
@@ -284,6 +304,7 @@ class TimeSeriesModel(nn.Module):
             x = x * history_mask.unsqueeze(-1).float()
 
         # Initialize with learnable initial state for the first layer
+        # Shape: [batch_size * num_channels, num_heads, head_dim, head_dim]
         hidden_state = self.initial_hidden_state.repeat(
             batch_size * num_channels, 1, 1, 1
         )
