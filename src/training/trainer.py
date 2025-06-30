@@ -408,6 +408,7 @@ class TrainingPipeline:
         train_metrics = {
             "loss": avg_loss,
             "gradient_norm": avg_grad_norm,
+            "init_norm": self.model.initial_hidden_state.norm().item(),
             **computed_metrics,
         }
 
