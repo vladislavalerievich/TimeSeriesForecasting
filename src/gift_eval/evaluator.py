@@ -351,7 +351,7 @@ class GiftEvaluator:
 
                 # Use standard API prefix for GIFT-eval plots with hierarchical organization
                 clean_dataset_name = ds_name.replace("/", "_").replace(" ", "_")
-                plot_key = f"gift_eval/plots/{term}/{clean_dataset_name}"
+                plot_key = f"gift_eval_plots/{term}/{clean_dataset_name}"
 
                 # Log only the plot to wandb
                 wandb.log({plot_key: wandb.Image(fig)})

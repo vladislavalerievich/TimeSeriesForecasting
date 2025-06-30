@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from fla.modules import GatedMLP
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.data_handling.scalers import MinMaxScaler, RobustScaler
@@ -73,6 +74,7 @@ class TimeSeriesModel(nn.Module):
         self.encoding_dropout = encoding_dropout
         self.K_max = K_max
         self.time_feature_config = time_feature_config or {}
+        self.encoder_config = encoder_config or {}
 
         # Architecture flags
         self.use_gelu = use_gelu
@@ -96,19 +98,13 @@ class TimeSeriesModel(nn.Module):
         self.time_feature_projection = nn.Linear(self.K_max, self.embed_size)
 
     def _init_encoder_layers(self, encoder_config: dict, num_encoder_layers: int):
-        """Initialize encoder layers and learnable initial hidden state."""
+        """Initialize encoder layers."""
         self.num_encoder_layers = num_encoder_layers
         self.encoder_layers = nn.ModuleList(
             [
                 GatedDeltaNetEncoder(layer_idx=layer_idx, **encoder_config)
                 for layer_idx in range(self.num_encoder_layers)
             ]
-        )
-
-        # Initialize learnable initial hidden state for the first encoder layer
-        # This will be expanded to match batch size during forward pass
-        self.initial_hidden_state = nn.Parameter(
-            torch.randn(1, self.token_embed_dim) * 0.02  # Small random initialization
         )
 
     def _init_projection_layers(
@@ -127,9 +123,23 @@ class TimeSeriesModel(nn.Module):
             self.input_projection_layer = nn.Linear(
                 self.embed_size, self.token_embed_dim
             )
-
         self.target_projection = nn.Linear(self.embed_size, self.token_embed_dim)
         self.final_output_layer = nn.Linear(self.token_embed_dim, 1)
+        self.mlp = GatedMLP(
+            hidden_size=self.token_embed_dim,
+            hidden_ratio=4,
+            hidden_act="swish",
+            fuse_swiglu=True,
+        )
+
+        # Initialize learnable initial hidden state for the first encoder layer
+        # This will be expanded to match batch size during forward pass
+        head_dim = self.token_embed_dim // self.encoder_config["num_heads"]
+        self.initial_hidden_state = nn.Parameter(
+            torch.randn(1, self.encoder_config["num_heads"], head_dim, head_dim)
+            / head_dim,
+            requires_grad=True,
+        )
 
     def _init_positional_encoding(self, sin_pos_enc: bool, sin_pos_const: float):
         """Initialize positional encoding components."""
@@ -349,30 +359,17 @@ class TimeSeriesModel(nn.Module):
                 channel_embedded, history_mask, prediction_length
             )
 
-        # --- Process encoder layers with hidden state transfer ---
-        # Each encoder layer uses the final hidden state of the previous layer.
-        # This allows information to flow bidirectionally through the sequence since:
-        # 1. The sequence contains both history and future (total_length = history_length + future_length)
-        # 2. Each layer processes the entire sequence, but incorporates knowledge from the previous layer's final state
-        # 3. This enables "the past to know about the future" and adds functional complexity where predictions occur
-
         # Initialize with learnable initial state for the first layer
-        # Expand to match batch size: [1, hidden_dim] -> [batch*channels, hidden_dim]
-        previous_final_state = self.initial_hidden_state.expand(
-            batch_size * num_channels, -1
-        )
+        hidden_state = self.initial_hidden_state.repeat(batch_size, 1, 1, 1)
 
         for layer_idx, encoder_layer in enumerate(self.encoder_layers):
             # Pass previous layer's final state to current layer
             # For the first layer, this is the learnable initial state
             # For subsequent layers, this is the final hidden state from the previous layer
-            x, current_final_state = encoder_layer(x, previous_final_state)
+            x, hidden_state = encoder_layer(x, hidden_state)
 
             if history_mask is not None:
                 x = x * history_mask.unsqueeze(-1).float()
-
-            # Update the final state for the next layer
-            previous_final_state = current_final_state
 
         if self.use_gelu and self.initial_gelu is not None:
             x = self.input_projection_norm(x)
@@ -385,7 +382,7 @@ class TimeSeriesModel(nn.Module):
         if self.global_residual is not None:
             final_representation += glob_res
 
-        predictions = self.final_output_layer(final_representation)
+        predictions = self.final_output_layer(self.mlp(final_representation))
 
         # Reshape the output back to [B, P, N]
         predictions = predictions.view(batch_size, num_channels, prediction_length)

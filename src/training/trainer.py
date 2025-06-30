@@ -356,6 +356,10 @@ class TrainingPipeline:
         for metric in metrics.values():
             metric.update(predictions, targets)
 
+    def _prepare_computed_metrics(self, metrics_dict: Dict) -> Dict[str, float]:
+        """Helper method to compute and extract metric values."""
+        return {name: metric.compute().item() for name, metric in metrics_dict.items()}
+
     def _log_metrics(
         self,
         metrics_dict: Dict,
@@ -401,12 +405,11 @@ class TrainingPipeline:
         avg_loss = running_loss / self.log_interval
 
         # Prepare metrics dictionary
+        computed_metrics = self._prepare_computed_metrics(self.train_metrics)
         train_metrics = {
             "loss": avg_loss,
             "gradient_norm": avg_grad_norm,
-            "mape": self.train_metrics["mape"].compute().item(),
-            "mse": self.train_metrics["mse"].compute().item(),
-            "smape": self.train_metrics["smape"].compute().item(),
+            **computed_metrics,
         }
 
         # Calculate global step
@@ -430,11 +433,10 @@ class TrainingPipeline:
 
     def _log_validation_metrics(self, epoch: int, val_loss: float) -> None:
         """Log validation metrics from synthetic validation data."""
+        computed_metrics = self._prepare_computed_metrics(self.val_metrics)
         val_metrics = {
             "loss": val_loss,
-            "mape": self.val_metrics["mape"].compute().item(),
-            "mse": self.val_metrics["mse"].compute().item(),
-            "smape": self.val_metrics["smape"].compute().item(),
+            **computed_metrics,
         }
 
         self._log_metrics(val_metrics, "val", epoch, extra_info="Synthetic Validation")
@@ -483,52 +485,42 @@ class TrainingPipeline:
         self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
     ) -> None:
         """Log comprehensive epoch summary."""
-        # Prepare epoch summary metrics
-        epoch_metrics = {
+        # Prepare computed metrics
+        train_computed = self._prepare_computed_metrics(self.train_metrics)
+        val_computed = self._prepare_computed_metrics(self.val_metrics)
+
+        # Prepare epoch summary metrics for generic logging
+        summary_metrics = {
             "train_loss": train_loss,
             "val_loss": val_loss,
-            "train_mape": self.train_metrics["mape"].compute().item(),
-            "train_mse": self.train_metrics["mse"].compute().item(),
-            "train_smape": self.train_metrics["smape"].compute().item(),
-            "val_mape": self.val_metrics["mape"].compute().item(),
-            "val_mse": self.val_metrics["mse"].compute().item(),
-            "val_smape": self.val_metrics["smape"].compute().item(),
             "learning_rate": self.optimizer.param_groups[0]["lr"],
             "epoch_time_minutes": epoch_time / 60,
         }
 
-        # Log comprehensive summary
+        # Add computed metrics with prefixes
+        for key, value in train_computed.items():
+            summary_metrics[f"train_{key}"] = value
+        for key, value in val_computed.items():
+            summary_metrics[f"val_{key}"] = value
+
+        # Log detailed console summary (custom format for readability)
         logger.info("=" * 80)
         logger.info(f"EPOCH {epoch + 1} SUMMARY")
         logger.info("=" * 80)
         logger.info(f"Training Loss: {train_loss:.4f}")
         logger.info(f"Synthetic Validation Loss: {val_loss:.4f}")
         logger.info(
-            f"Training MAPE: {epoch_metrics['train_mape']:.4f}, MSE: {epoch_metrics['train_mse']:.4f}, SMAPE: {epoch_metrics['train_smape']:.4f}"
+            f"Training MAPE: {train_computed['mape']:.4f}, MSE: {train_computed['mse']:.4f}, SMAPE: {train_computed['smape']:.4f}"
         )
         logger.info(
-            f"Synthetic Validation MAPE: {epoch_metrics['val_mape']:.4f}, MSE: {epoch_metrics['val_mse']:.4f}, SMAPE: {epoch_metrics['val_smape']:.4f}"
+            f"Synthetic Validation MAPE: {val_computed['mape']:.4f}, MSE: {val_computed['mse']:.4f}, SMAPE: {val_computed['smape']:.4f}"
         )
-        logger.info(f"Learning Rate: {epoch_metrics['learning_rate']:.8f}")
-        logger.info(f"Epoch Time: {epoch_metrics['epoch_time_minutes']:.2f} minutes")
+        logger.info(f"Learning Rate: {summary_metrics['learning_rate']:.8f}")
+        logger.info(f"Epoch Time: {summary_metrics['epoch_time_minutes']:.2f} minutes")
         logger.info("=" * 80)
 
-        # Log to wandb
-        if self.config["wandb"]:
-            wandb.log(
-                {
-                    "train/loss": train_loss,
-                    "train/mape": epoch_metrics["train_mape"],
-                    "train/mse": epoch_metrics["train_mse"],
-                    "train/smape": epoch_metrics["train_smape"],
-                    "val/loss": val_loss,
-                    "val/mape": epoch_metrics["val_mape"],
-                    "val/mse": epoch_metrics["val_mse"],
-                    "val/smape": epoch_metrics["val_smape"],
-                    "epoch_summary/learning_rate": epoch_metrics["learning_rate"],
-                    "epoch": epoch,
-                }
-            )
+        # Use generic method for WandB logging
+        self._log_metrics(summary_metrics, "epoch_summary", epoch)
 
     def _validate_epoch(self, epoch: int) -> float:
         """Validate model on all fixed synthetic validation batches."""
@@ -563,7 +555,6 @@ class TrainingPipeline:
             self._plot_validation_examples(epoch, avg_val_loss)
 
         # --- GIFT-eval validation ---
-
         logger.info("Running GIFT-eval validation...")
         gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
             datasets_to_eval=ALL_DATASETS,
