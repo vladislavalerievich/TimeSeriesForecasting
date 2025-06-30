@@ -21,8 +21,8 @@ accumulation_steps: 8  # Number of batches to accumulate before updating (effect
 
 gift_eval_max_context_length: 2048  
 
-num_epochs: 1
-num_training_iterations_per_epoch: 1000
+num_epochs: 10
+num_training_iterations_per_epoch: 20
 log_interval: 1
 
 # TimeSeriesModel Configuration
@@ -51,8 +51,6 @@ TimeSeriesModel:
   # Model architecture
   use_gelu: false
   use_input_projection_norm: true
-  use_global_residual: false
-  linear_sequence_length: 15
   use_dilated_conv: false
   dilated_conv_kernel_size: 5
   dilated_conv_max_dilation: 3

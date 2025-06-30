@@ -54,8 +54,6 @@ class TimeSeriesModel(nn.Module):
         # Model architecture
         use_gelu: bool = True,
         use_input_projection_norm: bool = False,
-        use_global_residual: bool = False,
-        linear_sequence_length: int = 2,
         use_dilated_conv: bool = True,
         dilated_conv_kernel_size: int = 3,
         dilated_conv_max_dilation: int = 3,
@@ -78,8 +76,6 @@ class TimeSeriesModel(nn.Module):
 
         # Architecture flags
         self.use_gelu = use_gelu
-        self.use_global_residual = use_global_residual
-        self.linear_sequence_length = linear_sequence_length
         self.sin_pos_flag = sin_pos_enc
 
         # Initialize components
@@ -90,7 +86,7 @@ class TimeSeriesModel(nn.Module):
             use_dilated_conv, dilated_conv_kernel_size, dilated_conv_max_dilation
         )
         self._init_positional_encoding(sin_pos_enc, sin_pos_const)
-        self._init_auxiliary_layers(use_input_projection_norm, use_global_residual)
+        self._init_auxiliary_layers(use_input_projection_norm)
 
     def _init_embedding_layers(self):
         """Initialize value and time feature embedding layers."""
@@ -149,9 +145,7 @@ class TimeSeriesModel(nn.Module):
                 d_model=self.embed_size, max_len=5000, sin_pos_const=sin_pos_const
             )
 
-    def _init_auxiliary_layers(
-        self, use_input_projection_norm: bool, use_global_residual: bool
-    ):
+    def _init_auxiliary_layers(self, use_input_projection_norm: bool):
         """Initialize auxiliary layers and components."""
         self.initial_gelu = nn.GELU() if self.use_gelu else None
         self.input_projection_norm = (
@@ -159,13 +153,6 @@ class TimeSeriesModel(nn.Module):
             if use_input_projection_norm
             else nn.Identity()
         )
-
-        self.global_residual = None
-        if use_global_residual:
-            self.global_residual = nn.Linear(
-                self.embed_size * (self.linear_sequence_length + 1),
-                self.token_embed_dim,
-            )
 
     def _preprocess_data(self, data_container: BatchTimeSeriesContainer):
         """Extract data shapes and handle constants without padding."""
@@ -252,62 +239,6 @@ class TimeSeriesModel(nn.Module):
 
         return all_channels_embedded
 
-    def _compute_global_residual(
-        self,
-        channel_embedded: torch.Tensor,
-        history_mask: torch.Tensor,
-        prediction_length: int,
-    ):
-        """Compute global residual connection."""
-        batch_size, seq_len = channel_embedded.shape[:2]
-
-        if history_mask is not None:
-            # Use mask to find valid sequence lengths
-            valid_lengths = history_mask.sum(dim=1).long()
-            glob_res_list = []
-
-            for b in range(batch_size):
-                valid_len = valid_lengths[b].item()
-                start_idx = max(0, valid_len - self.linear_sequence_length - 1)
-                end_idx = valid_len
-
-                if end_idx > start_idx:
-                    glob_res_input = channel_embedded[b, start_idx:end_idx, :].reshape(
-                        -1
-                    )
-                    if glob_res_input.shape[0] < self.embed_size * (
-                        self.linear_sequence_length + 1
-                    ):
-                        pad_size = (
-                            self.embed_size * (self.linear_sequence_length + 1)
-                            - glob_res_input.shape[0]
-                        )
-                        glob_res_input = F.pad(glob_res_input, (0, pad_size))
-                else:
-                    glob_res_input = torch.zeros(
-                        self.embed_size * (self.linear_sequence_length + 1),
-                        device=channel_embedded.device,
-                    )
-                glob_res_list.append(glob_res_input)
-
-            glob_res_input = torch.stack(glob_res_list, dim=0)
-        else:
-            # Use the last linear_sequence_length + 1 positions
-            start_idx = max(0, seq_len - self.linear_sequence_length - 1)
-            glob_res_input = channel_embedded[:, start_idx:, :].reshape(batch_size, -1)
-
-            # Pad if necessary
-            expected_size = self.embed_size * (self.linear_sequence_length + 1)
-            if glob_res_input.shape[1] < expected_size:
-                pad_size = expected_size - glob_res_input.shape[1]
-                glob_res_input = F.pad(glob_res_input, (0, pad_size))
-
-        return (
-            self.global_residual(glob_res_input)
-            .unsqueeze(1)
-            .repeat(1, prediction_length, 1)
-        )
-
     def _generate_predictions(
         self,
         embedded: torch.Tensor,
@@ -353,12 +284,6 @@ class TimeSeriesModel(nn.Module):
         if history_mask is not None:
             x = x * history_mask.unsqueeze(-1).float()
 
-        glob_res = 0.0
-        if self.global_residual is not None:
-            glob_res = self._compute_global_residual(
-                channel_embedded, history_mask, prediction_length
-            )
-
         # Initialize with learnable initial state for the first layer
         hidden_state = self.initial_hidden_state.repeat(
             batch_size * num_channels, 1, 1, 1
@@ -378,8 +303,6 @@ class TimeSeriesModel(nn.Module):
         x_sliced = x[:, -prediction_length:, :]
 
         final_representation = x_sliced + target_repr
-        if self.global_residual is not None:
-            final_representation += glob_res
 
         predictions = self.final_output_layer(self.mlp(final_representation))
 
