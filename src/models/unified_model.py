@@ -161,8 +161,6 @@ class TimeSeriesModel(nn.Module):
         self.target_projection = nn.Linear(self.embed_size, self.token_embed_dim)
         self.final_output_layer = nn.Linear(self.token_embed_dim, 1)
         self.mlp = GatedMLP(hidden_size=self.token_embed_dim, hidden_ratio=4, hidden_act='swish', fuse_swiglu=True)
-        self.mlp_out = GatedMLP(hidden_size=self.token_embed_dim, hidden_ratio=4, hidden_act='swish', fuse_swiglu=True)
-        self.time_uprojection = nn.Linear(1, self.max_prediction_length)
 
     def _init_positional_encoding(self, sin_pos_enc: bool, sin_pos_const: float):
         """Initialize positional encoding components."""
@@ -396,20 +394,22 @@ class TimeSeriesModel(nn.Module):
                 channel_embedded, history_padding_mask, prediction_length
             )
 
+        target_repr = self.input_projection_norm(target_repr)
+        x = torch.concatenate([x, target_repr], dim=1)
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
 
         if self.use_gelu and self.initial_gelu is not None:
             x = self.initial_gelu(x)
 
-        x_sliced = self.mlp_out(x[:, 174-140:174, :].flip(1)) # Slicing at index 173
+        prediction_embeddings = x[:, -140:, :]
+        # x_sliced = self.mlp_out(x[:, 174-140:174, :].flip(1)) # Slicing at index 173
         # x_uprojected = self.time_uprojection(x_sliced.transpose(1, 2)).transpose(1, 2)
-        target_repr = self.input_projection_norm(target_repr)
-        final_representation = x_sliced + target_repr
-        if self.global_residual is not None:
-            final_representation += glob_res
+        # final_representation = x_sliced + target_repr
+        #if self.global_residual is not None:
+        #    final_representation += glob_res
 
-        predictions = self.final_output_layer(self.mlp(final_representation))
+        predictions = self.final_output_layer(self.mlp(prediction_embeddings))
 
         # Reshape the output back to [B, P, N]
         predictions = predictions.view(batch_size, num_channels, prediction_length)
