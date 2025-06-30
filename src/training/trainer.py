@@ -92,8 +92,6 @@ class TrainingPipeline:
         # Initialize model
         self.model = TimeSeriesModel(
             scaler=self.config["scaler"],
-            max_history_length=self.config["max_history_length"],
-            max_prediction_length=self.config["max_prediction_length"],
             **self.config["TimeSeriesModel"],
         ).to(self.device)
 
@@ -134,10 +132,13 @@ class TrainingPipeline:
         )
 
         # --- Setup GIFT evaluator ---
+        # Use a reasonable default max context length for GIFT evaluation
+        # This prevents memory issues with very long sequences while allowing dynamic lengths
+        max_context_length = self.config.get("gift_eval_max_context_length", 2048)
         self.gift_evaluator = GiftEvaluator(
             model=self.model,
             device=self.device,
-            max_context_length=self.config["max_history_length"],
+            max_context_length=max_context_length,
         )
 
         # Setup loss function, metrics, wandb

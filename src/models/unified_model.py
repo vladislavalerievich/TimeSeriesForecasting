@@ -23,36 +23,6 @@ def create_scaler(scaler_type: str, epsilon: float = 1e-3):
         raise ValueError(f"Unknown scaler: {scaler_type}")
 
 
-def pad_sequence(sequence: torch.Tensor, target_length: int, pad_value: float = 0.0):
-    """Pad sequence to target length on the right side."""
-    batch_size, seq_len = sequence.shape[:2]
-
-    if seq_len >= target_length:
-        return sequence[:, :target_length], torch.ones(
-            batch_size, target_length, device=sequence.device, dtype=torch.bool
-        )
-
-    pad_length = target_length - seq_len
-    padding_mask = torch.cat(
-        [
-            torch.ones(batch_size, seq_len, device=sequence.device, dtype=torch.bool),
-            torch.zeros(
-                batch_size, pad_length, device=sequence.device, dtype=torch.bool
-            ),
-        ],
-        dim=1,
-    )
-
-    pad_shape = list(sequence.shape)
-    pad_shape[1] = pad_length
-    padding = torch.full(
-        pad_shape, pad_value, device=sequence.device, dtype=sequence.dtype
-    )
-    padded_sequence = torch.cat([sequence, padding], dim=1)
-
-    return padded_sequence, padding_mask
-
-
 def apply_channel_noise(values: torch.Tensor, noise_scale: float = 0.1):
     """Add noise to constant channels to prevent model instability."""
     is_constant = torch.all(values == values[:, 0:1, :], dim=1)
@@ -69,9 +39,6 @@ class TimeSeriesModel(nn.Module):
         embed_size: int = 128,
         token_embed_dim: int = 1024,
         num_encoder_layers: int = 2,
-        # Sequence lengths
-        max_history_length: int = 1024,
-        max_prediction_length: int = 900,
         # Scaling and preprocessing
         scaler: str = "custom_robust",
         epsilon: float = 1e-3,
@@ -100,8 +67,6 @@ class TimeSeriesModel(nn.Module):
         # Core parameters
         self.embed_size = embed_size
         self.token_embed_dim = token_embed_dim
-        self.max_history_length = max_history_length
-        self.max_prediction_length = max_prediction_length
         self.epsilon = epsilon
         self.scaler_clamp_value = scaler_clamp_value
         self.handle_constants = handle_constants
@@ -187,49 +152,26 @@ class TimeSeriesModel(nn.Module):
             )
 
     def _preprocess_data(self, data_container: BatchTimeSeriesContainer):
-        """Handle data preprocessing including padding, scaling, and noise injection."""
+        """Extract data shapes and handle constants without padding."""
         history_values = data_container.history_values
         future_values = data_container.future_values
         history_mask = data_container.history_mask
 
-        batch_size, original_seq_len, num_channels = history_values.shape
-        original_pred_len = future_values.shape[1] if future_values is not None else 0
-
-        # Pad sequences
-        padded_history_values, history_padding_mask = pad_sequence(
-            history_values, self.max_history_length, pad_value=0.0
-        )
-
-        # Handle history mask
-        combined_history_mask = history_padding_mask.float()
-        if history_mask is not None:
-            padded_history_mask, _ = pad_sequence(
-                history_mask.unsqueeze(-1), self.max_history_length, pad_value=0.0
-            )
-            combined_history_mask = (
-                padded_history_mask.squeeze(-1) * history_padding_mask.float()
-            )
-
-        # Pad future values if present
-        padded_future_values = None
-        if future_values is not None:
-            padded_future_values, _ = pad_sequence(
-                future_values, self.max_prediction_length, pad_value=0.0
-            )
+        batch_size, history_length, num_channels = history_values.shape
+        future_length = future_values.shape[1] if future_values is not None else 0
 
         # Handle constants
         if self.handle_constants:
-            padded_history_values = apply_channel_noise(padded_history_values)
+            history_values = apply_channel_noise(history_values)
 
         return {
-            "padded_history_values": padded_history_values,
-            "padded_future_values": padded_future_values,
-            "combined_history_mask": combined_history_mask,
+            "history_values": history_values,
+            "future_values": future_values,
+            "history_mask": history_mask,
             "num_channels": num_channels,
-            "original_lengths": {
-                "history": original_seq_len,
-                "future": original_pred_len,
-            },
+            "history_length": history_length,
+            "future_length": future_length,
+            "batch_size": batch_size,
         }
 
     def _compute_scaling(
@@ -289,24 +231,23 @@ class TimeSeriesModel(nn.Module):
         channel_embeddings = self.expand_values(history_scaled)
         channel_embeddings = channel_embeddings + history_pos_embed
 
-        batch_size = scaled_history.shape[0]
-        all_channels_embedded = channel_embeddings.view(
-            batch_size, self.max_history_length, -1
-        )
+        batch_size, seq_len = scaled_history.shape[:2]
+        all_channels_embedded = channel_embeddings.view(batch_size, seq_len, -1)
 
         return all_channels_embedded
 
     def _compute_global_residual(
         self,
         channel_embedded: torch.Tensor,
-        history_padding_mask: torch.Tensor,
+        history_mask: torch.Tensor,
         prediction_length: int,
     ):
         """Compute global residual connection."""
-        batch_size = channel_embedded.shape[0]
+        batch_size, seq_len = channel_embedded.shape[:2]
 
-        if history_padding_mask is not None:
-            valid_lengths = history_padding_mask.sum(dim=1).long()
+        if history_mask is not None:
+            # Use mask to find valid sequence lengths
+            valid_lengths = history_mask.sum(dim=1).long()
             glob_res_list = []
 
             for b in range(batch_size):
@@ -335,9 +276,15 @@ class TimeSeriesModel(nn.Module):
 
             glob_res_input = torch.stack(glob_res_list, dim=0)
         else:
-            glob_res_input = channel_embedded[
-                :, -(self.linear_sequence_length + 1) :, :
-            ].reshape(batch_size, -1)
+            # Use the last linear_sequence_length + 1 positions
+            start_idx = max(0, seq_len - self.linear_sequence_length - 1)
+            glob_res_input = channel_embedded[:, start_idx:, :].reshape(batch_size, -1)
+
+            # Pad if necessary
+            expected_size = self.embed_size * (self.linear_sequence_length + 1)
+            if glob_res_input.shape[1] < expected_size:
+                pad_size = expected_size - glob_res_input.shape[1]
+                glob_res_input = F.pad(glob_res_input, (0, pad_size))
 
         return (
             self.global_residual(glob_res_input)
@@ -351,7 +298,7 @@ class TimeSeriesModel(nn.Module):
         target_pos_embed: torch.Tensor,
         prediction_length: int,
         num_channels: int,
-        history_padding_mask: torch.Tensor = None,
+        history_mask: torch.Tensor = None,
     ):
         """
         Generate predictions for all channels using vectorized operations.
@@ -376,10 +323,10 @@ class TimeSeriesModel(nn.Module):
         )
         target_repr = self.target_projection(target_pos_embed)
 
-        # Reshape padding mask to match the vectorized input: [B, S] -> [B*N, S]
-        if history_padding_mask is not None:
-            history_padding_mask = (
-                history_padding_mask.unsqueeze(1)
+        # Reshape mask to match the vectorized input: [B, S] -> [B*N, S]
+        if history_mask is not None:
+            history_mask = (
+                history_mask.unsqueeze(1)
                 .expand(-1, num_channels, -1)
                 .reshape(batch_size * num_channels, seq_len)
             )
@@ -387,29 +334,27 @@ class TimeSeriesModel(nn.Module):
         # --- Process all channels in a single pass ---
         x = self.input_projection_layer(channel_embedded)
 
-        if history_padding_mask is not None:
-            x = x * history_padding_mask.unsqueeze(-1).float()
+        if history_mask is not None:
+            x = x * history_mask.unsqueeze(-1).float()
 
         glob_res = 0.0
         if self.global_residual is not None:
             glob_res = self._compute_global_residual(
-                channel_embedded, history_padding_mask, prediction_length
+                channel_embedded, history_mask, prediction_length
             )
 
         for encoder_layer in self.encoder_layers:
             x = encoder_layer(x)
-            if history_padding_mask is not None:
-                x = x * history_padding_mask.unsqueeze(-1).float()
+
+            if history_mask is not None:
+                x = x * history_mask.unsqueeze(-1).float()
 
         if self.use_gelu and self.initial_gelu is not None:
             x = self.input_projection_norm(x)
             x = self.initial_gelu(x)
 
-        if x.shape[1] >= prediction_length:
-            x_sliced = x[:, -prediction_length:, :]
-        else:
-            x_last = x[:, -1:, :].repeat(1, prediction_length, 1)
-            x_sliced = x_last
+        # Use the last prediction_length positions
+        x_sliced = x[:, -prediction_length:, :]
 
         final_representation = x_sliced + target_repr
         if self.global_residual is not None:
@@ -430,11 +375,11 @@ class TimeSeriesModel(nn.Module):
         # Preprocess data
         preprocessed = self._preprocess_data(data_container)
 
-        # Compute time features
+        # Compute time features dynamically based on actual lengths
         history_time_features, target_time_features = compute_batch_time_features(
             start=data_container.start,
-            history_length=self.max_history_length,
-            future_length=self.max_prediction_length,
+            history_length=preprocessed["history_length"],
+            future_length=preprocessed["future_length"],
             frequency=data_container.frequency,
             K_max=self.K_max,
             time_feature_config=self.time_feature_config,
@@ -442,35 +387,34 @@ class TimeSeriesModel(nn.Module):
 
         # Compute scaling
         scale_statistics = self._compute_scaling(
-            data_container.history_values, data_container.history_mask
+            preprocessed["history_values"], preprocessed["history_mask"]
         )
 
         # Apply scaling
         history_scaled = self._apply_scaling_and_masking(
-            preprocessed["padded_history_values"],
+            preprocessed["history_values"],
             scale_statistics,
-            preprocessed["combined_history_mask"],
+            preprocessed["history_mask"],
         )
 
         # Scale future values if present
         future_scaled = None
-        if preprocessed["padded_future_values"] is not None:
+        if preprocessed["future_values"] is not None:
             future_scaled = self.scaler.scale(
-                preprocessed["padded_future_values"], scale_statistics
+                preprocessed["future_values"], scale_statistics
             )
 
         # Get positional embeddings
-        batch_size = preprocessed["padded_history_values"].shape[0]
         history_pos_embed = self._get_positional_embeddings(
             history_time_features,
             preprocessed["num_channels"],
-            batch_size,
+            preprocessed["batch_size"],
             drop_enc_allow,
         )
         target_pos_embed = self._get_positional_embeddings(
             target_time_features,
             preprocessed["num_channels"],
-            batch_size,
+            preprocessed["batch_size"],
             drop_enc_allow,
         )
 
@@ -483,23 +427,17 @@ class TimeSeriesModel(nn.Module):
         predictions = self._generate_predictions(
             all_channels_embedded,
             target_pos_embed,
-            self.max_prediction_length,
+            preprocessed["future_length"],
             preprocessed["num_channels"],
-            preprocessed["combined_history_mask"],
+            preprocessed["history_mask"],
         )
-
-        # Truncate to original lengths
-        original_pred_len = preprocessed["original_lengths"]["future"]
-        if original_pred_len > 0:
-            predictions = predictions[:, :original_pred_len]
-            if future_scaled is not None:
-                future_scaled = future_scaled[:, :original_pred_len]
 
         return {
             "result": predictions,
             "scale_statistics": scale_statistics,
             "future_scaled": future_scaled,
-            "original_lengths": preprocessed["original_lengths"],
+            "history_length": preprocessed["history_length"],
+            "future_length": preprocessed["future_length"],
         }
 
     def compute_loss(self, y_true: torch.Tensor, y_pred: dict):
@@ -510,8 +448,6 @@ class TimeSeriesModel(nn.Module):
         if y_true is None:
             return torch.tensor(0.0, device=predictions.device)
 
-        original_pred_len = y_pred["original_lengths"]["future"]
-        predictions = predictions[:, :original_pred_len]
         future_scaled = self.scaler.scale(y_true, scale_statistics)
 
         if predictions.shape != future_scaled.shape:
