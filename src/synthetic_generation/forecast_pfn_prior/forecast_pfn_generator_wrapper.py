@@ -193,13 +193,9 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         if params is None:
             params = self._sample_parameters()
 
-        history_length = params["history_length"]
-        future_length = params["future_length"]
         num_channels = params["num_channels"]
         frequency = params["frequency"]
         start_date = params["start"]
-
-        total_length = history_length + future_length
 
         batch_values = []
 
@@ -207,7 +203,7 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
             batch_seed = None if seed is None else seed + i * num_channels
             values = self._generate_multivariate_time_series(
                 num_channels=num_channels,
-                length=total_length,
+                length=params["total_length"],
                 seed=batch_seed,
                 start=start_date,
                 frequency=frequency,
@@ -242,8 +238,8 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
         return self._format_to_container(
             values=batch_values,
-            start=params["start"],
-            history_length=history_length,
-            future_length=future_length,
+            start=start_date,
+            history_length=params["history_length"],
+            future_length=params["future_length"],
             frequency=frequency,
         )

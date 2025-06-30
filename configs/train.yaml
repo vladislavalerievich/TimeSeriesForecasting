@@ -17,8 +17,7 @@ gradient_clip_val: 10000
 gradient_accumulation_enabled: false
 accumulation_steps: 8  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
-total_length: 2048 # history length + future length
-
+# total_length: 2048 # history length + future length
 
 gift_eval_max_context_length: 2048  
 

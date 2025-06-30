@@ -489,19 +489,19 @@ class TrainingPipeline:
         train_computed = self._prepare_computed_metrics(self.train_metrics)
         val_computed = self._prepare_computed_metrics(self.val_metrics)
 
-        # Prepare epoch summary metrics for generic logging
-        summary_metrics = {
-            "train_loss": train_loss,
-            "val_loss": val_loss,
+        # Prepare train metrics for logging
+        train_summary_metrics = {
+            "loss": train_loss,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
             "epoch_time_minutes": epoch_time / 60,
+            **train_computed,
         }
 
-        # Add computed metrics with prefixes
-        for key, value in train_computed.items():
-            summary_metrics[f"train_{key}"] = value
-        for key, value in val_computed.items():
-            summary_metrics[f"val_{key}"] = value
+        # Prepare validation metrics for logging
+        val_summary_metrics = {
+            "loss": val_loss,
+            **val_computed,
+        }
 
         # Log detailed console summary (custom format for readability)
         logger.info("=" * 80)
@@ -515,12 +515,17 @@ class TrainingPipeline:
         logger.info(
             f"Synthetic Validation MAPE: {val_computed['mape']:.4f}, MSE: {val_computed['mse']:.4f}, SMAPE: {val_computed['smape']:.4f}"
         )
-        logger.info(f"Learning Rate: {summary_metrics['learning_rate']:.8f}")
-        logger.info(f"Epoch Time: {summary_metrics['epoch_time_minutes']:.2f} minutes")
+        logger.info(f"Learning Rate: {train_summary_metrics['learning_rate']:.8f}")
+        logger.info(
+            f"Epoch Time: {train_summary_metrics['epoch_time_minutes']:.2f} minutes"
+        )
         logger.info("=" * 80)
 
-        # Use generic method for WandB logging
-        self._log_metrics(summary_metrics, "epoch_summary", epoch)
+        # Log train and validation metrics separately
+        self._log_metrics(
+            train_summary_metrics, "train", epoch, extra_info="Epoch Summary"
+        )
+        self._log_metrics(val_summary_metrics, "val", epoch, extra_info="Epoch Summary")
 
     def _validate_epoch(self, epoch: int) -> float:
         """Validate model on all fixed synthetic validation batches."""

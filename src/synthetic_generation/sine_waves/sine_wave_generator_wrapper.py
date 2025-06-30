@@ -177,27 +177,19 @@ class SineWaveGeneratorWrapper(GeneratorWrapper):
         if params is None:
             params = self._sample_parameters()
 
-        history_length = params["history_length"]
-        future_length = params["future_length"]
         num_channels = params["num_channels"]
-        period_range = params["period_range"]
-        amplitude_range = params["amplitude_range"]
-        phase_range = params["phase_range"]
-        noise_level = params["noise_level"]
-        frequency = params["frequency"]
 
-        total_length = history_length + future_length
         batch_values = []
 
         for i in range(batch_size):
             batch_seed = None if seed is None else seed + i * num_channels
             values = self._generate_multivariate_time_series(
                 num_channels=num_channels,
-                length=total_length,
-                period_range=period_range,
-                amplitude_range=amplitude_range,
-                phase_range=phase_range,
-                noise_level=noise_level,
+                length=params["total_length"],
+                period_range=params["period_range"],
+                amplitude_range=params["amplitude_range"],
+                phase_range=params["phase_range"],
+                noise_level=params["noise_level"],
                 seed=batch_seed,
             )
             # Ensure shape for values: (seq_len, num_channels)
@@ -210,9 +202,9 @@ class SineWaveGeneratorWrapper(GeneratorWrapper):
         return self._format_to_container(
             values=batch_values,
             start=params["start"],
-            history_length=history_length,
-            future_length=future_length,
-            frequency=frequency,
+            history_length=params["history_length"],
+            future_length=params["future_length"],
+            frequency=params["frequency"],
         )
 
     def _format_to_container(
