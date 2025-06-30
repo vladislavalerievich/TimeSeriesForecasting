@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
@@ -42,24 +43,68 @@ from gluonts.time_feature.holiday import (
 from gluonts.time_feature.seasonality import get_seasonality
 
 from src.data_handling.data_containers import Frequency
+from src.synthetic_generation.common.constants import FREQUENCY_MAPPING
+from src.synthetic_generation.common.utils import (
+    check_start_date_safety,
+    select_safe_start_date,
+)
 from src.utils.utils import device
 
-FREQUENCY_STR_MAPPING = {
-    Frequency.A: "A",  # Annual
-    Frequency.Q: "Q",  # Quarterly
-    Frequency.M: "ME",  # Monthly (Month End for pandas compatibility)
-    Frequency.W: "W",  # Weekly
-    Frequency.D: "D",  # Daily
-    Frequency.H: "h",  # Hourly
-    Frequency.S: "s",  # Seconds
-    Frequency.T1: "1min",  # 1 minute
-    Frequency.T5: "5min",  # 5 minutes
-    Frequency.T10: "10min",  # 10 minutes
-    Frequency.T15: "15min",  # 15 minutes
-}
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-PERIOD_FREQUENCY_STR_MAPPING = FREQUENCY_STR_MAPPING.copy()
-PERIOD_FREQUENCY_STR_MAPPING[Frequency.M] = "M"
+
+def _get_frequency_str(frequency: Frequency, for_date_range: bool = True) -> str:
+    """
+    Get pandas frequency string from FREQUENCY_MAPPING.
+
+    Parameters
+    ----------
+    frequency : Frequency
+        The frequency enum
+    for_date_range : bool
+        If True, use frequency strings suitable for pd.date_range().
+        If False, use frequency strings suitable for pd.PeriodIndex().
+
+    Returns
+    -------
+    str
+        Pandas frequency string
+    """
+    freq_str_base, freq_str_prefix, _ = FREQUENCY_MAPPING[frequency]
+
+    # Special handling for date_range vs period compatibility
+    if for_date_range:
+        # For date_range, use modern pandas frequency strings
+        if frequency == Frequency.M:
+            return "ME"  # Month End
+        elif frequency == Frequency.A:
+            return "YE"  # Year End
+        elif frequency == Frequency.Q:
+            return "QE"  # Quarter End
+    else:
+        # For periods, use legacy frequency strings
+        if frequency == Frequency.M:
+            return "M"  # Month for periods
+        elif frequency == Frequency.A:
+            return "Y"  # Year for periods (not YE)
+        elif frequency == Frequency.Q:
+            return "Q"  # Quarter for periods (not QE)
+
+    # Construct frequency string for other frequencies
+    if freq_str_prefix:
+        return f"{freq_str_prefix}{freq_str_base}"
+    else:
+        return freq_str_base
+
+
+def _get_period_frequency_str(frequency: Frequency) -> str:
+    """Get pandas frequency string suitable for PeriodIndex."""
+    return _get_frequency_str(frequency, for_date_range=False)
+
 
 # Enhanced feature sets for different frequencies
 ENHANCED_TIME_FEATURES = {
@@ -383,11 +428,11 @@ class TimeFeatureGenerator:
 
 
 def compute_batch_time_features(
-    start,
-    history_length,
-    future_length,
-    frequency,
-    K_max=6,
+    start: np.datetime64,
+    history_length: int,
+    future_length: int,
+    frequency: Frequency,
+    K_max: int = 6,
     time_feature_config: Optional[Dict[str, Any]] = None,
 ):
     """
@@ -417,8 +462,9 @@ def compute_batch_time_features(
         (history_time_features, future_time_features) where each is a torch.Tensor
         of shape (length, K_max).
     """
-    freq_str = FREQUENCY_STR_MAPPING[frequency]
-    period_freq_str = PERIOD_FREQUENCY_STR_MAPPING[frequency]
+
+    freq_str = _get_frequency_str(frequency, for_date_range=True)
+    period_freq_str = _get_period_frequency_str(frequency)
 
     # Initialize enhanced feature generator
     feature_config = time_feature_config or {}
@@ -428,60 +474,23 @@ def compute_batch_time_features(
     if feature_generator.auto_adjust_k_max:
         K_max = feature_generator.get_optimal_k_max(freq_str)
 
-    # Define safe timestamp bounds
-    min_timestamp = pd.Timestamp("1900-01-01")
-    max_timestamp = pd.Timestamp("2200-12-31")
+    total_length = history_length + future_length
 
-    try:
-        # Validate start timestamp is within safe bounds
-        start_ts = pd.Timestamp(start)
-        if start_ts < min_timestamp or start_ts > max_timestamp:
-            start_ts = pd.Timestamp("2000-01-01")
-
-        # Create history range with bounds checking
-        history_range = pd.date_range(
-            start=start_ts, periods=history_length, freq=freq_str
+    # Check if provided start is safe
+    if not check_start_date_safety(start, total_length, frequency):
+        logger.error(
+            f"Provided start date {start} is not safe for total_length {total_length} "
+            f"and frequency {frequency}. Selecting a safe start date."
         )
+        start = select_safe_start_date(history_length, future_length, frequency)
 
-        # Check if history range goes beyond safe bounds
-        if history_range[-1] > max_timestamp:
-            safe_start = max_timestamp - pd.tseries.frequencies.to_offset(freq_str) * (
-                history_length + future_length
-            )
-            if safe_start < min_timestamp:
-                safe_start = min_timestamp
-            history_range = pd.date_range(
-                start=safe_start, periods=history_length, freq=freq_str
-            )
-
-        future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
-        future_range = pd.date_range(
-            start=future_start, periods=future_length, freq=freq_str
-        )
-
-        # Final bounds check
-        if future_range[-1] > max_timestamp:
-            safe_start = pd.Timestamp("2000-01-01")
-            history_range = pd.date_range(
-                start=safe_start, periods=history_length, freq=freq_str
-            )
-            future_start = history_range[-1] + pd.tseries.frequencies.to_offset(
-                freq_str
-            )
-            future_range = pd.date_range(
-                start=future_start, periods=future_length, freq=freq_str
-            )
-
-    except (pd.errors.OutOfBoundsDatetime, OverflowError, ValueError):
-        # Fallback to safe default timestamps
-        safe_start = pd.Timestamp("1800-01-01")
-        history_range = pd.date_range(
-            start=safe_start, periods=history_length, freq=freq_str
-        )
-        future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
-        future_range = pd.date_range(
-            start=future_start, periods=future_length, freq=freq_str
-        )
+    # Generate date ranges with the (possibly adjusted) safe start
+    start_pd = pd.Timestamp(start)
+    history_range = pd.date_range(start=start_pd, periods=history_length, freq=freq_str)
+    future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
+    future_range = pd.date_range(
+        start=future_start, periods=future_length, freq=freq_str
+    )
 
     # Convert to period indices
     history_period_idx = history_range.to_period(period_freq_str)

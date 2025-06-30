@@ -26,20 +26,13 @@ def test_basic_vs_enhanced_features():
     future_length = 900
     frequency = Frequency.H
 
-    # Create test timestamps
-    start_dates = [
-        datetime(2023, 12, 20),  # Near Christmas
-        datetime(2023, 7, 3),  # Near Independence Day
-        datetime(2023, 11, 22),  # Near Thanksgiving
-    ]
-    start = np.array(start_dates, dtype="datetime64[ns]")
+    start = np.datetime64("2023-11-22")
 
     print("Test setup:")
     print(f"  Batch size: {batch_size}")
     print(f"  History length: {history_length}")
     print(f"  Future length: {future_length}")
     print(f"  Frequency: {frequency.value}")
-    print(f"  Start dates: {[str(d) for d in start_dates]}")
     print()
 
     # Test enhanced features with different configurations
@@ -80,32 +73,29 @@ def test_basic_vs_enhanced_features():
     for test_config in configs:
         print(f"Computing {test_config['name']}...")
         enhanced_hist, enhanced_future = compute_batch_time_features(
-            start,
-            history_length,
-            future_length,
-            batch_size,
-            frequency,
+            start=start,
+            history_length=history_length,
+            future_length=future_length,
+            frequency=frequency,
             time_feature_config=test_config["config"],
         )
 
         print(
             f"Enhanced features shape - History: {enhanced_hist.shape}, Future: {enhanced_future.shape}"
         )
-        print("Enhanced features example (first timestep, first batch):")
-        print(f"  {enhanced_hist[0, 0, :].detach().cpu().numpy()}")
+        print("Enhanced features example (first timestep):")
+        print(f"  {enhanced_hist[0, :].detach().cpu().numpy()}")
 
         # Check for holiday effects (should be non-zero near holidays if holiday features enabled)
         if test_config["config"].get("use_holiday_features", False):
             holiday_effects = []
-            for i in range(batch_size):
-                # Check if any features show holiday patterns
-                batch_features = enhanced_hist[i, :, :].detach().cpu().numpy()
-                max_vals = np.max(np.abs(batch_features), axis=0)
-                holiday_effects.append(max_vals)
+            # Check if any features show holiday patterns
+            batch_features = enhanced_hist[:, :].detach().cpu().numpy()
+            max_vals = np.max(np.abs(batch_features), axis=0)
+            holiday_effects.append(max_vals)
 
             print("Holiday effect indicators (max absolute values per feature):")
-            for i, effects in enumerate(holiday_effects):
-                print(f"  Batch {i}: {effects}")
+            print(f"  {holiday_effects}")
 
         print()
 
@@ -136,11 +126,10 @@ def test_different_frequencies():
 
         try:
             hist_features, target_features = compute_batch_time_features(
-                start,
-                hist_len,
-                target_len,
-                1,
-                freq,
+                start=start,
+                history_length=hist_len,
+                future_length=target_len,
+                frequency=freq,
                 time_feature_config=enhanced_config,
             )
 

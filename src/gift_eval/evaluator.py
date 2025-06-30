@@ -241,9 +241,15 @@ class GiftEvaluator:
             task["ds_freq"],
             task["term"],
         )
-        logger.info(f"Processing dataset: {ds_name} ({term})")
 
-        dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=False)
+        # TODO remove
+        to_univariate = (
+            False
+            if GiftEvalDataset(name=ds_name, term=term, to_univariate=False).target_dim
+            == 1
+            else True
+        )
+        dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=to_univariate)
         self.predictor.set_prediction_len(dataset.prediction_length)
         self.predictor.set_ds_freq(ds_freq)
 

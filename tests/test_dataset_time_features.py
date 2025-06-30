@@ -8,9 +8,6 @@ import sys
 import traceback
 from pathlib import Path
 
-import numpy as np
-import torch
-
 from src.data_handling.data_loaders import SyntheticDataset
 from src.data_handling.time_features import compute_batch_time_features
 
