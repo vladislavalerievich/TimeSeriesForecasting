@@ -360,12 +360,11 @@ class TimeSeriesModel(nn.Module):
             )
 
         # Initialize with learnable initial state for the first layer
-        hidden_state = self.initial_hidden_state.repeat(batch_size, 1, 1, 1)
+        hidden_state = self.initial_hidden_state.repeat(
+            batch_size * num_channels, 1, 1, 1
+        )
 
         for layer_idx, encoder_layer in enumerate(self.encoder_layers):
-            # Pass previous layer's final state to current layer
-            # For the first layer, this is the learnable initial state
-            # For subsequent layers, this is the final hidden state from the previous layer
             x, hidden_state = encoder_layer(x, hidden_state)
 
             if history_mask is not None:

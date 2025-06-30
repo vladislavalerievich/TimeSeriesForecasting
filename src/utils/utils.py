@@ -22,6 +22,7 @@ def generate_descriptive_model_name(config):
     return (
         f"{config['model_name']}_"
         f"num_epochs_{config['num_epochs']}_"
+        f"num_training_iterations_per_epoch_{config['num_training_iterations_per_epoch']}_"
         f"initial_lr{config['initial_lr']}_"
         f"learning_rate_{config['learning_rate']}_"
         f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
