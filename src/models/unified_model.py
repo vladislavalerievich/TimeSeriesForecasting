@@ -161,10 +161,9 @@ class TimeSeriesModel(nn.Module):
         self.target_projection = nn.Linear(self.embed_size, self.token_embed_dim)
         self.final_output_layer = nn.Linear(self.token_embed_dim, 1)
         self.mlp = GatedMLP(hidden_size=self.token_embed_dim, hidden_ratio=4, hidden_act='swish', fuse_swiglu=True)
+        head_dim = self.token_embed_dim // self.encoder_config['num_heads']
         self.init_hidden_state = nn.Parameter(
-            torch.randn(1, self.encoder_config['num_heads'],
-                        self.token_embed_dim // self.encoder_config['num_heads'],
-                        self.token_embed_dim // self.encoder_config['num_heads']), requires_grad=True
+            torch.randn(1, self.encoder_config['num_heads'], head_dim, head_dim) / head_dim, requires_grad=True
         )
 
     def _init_positional_encoding(self, sin_pos_enc: bool, sin_pos_const: float):
