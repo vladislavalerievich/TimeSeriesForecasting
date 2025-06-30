@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,13 +6,46 @@ import pandas as pd
 import torch
 from matplotlib.figure import Figure
 
-from src.data_handling.data_containers import BatchTimeSeriesContainer
+from src.data_handling.data_containers import BatchTimeSeriesContainer, Frequency
+
+
+def _frequency_to_pandas_freq(frequency: Union[Frequency, str]) -> str:
+    """
+    Convert Frequency enum to pandas frequency string.
+
+    Args:
+        frequency: Frequency enum or string
+
+    Returns:
+        Pandas frequency string
+    """
+    if isinstance(frequency, str):
+        return frequency
+
+    # Map Frequency enum values to pandas frequency strings
+    freq_mapping = {
+        Frequency.A: "YE",  # Annual (Year End)
+        Frequency.Q: "QE",  # Quarterly (Quarter End)
+        Frequency.M: "ME",  # Monthly (Month End)
+        Frequency.W: "W",  # Weekly
+        Frequency.D: "D",  # Daily
+        Frequency.H: "h",  # Hourly
+        Frequency.S: "s",  # Seconds
+        Frequency.T1: "1min",  # 1 minute
+        Frequency.T5: "5min",  # 5 minutes
+        Frequency.T10: "10min",  # 10 minutes
+        Frequency.T15: "15min",  # 15 minutes
+    }
+
+    return freq_mapping.get(frequency, "D")  # Default to daily if not found
 
 
 def plot_multivariate_timeseries(
     history_values: np.ndarray,
     future_values: Optional[np.ndarray] = None,
     predicted_values: Optional[np.ndarray] = None,
+    start: Optional[Union[np.datetime64, pd.Timestamp]] = None,
+    frequency: Optional[Union[Frequency, str]] = None,
     title: Optional[str] = None,
     output_file: Optional[str] = None,
     show: bool = True,
@@ -27,6 +60,10 @@ def plot_multivariate_timeseries(
             Ground truth future observations with shape [pred_len, num_channels]
         predicted_values : np.ndarray, optional
             Model's predicted values with shape [pred_len, num_channels]
+        start : np.datetime64 or pd.Timestamp, optional
+            Start timestamp for the time series. If None, uses dummy dates.
+        frequency : Frequency or str, optional
+            Frequency of the time series. If None, defaults to daily.
         title : str, optional
             Title for the plot.
         output_file : str, optional
@@ -50,17 +87,60 @@ def plot_multivariate_timeseries(
         axes = [axes]
 
     # Create date range for plotting
-    history_dates = pd.date_range(end=pd.Timestamp.now(), periods=seq_len, freq="D")
-    if future_values is not None:
-        pred_len = future_values.shape[0]
-        future_dates = pd.date_range(
-            start=history_dates[-1] + pd.Timedelta(days=1), periods=pred_len, freq="D"
+    if start is not None and frequency is not None:
+        # Convert start to pd.Timestamp if it's np.datetime64
+        if isinstance(start, np.datetime64):
+            start_timestamp = pd.Timestamp(start)
+        else:
+            start_timestamp = start
+
+        # Convert frequency to pandas frequency string
+        pandas_freq = _frequency_to_pandas_freq(frequency)
+
+        # Create proper date range starting from the given start timestamp
+        history_dates = pd.date_range(
+            start=start_timestamp, periods=seq_len, freq=pandas_freq
         )
-    elif predicted_values is not None:
-        pred_len = predicted_values.shape[0]
-        future_dates = pd.date_range(
-            start=history_dates[-1] + pd.Timedelta(days=1), periods=pred_len, freq="D"
-        )
+
+        if future_values is not None:
+            pred_len = future_values.shape[0]
+            # Calculate the next timestamp after history using the frequency offset
+            next_timestamp = history_dates[-1] + pd.tseries.frequencies.to_offset(
+                pandas_freq
+            )
+            future_dates = pd.date_range(
+                start=next_timestamp,
+                periods=pred_len,
+                freq=pandas_freq,
+            )
+        elif predicted_values is not None:
+            pred_len = predicted_values.shape[0]
+            # Calculate the next timestamp after history using the frequency offset
+            next_timestamp = history_dates[-1] + pd.tseries.frequencies.to_offset(
+                pandas_freq
+            )
+            future_dates = pd.date_range(
+                start=next_timestamp,
+                periods=pred_len,
+                freq=pandas_freq,
+            )
+    else:
+        # Fallback to dummy dates if start or frequency not provided
+        history_dates = pd.date_range(end=pd.Timestamp.now(), periods=seq_len, freq="D")
+        if future_values is not None:
+            pred_len = future_values.shape[0]
+            future_dates = pd.date_range(
+                start=history_dates[-1] + pd.Timedelta(days=1),
+                periods=pred_len,
+                freq="D",
+            )
+        elif predicted_values is not None:
+            pred_len = predicted_values.shape[0]
+            future_dates = pd.date_range(
+                start=history_dates[-1] + pd.Timedelta(days=1),
+                periods=pred_len,
+                freq="D",
+            )
 
     for i, ax in enumerate(axes):
         # Plot history
@@ -126,7 +206,8 @@ def plot_from_container(
 
     Args:
         ts_data : BatchTimeSeriesContainer
-            Container with the time series data.
+            Container with the time series data. The start timestamp and frequency
+            from the container will be used to create proper time axis labels.
         sample_idx: int
             The index of the sample to plot from the batch.
         predicted_values : np.ndarray, optional
@@ -146,6 +227,10 @@ def plot_from_container(
     history_values = ts_data.history_values[sample_idx].cpu().numpy()
     future_values = ts_data.future_values[sample_idx].cpu().numpy()
 
+    # Extract start and frequency from the container
+    start = ts_data.start
+    frequency = ts_data.frequency
+
     # Extract predictions for the sample if provided
     if predicted_values is not None:
         if isinstance(predicted_values, torch.Tensor):
@@ -157,6 +242,8 @@ def plot_from_container(
         history_values=history_values,
         future_values=future_values,
         predicted_values=predicted_values,
+        start=start,
+        frequency=frequency,
         title=title,
         output_file=output_file,
         show=show,

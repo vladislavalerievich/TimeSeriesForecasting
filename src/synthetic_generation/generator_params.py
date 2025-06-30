@@ -12,11 +12,9 @@ class GeneratorParams:
 
     global_seed: int = 42
     distribution_type: str = "uniform"
-    history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (32, 1024)
-    )
+    total_length: int = 2048
     future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (6, 900)
+        default_factory=lambda: (48, 900)
     )
     num_channels: Union[int, Tuple[int, int], List[int]] = field(
         default_factory=lambda: 1  # TODO: revert to (1, 21)
@@ -31,16 +29,18 @@ class GeneratorParams:
                 setattr(self, k, v)
 
     def __post_init__(self):
-        """Validate that history_length ranges don't conflict with future_length ranges."""
+        """Validate that future_length doesn't exceed total_length."""
         # Normalize to tuples for consistent comparison
-        hist_min, hist_max = self._normalize_range(self.history_length)
         fut_min, fut_max = self._normalize_range(self.future_length)
 
-        # Ensure that we can generate valid combinations
-        if hist_max < fut_min:
+        # Ensure that future_length doesn't exceed total_length
+        if fut_max > self.total_length:
             raise ValueError(
-                f"Maximum history_length ({hist_max}) must be >= minimum future_length ({fut_min})"
+                f"Maximum future_length ({fut_max}) must be <= total_length ({self.total_length})"
             )
+
+        if fut_min < 1:
+            raise ValueError(f"Minimum future_length ({fut_min}) must be >= 1")
 
     def _normalize_range(
         self, value: Union[int, Tuple[int, int], List[int]]
@@ -54,74 +54,16 @@ class GeneratorParams:
 
     def get_compatible_ranges(self) -> Dict[str, Tuple[int, int]]:
         """Get compatible min/max ranges for all parameters."""
+        fut_min, fut_max = self._normalize_range(self.future_length)
         return {
-            "history_length": self._normalize_range(self.history_length),
-            "future_length": self._normalize_range(self.future_length),
+            "total_length": (self.total_length, self.total_length),
+            "history_length": (
+                self.total_length - fut_max,
+                self.total_length - fut_min,
+            ),
+            "future_length": (fut_min, fut_max),
             "num_channels": self._normalize_range(self.num_channels),
         }
-
-
-@dataclass
-class ShortRangeGeneratorParams(GeneratorParams):
-    """Parameters for short-range forecasting (aligned with GIFT eval patterns)."""
-
-    history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (25, 1024)
-    )
-    future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [
-            6,
-            8,
-            12,
-            13,
-            14,
-            18,
-            30,
-            48,
-            60,
-        ]
-    )
-
-
-@dataclass
-class MediumRangeGeneratorParams(GeneratorParams):
-    """Parameters for medium-range forecasting (aligned with GIFT eval patterns)."""
-
-    history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (120, 1024)
-    )
-    future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [
-            80,
-            120,
-            130,
-            140,
-            180,
-            300,
-            480,
-            600,
-        ]
-    )
-
-
-@dataclass
-class LongRangeGeneratorParams(GeneratorParams):
-    """Parameters for long-range forecasting (aligned with GIFT eval patterns)."""
-
-    history_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: (140, 1024)
-    )
-    future_length: Union[int, Tuple[int, int], List[int]] = field(
-        default_factory=lambda: [
-            120,
-            180,
-            195,
-            210,
-            450,
-            720,
-            900,
-        ]
-    )
 
 
 @dataclass

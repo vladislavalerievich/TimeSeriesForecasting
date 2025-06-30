@@ -17,9 +17,6 @@ from src.synthetic_generation.generator_params import (
     GPGeneratorParams,
     KernelGeneratorParams,
     LMCGeneratorParams,
-    LongRangeGeneratorParams,
-    MediumRangeGeneratorParams,
-    ShortRangeGeneratorParams,
     SineWaveGeneratorParams,
 )
 from src.synthetic_generation.gp_prior.gp_generator_wrapper import (
@@ -42,47 +39,122 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class MultiRangeDatasetComposer:
+class DatasetComposer:
     """
-    Orchestrates multiple DatasetComposer instances, each for a different forecast range.
-
-    This meta-composer selects a specific range (e.g., short, medium, long) based on
-    pre-defined proportions, and then delegates batch generation to the corresponding
-    DatasetComposer.
+    Composes datasets from multiple generator wrappers according to specified proportions.
+    Manages the generation of both training and validation datasets.
     """
 
     def __init__(
         self,
-        range_composers: Dict[str, "DatasetComposer"],
-        range_proportions: Dict[str, float],
+        generator_proportions: Optional[Dict[str, float]] = None,
         global_seed: int = 42,
     ):
         """
-        Initializes the meta-composer.
+        Initialize the DatasetComposer.
 
-        Args:
-            range_composers: A dict mapping range names (e.g., "short") to their
-                pre-configured DatasetComposer instances.
-            range_proportions: A dict mapping range names to their sampling proportion.
-            global_seed: A global random seed for reproducibility.
+        Parameters
+        ----------
+        generator_proportions : Dict[str, float], optional
+            Dictionary mapping generator names to their proportions in the dataset.
+            The proportions should sum to 1.0. If None, uses default proportions.
+        global_seed : int, optional
+            Global random seed for reproducibility (default: 42).
         """
-        self.range_composers = range_composers
-        self.range_proportions = range_proportions
         self.global_seed = global_seed
         self.rng = np.random.default_rng(global_seed)
 
+        # Setup generator proportions
+        self._setup_proportions(generator_proportions)
+
+        # Create generator wrappers
+        self.generator_wrappers = self._create_generator_wrappers()
+
+        # Validate proportions
         self._validate_proportions()
 
-    def _validate_proportions(self):
-        # Validate that the ranges in proportions and composers match
-        if set(self.range_proportions.keys()) != set(self.range_composers.keys()):
+        # Set random seed
+        torch.manual_seed(self.global_seed)
+
+    def _setup_proportions(self, generator_proportions):
+        """Setup default or custom generator proportions."""
+        default_generator_proportions = {
+            "forecast_pfn": 0.04,
+            "gp": 0.27,
+            "kernel": 0.24,
+            "lmc": 0.43,
+            "sine_wave": 0.02,
+        }
+        self.generator_proportions = (
+            generator_proportions or default_generator_proportions
+        )
+
+    def _create_generator_wrappers(self) -> Dict[GeneratorWrapper, float]:
+        """
+        Create generator wrappers based on the specified proportions.
+
+        Returns:
+            Dictionary mapping generator wrappers to their proportions.
+        """
+        generator_map = {
+            "lmc": (LMCGeneratorWrapper, LMCGeneratorParams),
+            "kernel": (KernelGeneratorWrapper, KernelGeneratorParams),
+            "gp": (GPGeneratorWrapper, GPGeneratorParams),
+            "forecast_pfn": (
+                ForecastPFNGeneratorWrapper,
+                ForecastPFNGeneratorParams,
+            ),
+            "sine_wave": (SineWaveGeneratorWrapper, SineWaveGeneratorParams),
+        }
+
+        wrappers = {}
+        # Create the base parameter instance
+        base_params = GeneratorParams(global_seed=self.global_seed)
+
+        for name, (wrapper_class, gen_param_class) in generator_map.items():
+            if name in self.generator_proportions:
+                try:
+                    # Create generator-specific parameters with defaults
+                    gen_params = gen_param_class(global_seed=self.global_seed)
+
+                    # Override with base parameters
+                    gen_params.total_length = base_params.total_length
+                    gen_params.future_length = base_params.future_length
+                    gen_params.num_channels = base_params.num_channels
+                    gen_params.global_seed = self.global_seed
+                    gen_params.distribution_type = base_params.distribution_type
+
+                    # Re-run validation after parameter updates
+                    gen_params.__post_init__()
+
+                    # Create the wrapper with the properly configured parameters
+                    wrappers[wrapper_class(gen_params)] = self.generator_proportions[
+                        name
+                    ]
+
+                except Exception as e:
+                    logger.warning(f"Failed to create {name} generator: {e}")
+                    continue
+
+        if not wrappers:
+            raise ValueError("No valid generators created")
+
+        # Normalize proportions
+        total_prop = sum(wrappers.values())
+        if total_prop == 0:
+            raise ValueError("Total generator proportions cannot be zero")
+
+        return {wrapper: prop / total_prop for wrapper, prop in wrappers.items()}
+
+    def _validate_proportions(self) -> None:
+        """
+        Validate that the generator proportions sum to approximately 1.0.
+        """
+        total_proportion = sum(self.generator_wrappers.values())
+        if not np.isclose(total_proportion, 1.0, atol=1e-6):
             raise ValueError(
-                "Mismatch between keys in range_proportions and range_composers."
+                f"Generator proportions should sum to 1.0, got {total_proportion}"
             )
-        # Validate that proportions sum to 1.0
-        total = sum(self.range_proportions.values())
-        if not np.isclose(total, 1.0):
-            raise ValueError(f"Range proportions must sum to 1.0, but got {total}")
 
     def generate_batch(
         self,
@@ -90,27 +162,36 @@ class MultiRangeDatasetComposer:
         seed: Optional[int] = None,
     ) -> Tuple[BatchTimeSeriesContainer, str]:
         """
-        Generates a single batch by first selecting a range, then a generator.
+        Generate a single batch by randomly selecting a generator according to proportions.
 
-        The two-step process is:
-        1. Choose a forecast range (e.g., "short") based on `range_proportions`.
-        2. Delegate to the corresponding DatasetComposer, which then chooses a
-           generator type (e.g., "LMC") based on its internal proportions.
+        Parameters
+        ----------
+        batch_size : int
+            Number of time series to generate per batch.
+        seed : int, optional
+            Random seed for reproducibility (default: None).
+
+        Returns
+        -------
+        Tuple[BatchTimeSeriesContainer, str]
+            Tuple containing (batch_data, generator_name).
         """
+        # Set seed if provided
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
-        # Select a range based on proportions
-        ranges = list(self.range_proportions.keys())
-        proportions = list(self.range_proportions.values())
-        selected_range = self.rng.choice(ranges, p=proportions)
-        selected_composer = self.range_composers[selected_range]
+        # Select generator based on proportions
+        generators = list(self.generator_wrappers.keys())
+        proportions = list(self.generator_wrappers.values())
+        selected_generator = self.rng.choice(generators, p=proportions)
 
-        # Delegate batch generation to the chosen composer
-        batch, generator_name = selected_composer.generate_batch(batch_size, seed)
+        # Generate batch
+        batch = selected_generator.generate_batch(
+            batch_size=batch_size,
+            seed=seed,
+        )
 
-        # Return the batch and an augmented generator name indicating the range
-        return batch, f"{generator_name}_{selected_range}"
+        return batch, selected_generator.__class__.__name__
 
     def generate_dataset(
         self,
@@ -275,86 +356,6 @@ class MultiRangeDatasetComposer:
         logger.info(f"Training and validation datasets saved to {output_dir}")
 
 
-class DatasetComposer:
-    """
-    Composes datasets from multiple generator wrappers according to specified proportions.
-    Manages the generation of both training and validation datasets.
-    """
-
-    def __init__(
-        self,
-        generator_proportions: Dict[GeneratorWrapper, float],
-        global_seed: int = 42,
-    ):
-        """
-        Initialize the DatasetComposer.
-
-        Parameters
-        ----------
-        generator_proportions : Dict[GeneratorWrapper, float]
-            Dictionary mapping generator wrappers to their proportions in the dataset.
-            The proportions should sum to 1.0.
-        global_seed : int, optional
-            Global random seed for reproducibility (default: 42).
-        """
-        self.generator_proportions = generator_proportions
-        self.global_seed = global_seed
-        self.rng = np.random.default_rng(global_seed)
-
-        # Validate proportions
-        self._validate_proportions()
-
-        # Set random seed
-        torch.manual_seed(self.global_seed)
-
-    def _validate_proportions(self) -> None:
-        """
-        Validate that the generator proportions sum to approximately 1.0.
-        """
-        total_proportion = sum(self.generator_proportions.values())
-        if not np.isclose(total_proportion, 1.0, atol=1e-6):
-            raise ValueError(
-                f"Generator proportions should sum to 1.0, got {total_proportion}"
-            )
-
-    def generate_batch(
-        self,
-        batch_size: int,
-        seed: Optional[int] = None,
-    ) -> Tuple[BatchTimeSeriesContainer, str]:
-        """
-        Generate a single batch by randomly selecting a generator according to proportions.
-
-        Parameters
-        ----------
-        batch_size : int
-            Number of time series to generate per batch.
-        seed : int, optional
-            Random seed for reproducibility (default: None).
-
-        Returns
-        -------
-        Tuple[BatchTimeSeriesContainer, str]
-            Tuple containing (batch_data, generator_name).
-        """
-        # Set seed if provided
-        if seed is not None:
-            self.rng = np.random.default_rng(seed)
-
-        # Select generator based on proportions
-        generators = list(self.generator_proportions.keys())
-        proportions = list(self.generator_proportions.values())
-        selected_generator = self.rng.choice(generators, p=proportions)
-
-        # Generate batch
-        batch = selected_generator.generate_batch(
-            batch_size=batch_size,
-            seed=seed,
-        )
-
-        return batch, selected_generator.__class__.__name__
-
-
 class OnTheFlyDatasetGenerator:
     """
     Provides an interface for on-the-fly generation of batches during training.
@@ -428,171 +429,3 @@ class OnTheFlyDatasetGenerator:
         self.batch_counter += 1
 
         return batch
-
-
-class DefaultSyntheticComposer:
-    """
-    Centralized class for constructing a hierarchical DatasetComposer with configurable
-    proportions for forecast ranges and generator types.
-    """
-
-    def __init__(
-        self,
-        seed: int = 42,
-        range_proportions: Optional[Dict[str, float]] = None,
-        generator_proportions: Optional[Dict[str, Dict[str, float]]] = None,
-    ):
-        """
-        Builds the hierarchical composer.
-
-        This constructor creates a specific DatasetComposer for each forecast range,
-        then uses MultiRangeDatasetComposer to manage the final mix.
-
-        Args:
-            seed: A global random seed.
-            range_proportions: Proportions for sampling from ranges (short, medium, long).
-            generator_proportions: A nested dict defining the mix of generator types
-                (lmc, gp, etc.) within each forecast range.
-        """
-        self.seed = seed
-        self._setup_proportions(range_proportions, generator_proportions)
-
-        range_param_map = {
-            "short": ShortRangeGeneratorParams,
-            "medium": MediumRangeGeneratorParams,
-            "long": LongRangeGeneratorParams,
-        }
-
-        self.range_composers = {}
-        for range_name, params_class in range_param_map.items():
-            range_gen_props = self.generator_proportions.get(range_name)
-            if range_gen_props:
-                composer = self._create_range_composer(
-                    params_class, range_gen_props, self.seed
-                )
-                if composer:
-                    self.range_composers[range_name] = composer
-
-        self.composer = MultiRangeDatasetComposer(
-            range_composers=self.range_composers,
-            range_proportions=self.range_proportions,
-            global_seed=self.seed,
-        )
-
-    def _setup_proportions(self, range_proportions, generator_proportions):
-        default_range_proportions = {"short": 0.34, "medium": 0.33, "long": 0.33}
-        default_generator_proportions = {
-            "short": {
-                "forecast_pfn": 0.04,
-                "gp": 0.24,
-                "kernel": 0.24,
-                "lmc": 0.43,
-                "sine_wave": 0.05,
-            },
-            "medium": {
-                "forecast_pfn": 0.04,
-                "gp": 0.29,
-                "kernel": 0.24,
-                "lmc": 0.43,
-                "sine_wave": 0.0,  # Sine waves may not be suitable for very long sequences
-            },
-            "long": {
-                "forecast_pfn": 0.04,
-                "gp": 0.29,
-                "kernel": 0.24,
-                "lmc": 0.43,
-                "sine_wave": 0.0,
-            },
-        }
-        self.range_proportions = range_proportions or default_range_proportions
-        self.generator_proportions = (
-            generator_proportions or default_generator_proportions
-        )
-
-    def _create_range_composer(
-        self,
-        params_class: GeneratorParams,
-        proportions: Dict[str, float],
-        seed: int,
-    ) -> Optional[DatasetComposer]:
-        """
-        Creates a single-range DatasetComposer for a specific forecast range.
-
-        This method properly combines range-specific parameters (history_length, future_length)
-        with generator-specific parameters while maintaining parameter compatibility and validation.
-
-        Args:
-            params_class: The dataclass defining the forecast range (e.g., ShortRangeGeneratorParams).
-            proportions: The mix of generators to use for this specific range.
-            seed: A random seed.
-
-        Returns:
-            A fully configured DatasetComposer for a single forecast range.
-        """
-        if not proportions:
-            return None
-
-        generator_map = {
-            "lmc": (LMCGeneratorWrapper, LMCGeneratorParams),
-            "kernel": (KernelGeneratorWrapper, KernelGeneratorParams),
-            "gp": (GPGeneratorWrapper, GPGeneratorParams),
-            "forecast_pfn": (
-                ForecastPFNGeneratorWrapper,
-                ForecastPFNGeneratorParams,
-            ),
-            "sine_wave": (SineWaveGeneratorWrapper, SineWaveGeneratorParams),
-        }
-
-        wrappers = {}
-        # Create the range parameter instance to get the base parameters
-        range_params = params_class(global_seed=seed)
-
-        for name, (wrapper_class, gen_param_class) in generator_map.items():
-            if name in proportions:
-                try:
-                    # Create generator-specific parameters with defaults
-                    gen_params = gen_param_class(global_seed=seed)
-
-                    # Override range-specific parameters from the range class
-                    gen_params.history_length = range_params.history_length
-                    gen_params.future_length = range_params.future_length
-                    gen_params.num_channels = range_params.num_channels
-                    gen_params.global_seed = seed
-                    gen_params.distribution_type = range_params.distribution_type
-
-                    # Re-run validation after parameter updates
-                    gen_params.__post_init__()
-
-                    # Create the wrapper with the properly configured parameters
-                    wrappers[name] = wrapper_class(gen_params)
-
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to create {name} generator for {params_class.__name__}: {e}"
-                    )
-                    continue
-
-        if not wrappers:
-            logger.warning(f"No valid generators created for {params_class.__name__}")
-            return None
-
-        # Map proportions from string names to generator instances and normalize
-        total_prop = sum(proportions[name] for name in proportions if name in wrappers)
-        if total_prop == 0:
-            return None
-
-        mapped_proportions = {
-            wrappers[name]: proportions[name] / total_prop
-            for name in proportions
-            if name in wrappers
-        }
-
-        return DatasetComposer(
-            generator_proportions=mapped_proportions, global_seed=seed
-        )
-
-    def get_composer(self) -> MultiRangeDatasetComposer:
-        return self.composer
-
-    def generate_batch(self, batch_size: int, seed: Optional[int] = None):
-        return self.composer.generate_batch(batch_size, seed)
