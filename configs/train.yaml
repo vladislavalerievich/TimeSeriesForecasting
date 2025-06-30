@@ -19,6 +19,7 @@ accumulation_steps: 8  # Number of batches to accumulate before updating (effect
 
 # total_length: 2048 # history length + future length
 
+evaluate_on_gift_eval: false
 gift_eval_max_context_length: 2048  
 
 num_epochs: 10

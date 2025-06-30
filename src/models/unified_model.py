@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from fla.modules import GatedMLP
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
