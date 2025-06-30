@@ -31,7 +31,7 @@ TimeSeriesModel:
   # Core architecture
   embed_size: 128
   token_embed_dim: 256
-  num_encoder_layers: 2
+  num_encoder_layers: 6
   
   # Scaling and preprocessing
   scaler: custom_robust
@@ -46,8 +46,12 @@ TimeSeriesModel:
     use_holiday_features: false
     use_index_features: true
     include_seasonality_info: true
+
+  # Positional encoding
   sin_pos_enc: false
   sin_pos_const: 100
+  
+  drop_enc_allow: false
   encoding_dropout: 0.0
   
   # Model architecture
