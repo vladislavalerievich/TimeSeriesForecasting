@@ -174,10 +174,13 @@ class ConcatLayer(nn.Module):
 class GatedDeltaNetEncoder(nn.Module):
     """
     GatedDeltaNet encoder using GatedDeltaProductBlock for sequence modeling.
+    Supports hidden state transfer between layers for temporal modeling.
     """
 
     def __init__(self, layer_idx, token_embed_dim, num_heads=4, **kwargs):
         super().__init__()
+        self.layer_idx = layer_idx
+        self.token_embed_dim = token_embed_dim
         config = GatedDeltaProductConfig(
             attn_mode="chunk",
             hidden_size=token_embed_dim,
@@ -192,15 +195,53 @@ class GatedDeltaNetEncoder(nn.Module):
         )
         self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
 
-    def forward(self, x):
+        # Add a projection layer to incorporate previous layer's final hidden state
+        # This allows us to blend the current input with the previous layer's knowledge
+        self.state_projection = nn.Linear(token_embed_dim, token_embed_dim, bias=False)
+        self.state_gate = nn.Linear(token_embed_dim * 2, token_embed_dim)
+
+    def forward(self, x, previous_final_state=None):
         """
-        Forward pass through the GatedDeltaProductBlock.
+        Forward pass through the GatedDeltaProductBlock with hidden state support.
 
         Args:
             x: Input tensor of shape [batch_size, seq_len, hidden_size]
+            previous_final_state: Final hidden state from previous layer [batch_size, hidden_size]
 
         Returns:
-            Output tensor of same shape as input
+            tuple: (output_tensor, final_hidden_state) where:
+                - output_tensor: same shape as input
+                - final_hidden_state: final hidden state to pass to next layer [batch_size, hidden_size]
         """
-        x, _, _ = self.encoder_layer(x)
-        return x
+        batch_size, seq_len, hidden_size = x.shape
+
+        # If we have a previous final state, incorporate it into the current input
+        if previous_final_state is not None:
+            # Project the previous final state
+            projected_state = self.state_projection(
+                previous_final_state
+            )  # [batch_size, hidden_size]
+
+            # Expand to sequence length and create gated combination
+            expanded_state = projected_state.unsqueeze(1).expand(
+                -1, seq_len, -1
+            )  # [batch_size, seq_len, hidden_size]
+
+            # Create gated combination of input and previous state
+            combined = torch.cat(
+                [x, expanded_state], dim=-1
+            )  # [batch_size, seq_len, 2*hidden_size]
+            gate = torch.sigmoid(
+                self.state_gate(combined)
+            )  # [batch_size, seq_len, hidden_size]
+
+            # Apply gated combination: blend current input with previous layer's knowledge
+            x = gate * x + (1 - gate) * expanded_state
+
+        # Process through the GatedDeltaProductBlock (without using initial_state)
+        hidden_states, _, _ = self.encoder_layer(x)
+
+        # Extract final hidden state (last position) to pass to next layer
+        final_hidden_state = hidden_states[:, -1, :]  # [batch_size, hidden_size]
+
+        return hidden_states, final_hidden_state
