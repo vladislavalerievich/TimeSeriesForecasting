@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import os
 import time
@@ -128,7 +129,7 @@ class TrainingPipeline:
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
-            data_path=val_data_path,
+            data_path=train_data_path,
             device=self.device,
             single_file=True,
         )
@@ -184,7 +185,9 @@ class TrainingPipeline:
                 self.run = wandb.init(
                     project="TimeSeriesForecasting",
                     config=self.config,
-                    name=self.config["model_name"],
+                    name=self.config["model_name"] + datetime.datetime.now().strftime(
+                        "%Y%m%d_%H%M%S"
+                    ),
                     resume="allow",
                 )
             except Exception as e:
@@ -452,8 +455,10 @@ class TrainingPipeline:
             "val_mape": self.val_metrics["mape"].compute().item(),
             "val_mse": self.val_metrics["mse"].compute().item(),
             "val_smape": self.val_metrics["smape"].compute().item(),
+            "init_norm": self.model.init_hidden_state.norm().item(),
             "learning_rate": self.optimizer.param_groups[0]["lr"],
             "epoch_time_minutes": epoch_time / 60,
+            "epoch": epoch,
         }
 
         # Log comprehensive summary
@@ -475,23 +480,7 @@ class TrainingPipeline:
         # Log to wandb
         if self.config["wandb"]:
             # Log structured epoch metrics
-            wandb.log(
-                {
-                    "epoch_summary/train_loss": train_loss,
-                    "epoch_summary/val_loss": val_loss,
-                    "epoch_summary/train_mape": epoch_metrics["train_mape"],
-                    "epoch_summary/train_mse": epoch_metrics["train_mse"],
-                    "epoch_summary/train_smape": epoch_metrics["train_smape"],
-                    "epoch_summary/val_mape": epoch_metrics["val_mape"],
-                    "epoch_summary/val_mse": epoch_metrics["val_mse"],
-                    "epoch_summary/val_smape": epoch_metrics["val_smape"],
-                    "epoch_summary/learning_rate": epoch_metrics["learning_rate"],
-                    "epoch_summary/epoch_time_minutes": epoch_metrics[
-                        "epoch_time_minutes"
-                    ],
-                    "epoch": epoch,
-                }
-            )
+            wandb.log(epoch_metrics)
 
     def _validate_epoch(self, epoch: int) -> float:
         """Validate model on all fixed synthetic validation batches."""

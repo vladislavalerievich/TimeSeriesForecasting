@@ -192,7 +192,7 @@ class GatedDeltaNetEncoder(nn.Module):
         )
         self.encoder_layer = GatedDeltaProductBlock(layer_idx=layer_idx, config=config)
 
-    def forward(self, x):
+    def forward(self, x, initial_state=None):
         """
         Forward pass through the GatedDeltaProductBlock.
 
@@ -202,5 +202,5 @@ class GatedDeltaNetEncoder(nn.Module):
         Returns:
             Output tensor of same shape as input
         """
-        x, _, _ = self.encoder_layer(x)
-        return x
+        x, last_hidden_state, _ = self.encoder_layer(x, output_attentions=True, initial_state=initial_state)
+        return x, last_hidden_state
