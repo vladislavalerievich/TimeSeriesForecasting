@@ -191,6 +191,7 @@ def visualize_lengths(context_lengths, forecast_lengths, save_plots=True):
     print(f"Total unique forecast lengths: {len(unique_forecast)}")
     print(f"Range: {min(forecast_lengths)} - {max(forecast_lengths)}")
     print(f"Most common forecast lengths:")
+
     for length, count in unique_forecast.most_common(100):
         print(f"  {length}: {count} occurrences")
 
