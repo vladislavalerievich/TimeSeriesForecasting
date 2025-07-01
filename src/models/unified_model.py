@@ -279,8 +279,8 @@ class TimeSeriesModel(nn.Module):
             .contiguous()
             .view(batch_size * num_channels, prediction_length, self.embed_size)
         )
-        x = self.history_norm(self.input_projection_layer(channel_embedded))
-        target_repr = self.target_norm(self.target_projection(target_pos_embed))
+        x = self.input_projection_layer(channel_embedded)
+        target_repr = self.target_projection(target_pos_embed)
         x = torch.concatenate([x, target_repr], dim=1)
         hidden_state = self.initial_hidden_state.repeat(batch_size, 1, 1, 1)
         for encoder_layer in self.encoder_layers:
