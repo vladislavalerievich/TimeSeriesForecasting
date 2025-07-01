@@ -26,6 +26,7 @@ from src.utils.utils import (
     device,
     generate_descriptive_model_name,
     seed_everything,
+    effective_rank
 )
 
 warnings.filterwarnings("ignore", category=NumericalWarning)
@@ -405,11 +406,15 @@ class TrainingPipeline:
 
         # Prepare metrics dictionary
         computed_metrics = self._prepare_computed_metrics(self.train_metrics)
+        num_heads = self.model.initial_hidden_state.shape[1]
+        effective_ranks = {
+            f'eff_rank_{head_idx}': effective_rank(self.model.initial_hidden_state[0, head_idx].float().detach().cpu().numpy()) for head_idx in range(num_heads)}
         train_metrics = {
             "loss": avg_loss,
             "gradient_norm": avg_grad_norm,
             "init_norm": self.model.initial_hidden_state.norm().item(),
             **computed_metrics,
+            **effective_ranks
         }
 
         # Calculate global step
