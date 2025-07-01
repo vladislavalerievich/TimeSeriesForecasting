@@ -141,8 +141,6 @@ class TimeSeriesModel(nn.Module):
             hidden_act="swish",
             fuse_swiglu=True,
         )
-        self.target_norm = nn.LayerNorm(self.token_embed_dim)
-        self.history_norm = nn.LayerNorm(self.token_embed_dim)
         # Initialize learnable initial hidden state for the first encoder layer
         # This will be expanded to match batch size during forward pass
         head_k_dim = self.token_embed_dim // self.encoder_config["num_heads"]
