@@ -102,9 +102,9 @@ def visualize_batch_sample(
 
 if __name__ == "__main__":
     # Configuration
-    batch_size = 2
-    history_length = 256
-    future_length = 64
+    batch_size = 1
+    total_length = 1536
+    future_length = 512
     output_dir = "outputs/plots"
     global_seed = 2025
 
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     # Create generators
     lmc_params = LMCGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=5,
     )
@@ -121,7 +121,7 @@ if __name__ == "__main__":
 
     kernel_params_univariate = KernelGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=1,
     )
@@ -129,7 +129,7 @@ if __name__ == "__main__":
 
     kernel_params_multivariate = KernelGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=5,
     )
@@ -137,7 +137,7 @@ if __name__ == "__main__":
 
     gp_params_univariate = GPGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=1,
     )
@@ -145,7 +145,7 @@ if __name__ == "__main__":
 
     gp_params_multivariate = GPGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=5,
     )
@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
     forecast_pfn_univariate_params = ForecastPFNGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=1,
     )
@@ -163,7 +163,7 @@ if __name__ == "__main__":
 
     forecast_pfn_multivariate_params = ForecastPFNGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=5,
     )
@@ -174,7 +174,7 @@ if __name__ == "__main__":
 
     sine_wave_params = SineWaveGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=1,
     )
@@ -182,7 +182,7 @@ if __name__ == "__main__":
 
     sine_wave_params_multivariate = SineWaveGeneratorParams(
         global_seed=global_seed,
-        history_length=history_length,
+        total_length=total_length,
         future_length=future_length,
         num_channels=5,
     )
