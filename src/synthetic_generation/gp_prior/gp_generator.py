@@ -153,7 +153,7 @@ class GPGenerator:
                             max(noise * (10**attempt), 1e-4)
                         ),  # Increase jitter on retries, with a minimum floor
                         gpytorch.settings.max_cholesky_size(
-                            2000
+                            self.length
                         ),  # Limit decomposition size
                     ):
                         y_sample = model(train_x).sample().numpy()
