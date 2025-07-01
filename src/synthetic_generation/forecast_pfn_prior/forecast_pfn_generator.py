@@ -33,6 +33,55 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         self.rng = np.random.default_rng(random_seed)
         self.frequency = params.frequency
 
+    def _calculate_scaled_exp_base(self, timescale: float) -> float:
+        """
+        Calculate an exponential base that is scaled according to the series length
+        to prevent extreme values at the end of long sequences.
+
+        Parameters
+        ----------
+        timescale : float
+            The timescale factor for the frequency
+
+        Returns
+        -------
+        float
+            Scaled exponential base that keeps final values within reasonable bounds
+        """
+        if not self.params.trend_exp:
+            return 1.0
+
+        # Estimate maximum days in the series based on length and frequency
+        # For most frequencies, each step represents timescale days
+        max_days = self.length * timescale
+
+        # Sample a raw exponential base with the original logic
+        raw_exp_base = self.rng.normal(1, 0.005 / timescale)
+
+        # Define reasonable bounds for the final exponential multiplier
+        # Allow growth/decay up to 10x in either direction
+        max_growth_factor = 10.0
+        min_decay_factor = 0.1
+
+        # Calculate what the maximum absolute exponent could be
+        # considering the offset range of (-0.1, 0.5)
+        # Worst case is when |1 - offset| * max_days is maximized
+        max_abs_exponent = 1.1 * max_days  # Conservative estimate
+
+        if raw_exp_base > 1.0:
+            # For growth, ensure base^max_abs_exponent <= max_growth_factor
+            max_allowed_base = max_growth_factor ** (1.0 / max_abs_exponent)
+            scaled_base = min(raw_exp_base, max_allowed_base)
+        elif raw_exp_base < 1.0:
+            # For decay, ensure base^max_abs_exponent >= min_decay_factor
+            min_allowed_base = min_decay_factor ** (1.0 / max_abs_exponent)
+            scaled_base = max(raw_exp_base, min_allowed_base)
+        else:
+            scaled_base = raw_exp_base
+
+        # Apply the original bounds as a final safety check
+        return max(0.0001, min(1.01, scaled_base))
+
     def _generate_series(
         self, start: np.datetime64, random_seed: Optional[int] = None
     ) -> Dict[str, np.ndarray]:
@@ -80,7 +129,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         scale_config = ComponentScale(
             base=1.0,
             linear=self.rng.normal(0, 0.01),
-            exp=max(0.0001, min(1.01, self.rng.normal(1, 0.005 / timescale)))
+            exp=self._calculate_scaled_exp_base(timescale)
             if self.params.trend_exp
             else 1.0,
             a=a,
@@ -132,7 +181,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
                 ComponentScale(
                     base=1.0,
                     linear=self.rng.normal(0, 0.01),
-                    exp=max(0.0001, min(1.01, self.rng.normal(1, 0.005 / timescale)))
+                    exp=self._calculate_scaled_exp_base(timescale)
                     if self.params.trend_exp
                     else 1.0,
                     a=a,
