@@ -201,11 +201,15 @@ class GeneratorWrapper:
             dtype=torch.float32,
         )
 
+        # Extract generator name from class name (remove "GeneratorWrapper" suffix)
+        generator_name = self.__class__.__name__.replace("GeneratorWrapper", "")
+
         return BatchTimeSeriesContainer(
             history_values=history_values,
             future_values=future_values,
             start=start,
             frequency=frequency,
+            generator_name=generator_name,
         )
 
     def generate_batch(self, batch_size: int, seed: Optional[int] = None, **kwargs):

@@ -87,7 +87,7 @@ def visualize_batch_sample(
     title = f"{generator_name.replace('GeneratorWrapper', '')} Synthetic {series_type.title()} Time Series (Sample {sample_idx})"
 
     plot_from_container(
-        ts_data=batch,
+        batch=batch,
         sample_idx=sample_idx,
         predicted_values=predicted_values,
         output_file=output_file,

@@ -69,7 +69,7 @@ def visualize_batch(
         title = f"KernelSynth ({gpytorch_str.upper()}) Synthetic {series_type.title()} Time Series (Sample {sample_idx})"
 
         plot_from_container(
-            ts_data=batch,
+            batch=batch,
             sample_idx=sample_idx,
             predicted_values=predicted_values,
             output_file=output_file,

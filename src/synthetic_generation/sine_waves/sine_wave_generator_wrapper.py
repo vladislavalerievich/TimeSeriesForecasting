@@ -229,6 +229,8 @@ class SineWaveGeneratorWrapper(GeneratorWrapper):
         frequency: Optional[Frequency]
             Frequency of the time series. If None, a random frequency is selected.
         """
+        # Extract generator name from class name (remove "GeneratorWrapper" suffix)
+        generator_name = self.__class__.__name__.replace("GeneratorWrapper", "")
 
         return BatchTimeSeriesContainer(
             history_values=torch.tensor(
@@ -240,4 +242,5 @@ class SineWaveGeneratorWrapper(GeneratorWrapper):
             ),
             start=start,
             frequency=frequency,
+            generator_name=generator_name,
         )

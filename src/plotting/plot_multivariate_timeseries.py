@@ -194,7 +194,7 @@ def plot_multivariate_timeseries(
 
 
 def plot_from_container(
-    ts_data: BatchTimeSeriesContainer,
+    batch: BatchTimeSeriesContainer,
     sample_idx: int,
     predicted_values: Optional[np.ndarray] = None,
     title: Optional[str] = None,
@@ -224,12 +224,12 @@ def plot_from_container(
         matplotlib.figure.Figure: The plot figure.
     """
     # Extract data for the specified sample index
-    history_values = ts_data.history_values[sample_idx].cpu().numpy()
-    future_values = ts_data.future_values[sample_idx].cpu().numpy()
+    history_values = batch.history_values[sample_idx].cpu().numpy()
+    future_values = batch.future_values[sample_idx].cpu().numpy()
 
     # Extract start and frequency from the container
-    start = ts_data.start
-    frequency = ts_data.frequency
+    start = batch.start
+    frequency = batch.frequency
 
     # Extract predictions for the sample if provided
     if predicted_values is not None:
@@ -237,6 +237,12 @@ def plot_from_container(
             predicted_values = predicted_values.detach().cpu().numpy()
         if predicted_values.ndim == 3:
             predicted_values = predicted_values[sample_idx]
+
+    # Include generator name in title if available
+    if batch.generator_name and title:
+        title = f"[{batch.generator_name}] {title}"
+    elif batch.generator_name and not title:
+        title = f"[{batch.generator_name}] Time Series"
 
     return plot_multivariate_timeseries(
         history_values=history_values,

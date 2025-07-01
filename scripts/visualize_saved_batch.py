@@ -35,7 +35,7 @@ def visualize_saved_batch(
     output_file = os.path.join(output_dir, f"saved_sample_{sample_idx:03d}.png")
     try:
         plot_from_container(
-            ts_data=batch,
+            batch=batch,
             sample_idx=sample_idx,
             output_file=output_file,
             show=show,

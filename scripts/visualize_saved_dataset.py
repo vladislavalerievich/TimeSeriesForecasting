@@ -99,7 +99,7 @@ def visualize_dataset_batches(
 
                 try:
                     plot_from_container(
-                        ts_data=batch,
+                        batch=batch,
                         sample_idx=current_sample_idx,
                         output_file=output_file,
                         show=show,
@@ -166,7 +166,7 @@ def visualize_dataset_batches(
 
                 try:
                     plot_from_container(
-                        ts_data=batch,
+                        batch=batch,
                         sample_idx=current_sample_idx,
                         output_file=output_file,
                         show=show,

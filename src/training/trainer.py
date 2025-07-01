@@ -24,9 +24,9 @@ from src.models.unified_model import TimeSeriesModel
 from src.plotting.plot_multivariate_timeseries import plot_from_container
 from src.utils.utils import (
     device,
+    effective_rank,
     generate_descriptive_model_name,
     seed_everything,
-    effective_rank
 )
 
 warnings.filterwarnings("ignore", category=NumericalWarning)
@@ -298,7 +298,7 @@ class TrainingPipeline:
                 # Plot each selected index and log to wandb
                 for i in indices_to_plot:
                     fig = plot_from_container(
-                        ts_data=batch,
+                        batch=batch,
                         sample_idx=i,
                         predicted_values=pred_future,  # Pass full batch predictions
                         title=f"Epoch {epoch} - Val Batch {batch_idx + 1}, Sample {i} (Val Loss: {avg_val_loss:.4f})",
@@ -408,13 +408,21 @@ class TrainingPipeline:
         computed_metrics = self._prepare_computed_metrics(self.train_metrics)
         num_heads = self.model.initial_hidden_state.shape[1]
         effective_ranks = {
-            f'eff_rank_{head_idx}': effective_rank(self.model.initial_hidden_state[0, head_idx].float().detach().cpu().numpy()) for head_idx in range(num_heads)}
+            f"eff_rank_{head_idx}": effective_rank(
+                self.model.initial_hidden_state[0, head_idx]
+                .float()
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            for head_idx in range(num_heads)
+        }
         train_metrics = {
             "loss": avg_loss,
             "gradient_norm": avg_grad_norm,
             "init_norm": self.model.initial_hidden_state.norm().item(),
             **computed_metrics,
-            **effective_ranks
+            **effective_ranks,
         }
 
         # Calculate global step

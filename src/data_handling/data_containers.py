@@ -146,6 +146,8 @@ class BatchTimeSeriesContainer:
             Shape: [batch_size, seq_len]
         future_mask: Optional boolean/float tensor indicating missing entries in future_values across channels.
             Shape: [batch_size, pred_len]
+        generator_name: Optional name of the generator that created this data.
+            Type: str
     """
 
     history_values: torch.Tensor
@@ -157,6 +159,7 @@ class BatchTimeSeriesContainer:
 
     history_mask: Optional[torch.Tensor] = None
     future_mask: Optional[torch.Tensor] = None
+    generator_name: Optional[str] = None
 
     def __post_init__(self):
         """Validate all tensor shapes and consistency."""
