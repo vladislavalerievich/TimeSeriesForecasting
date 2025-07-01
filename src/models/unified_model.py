@@ -141,7 +141,8 @@ class TimeSeriesModel(nn.Module):
             hidden_act="swish",
             fuse_swiglu=True,
         )
-
+        self.target_norm = nn.LayerNorm(self.token_embed_dim)
+        self.history_norm = nn.LayerNorm(self.token_embed_dim)
         # Initialize learnable initial hidden state for the first encoder layer
         # This will be expanded to match batch size during forward pass
         head_k_dim = self.token_embed_dim // self.encoder_config["num_heads"]
@@ -278,41 +279,17 @@ class TimeSeriesModel(nn.Module):
             .contiguous()
             .view(batch_size * num_channels, prediction_length, self.embed_size)
         )
-        target_repr = self.target_projection(target_pos_embed)
-
-        # Reshape mask to match the vectorized input: [B, S] -> [B*N, S]
-        if history_mask is not None:
-            history_mask = (
-                history_mask.unsqueeze(1)
-                .expand(-1, num_channels, -1)
-                .reshape(batch_size * num_channels, seq_len)
-            )
-
-        # --- Process all channels in a single pass ---
-        x = self.input_projection_layer(channel_embedded)
-
-        if history_mask is not None:
-            x = x * history_mask.unsqueeze(-1).float()
-
-        # Initialize with learnable initial state for the first layer
-        # Shape: [batch_size * num_channels, num_heads, head_dim, head_dim]
-        hidden_state = self.initial_hidden_state.repeat(
-            batch_size * num_channels, 1, 1, 1
-        )
-
-        for layer_idx, encoder_layer in enumerate(self.encoder_layers):
+        x = self.history_norm(self.input_projection_layer(channel_embedded))
+        target_repr = self.target_norm(self.target_projection(target_pos_embed))
+        x = torch.concatenate([x, target_repr], dim=1)
+        hidden_state = self.initial_hidden_state.repeat(batch_size, 1, 1, 1)
+        for encoder_layer in self.encoder_layers:
             x, hidden_state = encoder_layer(x, hidden_state)
 
-            if history_mask is not None:
-                x = x * history_mask.unsqueeze(-1).float()
-
         # Use the last prediction_length positions
-        x_sliced = x[:, -prediction_length:, :]
+        prediction_embeddings = x[:, -prediction_length:, :]
 
-        final_representation = x_sliced + target_repr
-
-        predictions = self.final_output_layer(self.mlp(final_representation))
-
+        predictions = self.final_output_layer(self.mlp(prediction_embeddings))
         # Reshape the output back to [B, P, N]
         predictions = predictions.view(batch_size, num_channels, prediction_length)
         predictions = predictions.permute(0, 2, 1)

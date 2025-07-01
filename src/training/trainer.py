@@ -125,7 +125,7 @@ class TrainingPipeline:
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
-            data_path=val_data_path,
+            data_path=train_data_path,
             device=self.device,
             single_file=True,
         )
