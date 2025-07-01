@@ -76,11 +76,10 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
             a = self.rng.uniform(0.0, 1.0)
         else:
             raise NotImplementedError(f"Frequency {self.frequency} not supported")
-
         scale_config = ComponentScale(
             base=1.0,
             linear=self.rng.normal(0, 0.01),
-            exp=max(0.0001, min(1.01, self.rng.normal(1, 0.005 / timescale)))
+            exp=max(0.0001, min(1.001, self.rng.normal(1, 0.0005 / timescale)))
             if self.params.trend_exp
             else 1.0,
             a=a,

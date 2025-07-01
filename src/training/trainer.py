@@ -126,7 +126,7 @@ class TrainingPipeline:
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
-            data_path=train_data_path,  # TODO: change back to val_data_path
+            data_path=val_data_path,  # TODO: change back to val_data_path
             device=self.device,
             single_file=True,
         )
@@ -570,7 +570,7 @@ class TrainingPipeline:
 
         # Plot examples if wandb is enabled
         if self.config["wandb"]:
-            self._plot_validation_examples(epoch, avg_val_loss)
+            self._plot_validation_examples(epoch, avg_val_loss, plot_all=False)
 
         # --- GIFT-eval validation ---
         if self.config["evaluate_on_gift_eval"]:
