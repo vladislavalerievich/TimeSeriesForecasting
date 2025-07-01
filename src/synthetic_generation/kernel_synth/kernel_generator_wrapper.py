@@ -31,9 +31,7 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         params = super()._sample_parameters()
         # Sample num_kernels
         num_kernels = self._parse_param_value(self.params.num_kernels)
-        params.update(
-            {"max_kernels": num_kernels, "use_gpytorch": self.params.use_gpytorch}
-        )
+        params.update({"max_kernels": num_kernels})
         return params
 
     def _generate_univariate_time_series(
@@ -63,7 +61,6 @@ class KernelGeneratorWrapper(GeneratorWrapper):
         num_channels: int,
         length: int,
         max_kernels: int,
-        use_gpytorch: bool,
         seed: Optional[int] = None,
     ) -> tuple:
         """
@@ -77,8 +74,6 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             Length of the time series.
         max_kernels : int
             Maximum number of kernels for generation.
-        use_gpytorch : bool
-            Whether to use GPyTorch for generation.
         seed : int, optional
             Random seed for generation (default: None).
 
@@ -88,13 +83,10 @@ class KernelGeneratorWrapper(GeneratorWrapper):
             Shape: [seq_len, num_channels]
         """
         values = []
+
         for i in range(num_channels):
             channel_seed = None if seed is None else seed + i
-            generator = KernelSynthGenerator(
-                length=length,
-                max_kernels=max_kernels,
-                use_gpytorch=use_gpytorch,
-            )
+            generator = KernelSynthGenerator(length=length, max_kernels=max_kernels)
             result = self._generate_univariate_time_series(generator, channel_seed)
 
             values.append(result)
@@ -140,7 +132,6 @@ class KernelGeneratorWrapper(GeneratorWrapper):
                 num_channels=num_channels,
                 length=params["total_length"],
                 max_kernels=params["max_kernels"],
-                use_gpytorch=params["use_gpytorch"],
                 seed=batch_seed,
             )
             # Ensure shape for values: (seq_len, num_channels)
