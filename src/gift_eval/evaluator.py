@@ -43,7 +43,7 @@ PRETTY_NAMES = {
 }
 
 
-class MultiStepModelWrapper:
+class TimeSeriesModelWrapper:
     """
     Wrapper class following standard GIFT eval interface patterns like TabPFN-TS and TiRex
     """
@@ -59,6 +59,7 @@ class MultiStepModelWrapper:
         self.max_context_length = max_context_length
         self.prediction_length = None
         self.ds_freq = None
+        self.current_dataset_name = "unknown"  # Track current dataset name
 
     def set_prediction_len(self, prediction_length):
         """Set prediction length for the current dataset"""
@@ -68,10 +69,14 @@ class MultiStepModelWrapper:
         """Set dataset frequency for the current dataset"""
         self.ds_freq = freq
 
+    def set_dataset_name(self, dataset_name):
+        """Set the current dataset name for better logging"""
+        self.current_dataset_name = dataset_name
+
     @property
     def model_id(self):
         """Model identifier for results"""
-        return "MultiStepModel"
+        return "TimeSeriesModel"
 
     def predict(self, dataset) -> List[SampleForecast]:
         """Generate forecasts for the given dataset"""
@@ -159,7 +164,7 @@ class MultiStepModelWrapper:
                 total_count = predictions.size
                 logger.warning(
                     f"Predictions contain {nan_count}/{total_count} NaNs ({nan_count / total_count * 100:.1f}%) "
-                    f"for {item_id} in dataset {getattr(dataset, 'name', 'unknown')}"
+                    f"for {item_id} in dataset {self.current_dataset_name}"
                 )
                 # Replace NaN with zeros for metrics computation, but log the issue
                 predictions = np.nan_to_num(predictions, nan=0.0)
@@ -177,10 +182,13 @@ class MultiStepModelWrapper:
 
 
 class GiftEvaluator:
-    def __init__(self, model, device, max_context_length: int):
+    def __init__(
+        self, model, device, max_context_length: int, evaluation_windows: int = 20
+    ):
         self.model = model
         self.device = device
-        self.predictor = MultiStepModelWrapper(model, device, max_context_length)
+        self.evaluation_windows = evaluation_windows
+        self.predictor = TimeSeriesModelWrapper(model, device, max_context_length)
 
         with open(DATASET_PROPERTIES_PATH, "r") as f:
             self.dataset_properties_map = json.load(f)
@@ -245,13 +253,24 @@ class GiftEvaluator:
         # TODO remove
         to_univariate = (
             False
-            if GiftEvalDataset(name=ds_name, term=term, to_univariate=False).target_dim
+            if GiftEvalDataset(
+                name=ds_name,
+                term=term,
+                to_univariate=False,
+                max_windows=self.evaluation_windows,
+            ).target_dim
             == 1
             else True
         )
-        dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=to_univariate)
+        dataset = GiftEvalDataset(
+            name=ds_name,
+            term=term,
+            to_univariate=to_univariate,
+            max_windows=self.evaluation_windows,
+        )
         self.predictor.set_prediction_len(dataset.prediction_length)
         self.predictor.set_ds_freq(ds_freq)
+        self.predictor.set_dataset_name(ds_name)
 
         # Get test data object
         test_data = dataset.test_data

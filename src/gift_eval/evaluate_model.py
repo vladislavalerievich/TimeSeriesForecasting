@@ -21,7 +21,7 @@ from gluonts.ev.metrics import (
 )
 
 from src.gift_eval.evaluator import GiftEvaluator
-from src.models.models import MultiStepModel
+from src.models.unified_model import TimeSeriesModel
 from src.utils.utils import device
 
 # Set up environment
@@ -99,11 +99,11 @@ logger = logging.getLogger(__name__)
 
 def load_model(model_path: str):
     """Load the MultiStepModel from checkpoint"""
-    model = MultiStepModel(
+    model = TimeSeriesModel(
         base_model_config=config["BaseModelConfig"],
         encoder_config=config["EncoderConfig"],
         scaler=config["scaler"],
-        **config["MultiStepModel"],
+        **config["TimeSeriesModel"],
     ).to(device)
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -145,7 +145,7 @@ def evaluate_on_gift_eval(model_path: str):
 
             result_entry = {
                 "dataset": f"{ds_name}/{term}",
-                "model": "MultiStepModel",
+                "model": "TimeSeriesModel",
                 "eval_metrics/MSE[mean]": metrics["MSE[mean]"],
                 "eval_metrics/MSE[0.5]": metrics["MSE[0.5]"],
                 "eval_metrics/MAE[0.5]": metrics["MAE[0.5]"],
@@ -184,7 +184,7 @@ def evaluate_on_gift_eval(model_path: str):
     df = pd.DataFrame(results, columns=output_columns)
     output_dir = Path("outputs")
     output_dir.mkdir(parents=True, exist_ok=True)
-    filename = output_dir / "gift_eval_results_multistepmodel.csv"
+    filename = output_dir / "gift_eval_results_timeseriesmodel.csv"
     df.to_csv(filename, index=False)
 
     logger.info(f"Results saved to {filename}")
@@ -195,7 +195,7 @@ def evaluate_on_gift_eval(model_path: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Evaluate a MultiStepModel on GIFT-Eval."
+        description="Evaluate a TimeSeriesModel on GIFT-Eval."
     )
     parser.add_argument(
         "--model-path",

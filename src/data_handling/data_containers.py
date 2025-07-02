@@ -18,6 +18,7 @@ class Frequency(Enum):
     T5 = "5min"  # 5 minutes
     T10 = "10min"  # 10 minutes
     T15 = "15min"  # 15 minutes
+    T30 = "30min"  # 30 minutes
 
 
 @dataclass
