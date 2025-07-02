@@ -51,7 +51,7 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
 
     def _generate_multivariate_time_series(
         self, num_channels: int, length: int, seed: Optional[int] = None, **params
-    ) -> tuple:
+    ) -> np.ndarray:
         values = []
         start_date = params.get("start")
 

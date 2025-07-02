@@ -132,6 +132,11 @@ class ForecastPFNGeneratorParams(GeneratorParams):
     # Multivariate augmentation parameters (applied in wrapper)
     mixup_prob: float = 0.1  # Probability of applying mixup augmentation
     mixup_series: int = 4  # Maximum number of series to mix in mixup
+    damp_and_spike: bool = False  # Whether to apply damping and spike augmentations
+    damping_noise_ratio: float = 0.05  # Ratio of batch to apply damping
+    spike_noise_ratio: float = 0.05  # Ratio of batch to apply spike noise
+    spike_signal_ratio: float = 0.05  # Probability of applying spike signal replacement
+    spike_batch_ratio: float = 0.05  # Ratio of batch for spike signal replacement
 
     # Univariate augmentation parameters (applied in generator)
     time_warp_prob: float = 0.1  # Probability of applying time warping
