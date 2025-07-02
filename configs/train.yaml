@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: Univariate_SineWave
+model_name: Univariate
 continue_training: false
 seed: 2025
 debugging: false
