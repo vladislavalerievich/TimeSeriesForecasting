@@ -34,8 +34,8 @@ scaler: custom_robust
 adaptive_loss_normalization: false 
 gradient_clip_val: 1000
 
-gradient_accumulation_enabled: false
-accumulation_steps: 4  # Number of batches to accumulate before updating
+gradient_accumulation_enabled: true
+accumulation_steps: 8 # Number of batches to accumulate before updating
 
 # Metrics configuration
 reset_metrics_at_log_interval: true  # Reset metrics at each log interval for consistent scope with loss
