@@ -98,6 +98,9 @@ def visualize_dataset_batches(
                 )
 
                 try:
+                    print(
+                        f"Training Dataset - Batch {batch_idx}, Sample {current_sample_idx}, frequency: {batch.frequency}"
+                    )
                     plot_from_container(
                         batch=batch,
                         sample_idx=current_sample_idx,
@@ -165,6 +168,9 @@ def visualize_dataset_batches(
                 )
 
                 try:
+                    print(
+                        f"Validation Dataset - Batch {batch_idx}, Sample {current_sample_idx}, frequency: {batch.frequency}"
+                    )
                     plot_from_container(
                         batch=batch,
                         sample_idx=current_sample_idx,
