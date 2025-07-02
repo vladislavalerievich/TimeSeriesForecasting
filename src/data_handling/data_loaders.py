@@ -221,12 +221,12 @@ class GiftEvalDataLoader:
     Supports both training and validation modes.
     """
 
-    # SHORT_DATASETS = "m4_yearly m4_quarterly m4_monthly m4_weekly m4_daily m4_hourly electricity/15T electricity/H electricity/D electricity/W solar/10T solar/H solar/D solar/W hospital covid_deaths us_births/D us_births/M us_births/W saugeenday/D saugeenday/M saugeenday/W temperature_rain_with_missing kdd_cup_2018_with_missing/H kdd_cup_2018_with_missing/D car_parts_with_missing restaurant hierarchical_sales/D hierarchical_sales/W LOOP_SEATTLE/5T LOOP_SEATTLE/H LOOP_SEATTLE/D SZ_TAXI/15T SZ_TAXI/H M_DENSE/H M_DENSE/D ett1/15T ett1/H ett1/D ett1/W ett2/15T ett2/H ett2/D ett2/W jena_weather/10T jena_weather/H jena_weather/D bitbrains_fast_storage/5T bitbrains_fast_storage/H bitbrains_rnd/5T bitbrains_rnd/H bizitobs_application bizitobs_service bizitobs_l2c/5T bizitobs_l2c/H"
+    SHORT_DATASETS = "m4_yearly m4_quarterly m4_monthly m4_weekly m4_daily m4_hourly electricity/15T electricity/H electricity/D electricity/W solar/10T solar/H solar/D solar/W hospital covid_deaths us_births/D us_births/M us_births/W saugeenday/D saugeenday/M saugeenday/W temperature_rain_with_missing kdd_cup_2018_with_missing/H kdd_cup_2018_with_missing/D car_parts_with_missing restaurant hierarchical_sales/D hierarchical_sales/W LOOP_SEATTLE/5T LOOP_SEATTLE/H LOOP_SEATTLE/D SZ_TAXI/15T SZ_TAXI/H M_DENSE/H M_DENSE/D ett1/15T ett1/H ett1/D ett1/W ett2/15T ett2/H ett2/D ett2/W jena_weather/10T jena_weather/H jena_weather/D bitbrains_fast_storage/5T bitbrains_fast_storage/H bitbrains_rnd/5T bitbrains_rnd/H bizitobs_application bizitobs_service bizitobs_l2c/5T bizitobs_l2c/H"
 
-    # MED_LONG_DATASETS = "electricity/15T electricity/H solar/10T solar/H kdd_cup_2018_with_missing/H LOOP_SEATTLE/5T LOOP_SEATTLE/H SZ_TAXI/15T M_DENSE/H ett1/15T ett1/H ett2/15T ett2/H jena_weather/10T jena_weather/H bitbrains_fast_storage/5T bitbrains_rnd/5T bizitobs_application bizitobs_service bizitobs_l2c/5T bizitobs_l2c/H"
+    MED_LONG_DATASETS = "electricity/15T electricity/H solar/10T solar/H kdd_cup_2018_with_missing/H LOOP_SEATTLE/5T LOOP_SEATTLE/H SZ_TAXI/15T M_DENSE/H ett1/15T ett1/H ett2/15T ett2/H jena_weather/10T jena_weather/H bitbrains_fast_storage/5T bitbrains_rnd/5T bizitobs_application bizitobs_service bizitobs_l2c/5T bizitobs_l2c/H"
 
-    SHORT_DATASETS = "us_births/D"
-    MED_LONG_DATASETS = "electricity/15T"
+    # SHORT_DATASETS = "us_births/D"
+    # MED_LONG_DATASETS = "electricity/15T"
     ALL_DATASETS = list(set(SHORT_DATASETS.split() + MED_LONG_DATASETS.split()))
     TERMS = ["short", "medium", "long"]
 
@@ -253,7 +253,7 @@ class GiftEvalDataLoader:
             shuffle: Whether to shuffle data
             to_univariate: Whether to convert multivariate data to multiple univariate series
             num_batches_per_epoch: Optional limit on batches per epoch
-            max_context_length: Optional maximum context length to prevent memory issues
+            max_context_length: Optional maximum total window length (context + forecast) to prevent memory issues
             training_windows: Number of windows to use for training (-1 = all windows)
             evaluation_windows: Number of windows to use for validation/testing
             skip_datasets_with_nans: Whether to skip datasets/series that contain NaN values
@@ -315,6 +315,15 @@ class GiftEvalDataLoader:
                 try:
                     logger.info(f"Loading dataset {ds_name} with term {term}...")
 
+                    # Special case for M4 datasets - temporarily use 1 evaluation window
+                    original_evaluation_windows = self.evaluation_windows
+                    original_max_windows = self.max_windows
+                    if "m4" in ds_name:  # Special case for M4 datasets
+                        self.evaluation_windows = 1
+                        logger.info(
+                            f"M4 dataset detected: using {self.evaluation_windows} evaluation window(s)"
+                        )
+
                     # Determine if we need to convert to univariate
                     temp_dataset = GiftEvalDataset(
                         name=ds_name, term=term, to_univariate=False
@@ -373,6 +382,10 @@ class GiftEvalDataLoader:
                         logger.warning(
                             f"❌ No samples generated for {ds_name} (term: {term})"
                         )
+
+                    # Restore original evaluation_windows settings
+                    self.evaluation_windows = original_evaluation_windows
+                    self.max_windows = original_max_windows
 
                 except Exception as e:
                     logger.error(
@@ -544,9 +557,15 @@ class GiftEvalDataLoader:
         num_dims, seq_len = history.shape
 
         # Calculate minimum context length needed
-        min_context_length = max(
-            32, prediction_length
-        )  # At least 32 steps or prediction length
+        if "m4" in dataset_name.lower():
+            # M4 datasets often have shorter series, use more flexible minimum context
+            min_context_length = max(
+                prediction_length, 8
+            )  # For M4: at least prediction_length or 8 steps
+        else:
+            min_context_length = max(
+                32, prediction_length
+            )  # At least 32 steps or prediction length
         window_size = min_context_length + prediction_length
 
         # Generate sliding windows
@@ -567,9 +586,9 @@ class GiftEvalDataLoader:
 
             window_data = history[:, start_idx:end_idx]
 
-            # Apply max context length if specified
+            # Apply max context length if specified (max_context_length now represents total window size)
             if self.max_context_length is not None:
-                max_window_size = self.max_context_length + prediction_length
+                max_window_size = self.max_context_length
                 if window_data.shape[1] > max_window_size:
                     # Take the most recent data
                     window_data = window_data[:, -max_window_size:]
@@ -595,9 +614,19 @@ class GiftEvalDataLoader:
             window_count += 1
 
         # If no valid windows generated, create at least one from the end of the series
-        if not windowed_samples and seq_len >= prediction_length + 10:
+        min_series_length = prediction_length + 10
+        if "m4" in dataset_name.lower():
+            min_series_length = prediction_length + 2
+
+        if not windowed_samples and seq_len >= min_series_length:
+            # Calculate effective max context length (max_context_length now represents total window size)
+            effective_max_context = (
+                (self.max_context_length - prediction_length)
+                if self.max_context_length
+                else None
+            )
             context_length = min(
-                seq_len - prediction_length, self.max_context_length or seq_len
+                seq_len - prediction_length, effective_max_context or seq_len
             )
             window_data = history[:, -context_length - prediction_length :]
 
@@ -615,9 +644,39 @@ class GiftEvalDataLoader:
                     "term": term,
                 }
                 windowed_samples.append(sample)
+            elif "m4" in dataset_name.lower() and not self.skip_datasets_with_nans:
+                # For M4 datasets, try cleaning the fallback window if it has NaN/inf values
+                # Note: window_data was created using the updated effective_max_context logic above
+                cleaned_window = np.nan_to_num(
+                    window_data, nan=0.0, posinf=0.0, neginf=0.0
+                )
+                sample = {
+                    "window_data": cleaned_window,
+                    "dataset_name": dataset_name,
+                    "prediction_length": prediction_length,
+                    "frequency": frequency,
+                    "start": start,
+                    "original_start_idx": max(
+                        0, seq_len - context_length - prediction_length
+                    ),
+                    "term": term,
+                }
+                windowed_samples.append(sample)
+                logger.debug(
+                    f"Used cleaned fallback window for {dataset_name} due to NaN/inf values"
+                )
 
         if not windowed_samples:
-            logger.warning(f"No valid windows generated for {dataset_name}")
+            # Add debug logging for M4 datasets to understand why windows aren't generated
+            if "m4" in dataset_name.lower():
+                logger.warning(
+                    f"No valid windows generated for {dataset_name}: "
+                    f"seq_len={seq_len}, window_size={window_size}, "
+                    f"min_context_length={min_context_length}, prediction_length={prediction_length}, "
+                    f"has_nan={np.isnan(history).any()}, has_inf={np.isinf(history).any()}"
+                )
+            else:
+                logger.warning(f"No valid windows generated for {dataset_name}")
 
         return windowed_samples
 

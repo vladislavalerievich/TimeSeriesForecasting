@@ -15,7 +15,7 @@ from src.synthetic_generation.common.constants import (
 # Cap the total length for low-frequency series to prevent timestamp overflow
 # Pandas datetime range is roughly 1677-2262, so we need conservative limits
 
-MAX_YEARS = 99
+MAX_YEARS = 500
 
 # Maximum sequence lengths to avoid pandas OutOfBoundsDatetime errors
 SHORT_FREQUENCY_MAX_LENGTHS = {

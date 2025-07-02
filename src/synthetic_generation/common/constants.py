@@ -1,14 +1,16 @@
-from datetime import date, timedelta
+from datetime import date
 
 import numpy as np
 
 from src.data_handling.data_containers import Frequency
 
-DEFAULT_END_DATE = date.today()  # Use current date as end date
-DEFAULT_START_DATE = DEFAULT_END_DATE - timedelta(days=200 * 365)  # 200 years back
+# Clip to safe bounds for np.datetime64 (with margin)
+DEFAULT_START_DATE = date(1700, 1, 1)
+DEFAULT_END_DATE = date(2200, 1, 1)
+
+
 BASE_START_DATE = np.datetime64(DEFAULT_START_DATE)
 BASE_END_DATE = np.datetime64(DEFAULT_END_DATE)
-
 
 FREQUENCY_MAPPING = {
     Frequency.A: (

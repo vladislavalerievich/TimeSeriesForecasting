@@ -8,7 +8,7 @@ wandb: true # whether to log to wandb
 
 # GIFT-eval specific settings (uses all datasets and terms automatically)
 to_univariate: true  
-max_context_length: 2048   
+max_context_length: 2048   # Total window length (context + forecast). Effective context = max_context_length - prediction_length
 evaluate_on_test: true  
 skip_datasets_with_nans: true
 
@@ -32,14 +32,15 @@ gradient_clip_val: 1000
 gradient_accumulation_enabled: false
 accumulation_steps: 4  # Number of batches to accumulate before updating
 
-
+# Metrics configuration
+reset_metrics_at_log_interval: true  # Reset metrics at each log interval for consistent scope with loss
 
 # TimeSeriesModel Configuration
 TimeSeriesModel:
   # Core architecture
   embed_size: 128
   token_embed_dim: 256
-  num_encoder_layers: 6
+  num_encoder_layers: 5
   
   # Scaling and preprocessing
   scaler: custom_robust
@@ -77,4 +78,4 @@ TimeSeriesModel:
     conv_size: 4
     allow_neg_eigval: true
     use_forget_gate: true
-    num_householder: 1
+    num_householder: 2

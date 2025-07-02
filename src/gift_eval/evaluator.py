@@ -56,6 +56,8 @@ class TimeSeriesModelWrapper:
     ):
         self.model = model
         self.device = device
+        # max_context_length now represents total window length (context + forecast)
+        # Effective context length = max_context_length - prediction_length
         self.max_context_length = max_context_length
         self.prediction_length = None
         self.ds_freq = None
@@ -114,9 +116,16 @@ class TimeSeriesModelWrapper:
 
             num_dims, seq_len = history.shape
 
-            if seq_len > self.max_context_length:
-                history = history[:, -self.max_context_length :]
-                seq_len = self.max_context_length
+            # Calculate effective max context length (max_context_length now represents total window size)
+            effective_max_context = (
+                self.max_context_length - self.prediction_length
+                if self.max_context_length and self.prediction_length
+                else self.max_context_length
+            )
+
+            if effective_max_context and seq_len > effective_max_context:
+                history = history[:, -effective_max_context:]
+                seq_len = effective_max_context
 
             history_values = torch.from_numpy(history.T).unsqueeze(0).to(self.device)
             frequency = get_frequency_enum(freq)
@@ -317,7 +326,12 @@ class GiftEvaluator:
     def _plot_and_log_samples(self, plot_samples, forecasts, task, epoch):
         """Generate and log sample plots for GIFT evaluation datasets."""
         ds_name, term = task["ds_name"], task["term"]
-        max_context = self.predictor.max_context_length
+        # Calculate effective max context length (max_context_length now represents total window size)
+        effective_max_context = (
+            self.predictor.max_context_length - self.predictor.prediction_length
+            if self.predictor.max_context_length and self.predictor.prediction_length
+            else self.predictor.max_context_length
+        )
 
         # Only plot the first window (first sample) for each dataset
         if plot_samples and forecasts:
@@ -338,8 +352,11 @@ class GiftEvaluator:
                     if history_values.ndim == 1:
                         history_values = history_values.reshape(1, -1)
 
-                if history_values.shape[1] > max_context:
-                    history_values = history_values[:, -max_context:]
+                if (
+                    effective_max_context
+                    and history_values.shape[1] > effective_max_context
+                ):
+                    history_values = history_values[:, -effective_max_context:]
 
                 # Ensure future is a 2D numpy array [num_dims, seq_len]
                 if isinstance(future_values, np.ndarray):

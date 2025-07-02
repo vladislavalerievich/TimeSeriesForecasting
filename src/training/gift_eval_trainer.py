@@ -58,6 +58,9 @@ class GiftEvalTrainingPipeline:
         self.best_gift_eval_metrics = {}
         self.epoch_times = []
 
+        # Global step tracking for consistent wandb logging
+        self.global_step = 0
+
         # Gradient accumulation parameters
         self.gradient_accumulation_enabled = self.config.get(
             "gradient_accumulation_enabled", False
@@ -69,6 +72,19 @@ class GiftEvalTrainingPipeline:
             )
             effective_batch_size = self.config["batch_size"] * self.accumulation_steps
             logger.info(f"📊 Effective batch size: {effective_batch_size}")
+
+        # Metrics scope control - whether to reset metrics at each logging interval
+        self.reset_metrics_at_log_interval = self.config.get(
+            "reset_metrics_at_log_interval", True
+        )
+        if self.reset_metrics_at_log_interval:
+            logger.info(
+                "📊 Metrics will be reset at each logging interval (same scope as loss)"
+            )
+        else:
+            logger.info(
+                "📊 Metrics will accumulate throughout the epoch (different scope from loss)"
+            )
 
         logger.info("🚀 Initializing GIFT-eval training pipeline...")
         logger.info(f"🔧 Using device: {self.device}")
@@ -93,6 +109,9 @@ class GiftEvalTrainingPipeline:
         # --- Setup GIFT-eval data loaders ---
         logger.info("📊 Setting up GIFT-eval data loaders...")
 
+        # max_context_length represents total window length (context + forecast)
+        # e.g., if max_context_length=2048 and prediction_length=720,
+        # then effective max context length = 2048 - 720 = 1328
         max_context_length = self.config.get("max_context_length", 2048)
 
         # Window configuration
@@ -206,7 +225,10 @@ class GiftEvalTrainingPipeline:
                 self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
             self.initial_epoch = ckpt["epoch"]
             self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
-            logger.info(f"✅ Resumed from epoch {self.initial_epoch + 1}")
+            self.global_step = ckpt.get("global_step", 0)
+            logger.info(
+                f"✅ Resumed from epoch {self.initial_epoch + 1}, global step {self.global_step}"
+            )
         else:
             logger.info("🆕 Starting fresh training (no checkpoint found)")
 
@@ -222,6 +244,7 @@ class GiftEvalTrainingPipeline:
             else None,
             "epoch": epoch,
             "best_val_loss": self.best_val_loss,
+            "global_step": self.global_step,
             "config": self.config,
         }
 
@@ -337,6 +360,10 @@ class GiftEvalTrainingPipeline:
         gradient_norms = []
         accumulated_loss = 0.0
 
+        # Separate tracking for progress bar display
+        display_loss = 0.0
+        batches_processed = 0
+
         # Initialize gradients for the first accumulation step
         self.optimizer.zero_grad()
 
@@ -380,6 +407,11 @@ class GiftEvalTrainingPipeline:
             loss_time = loss_end_time - loss_start_time
             logger.info(f"  📈 Loss Computation    : {loss_time:.4f}s")
 
+            # Track original loss for display (before scaling)
+            original_loss = loss.item()
+            display_loss += original_loss
+            batches_processed += 1
+
             # Scale loss for gradient accumulation
             if self.gradient_accumulation_enabled:
                 loss = loss / self.accumulation_steps
@@ -412,6 +444,10 @@ class GiftEvalTrainingPipeline:
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
+
+                # Increment global step counter when optimizer actually steps
+                self.global_step += 1
+
                 optimizer_step_end_time = time.time()
                 optimizer_time = optimizer_step_end_time - optimizer_step_start_time
                 logger.info(f"  ⚙️  Optimizer Step      : {optimizer_time:.4f}s")
@@ -439,8 +475,8 @@ class GiftEvalTrainingPipeline:
             metrics_time = metrics_update_end_time - metrics_update_start_time
             logger.info(f"  📊 Metrics Update      : {metrics_time:.4f}s")
 
-            # Update progress bar with timing info
-            current_loss = running_loss / (batch_idx + 1)
+            # Update progress bar with timing info - use proper average for display
+            current_loss = display_loss / batches_processed
             total_batch_time = forward_time + backward_time + loss_time + metrics_time
             if (
                 not self.gradient_accumulation_enabled
@@ -458,30 +494,22 @@ class GiftEvalTrainingPipeline:
                 }
             )
 
-            # Log progress
-            effective_step = (
-                batch_idx // self.accumulation_steps
-                if self.gradient_accumulation_enabled
-                else batch_idx
-            )
+            # Log progress - only when we actually performed an optimizer step
+            if (
+                not self.gradient_accumulation_enabled
+                or is_accumulation_step
+                or is_last_batch
+            ) and self.global_step % self.log_interval == 0:
+                avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
+                self._log_training_metrics(
+                    epoch, running_loss, avg_grad_norm, self.log_interval
+                )
+                running_loss = 0.0
 
-            if self.gradient_accumulation_enabled:
-                if (
-                    is_accumulation_step
-                    and (effective_step + 1) % self.log_interval == 0
-                ):
-                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
-                    self._log_training_metrics(
-                        epoch, effective_step, running_loss, avg_grad_norm
-                    )
-                    running_loss = 0.0
-            else:
-                if (batch_idx + 1) % self.log_interval == 0:
-                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
-                    self._log_training_metrics(
-                        epoch, batch_idx, running_loss, avg_grad_norm
-                    )
-                    running_loss = 0.0
+                # Reset metrics if configured to match loss scope
+                if self.reset_metrics_at_log_interval:
+                    for metric in self.train_metrics.values():
+                        metric.reset()
 
             # --- Reset batch timer for the next iteration's data loading ---
             batch_start_time = time.time()
@@ -499,12 +527,26 @@ class GiftEvalTrainingPipeline:
     def _log_training_metrics(
         self,
         epoch: int,
-        step_idx: int,
         running_loss: float,
         avg_grad_norm: float,
+        log_interval: int,
     ) -> None:
-        """Log training metrics during training."""
-        avg_loss = running_loss / self.log_interval
+        """Log training metrics during training.
+
+        Note: Loss represents average over last log_interval optimizer steps.
+        Metrics scope depends on reset_metrics_at_log_interval config:
+        - If True: metrics represent values over last log_interval optimizer steps (same as loss)
+        - If False: metrics represent cumulative values since epoch start (different from loss)
+        """
+        # Calculate average loss per optimizer step (not per batch when gradient accumulation is used)
+        if self.gradient_accumulation_enabled:
+            avg_loss = running_loss / log_interval  # Average loss per optimizer step
+            loss_description = "avg_loss_per_opt_step"
+        else:
+            avg_loss = (
+                running_loss / log_interval
+            )  # Average loss per batch (same as optimizer step)
+            loss_description = "avg_loss_per_batch"
 
         # Prepare metrics dictionary
         computed_metrics = self._prepare_computed_metrics(self.train_metrics)
@@ -529,16 +571,16 @@ class GiftEvalTrainingPipeline:
             **effective_ranks,
         }
 
-        # Calculate global step
+        # Add metadata about what the metrics represent
+        train_metrics["loss_type"] = loss_description
+        train_metrics["metrics_scope"] = (
+            "interval" if self.reset_metrics_at_log_interval else "epoch"
+        )
         if self.gradient_accumulation_enabled:
-            global_step = (
-                epoch * (len(self.train_loader) // self.accumulation_steps) + step_idx
-            )
-        else:
-            global_step = epoch * len(self.train_loader) + step_idx
+            train_metrics["accumulation_steps"] = self.accumulation_steps
 
-        # Log to WandB with better organization
-        self._log_metrics_to_wandb(train_metrics, "train", epoch, global_step)
+        # Log to WandB with better organization using global step
+        self._log_metrics_to_wandb(train_metrics, "train", epoch, self.global_step)
 
     def _validate_epoch(self, epoch: int) -> float:
         """Validate model on GIFT-eval validation datasets."""
@@ -587,7 +629,7 @@ class GiftEvalTrainingPipeline:
         }
 
         # Log to WandB
-        self._log_metrics_to_wandb(val_metrics, "validation", epoch)
+        self._log_metrics_to_wandb(val_metrics, "validation", epoch, self.global_step)
 
         # --- Test evaluation on held-out test data ---
         if self.config.get("evaluate_on_test", True):
@@ -674,7 +716,7 @@ class GiftEvalTrainingPipeline:
             for metric_name, value in aggregated_metrics.items():
                 wandb_metrics[f"gift_eval/aggregated/{metric_name}"] = value
 
-            wandb.log(wandb_metrics)
+            wandb.log(wandb_metrics, step=self.global_step)
 
         # Enhanced console logging
         logger.info("=" * 100)
@@ -762,7 +804,7 @@ class GiftEvalTrainingPipeline:
                 {f"epoch_summary/{k}": v for k, v in memory_stats.items()}
             )
 
-            wandb.log(epoch_summary)
+            wandb.log(epoch_summary, step=self.global_step)
 
         # Save checkpoint (always save, but mark if best)
         self._save_checkpoint(epoch, val_loss, is_best)
