@@ -19,7 +19,7 @@ MAX_YEARS = 500
 
 # Maximum sequence lengths to avoid pandas OutOfBoundsDatetime errors
 SHORT_FREQUENCY_MAX_LENGTHS = {
-    Frequency.A: MAX_YEARS,
+    # Frequency.A: MAX_YEARS,
     Frequency.Q: MAX_YEARS * 4,
     Frequency.M: MAX_YEARS * 12,
     Frequency.W: int(MAX_YEARS * 52.1775),
@@ -292,11 +292,10 @@ def check_start_date_safety(
 
 
 def select_safe_start_date(
-    history_length: int,
-    future_length: int,
+    total_length: int,
     frequency: Frequency,
     rng: np.random.Generator = np.random.default_rng(),
-    max_retries: int = 5,
+    max_retries: int = 10,
 ) -> np.datetime64:
     """
     Select a safe start date that ensures the entire time series (history + future)
@@ -332,7 +331,6 @@ def select_safe_start_date(
         If no safe start date is found after max_retries or if the required
         time span exceeds the available date window
     """
-    total_length = history_length + future_length
     _, _, days_per_period = FREQUENCY_MAPPING[frequency]
 
     # Calculate approximate duration in days

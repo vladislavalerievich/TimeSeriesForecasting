@@ -1,7 +1,7 @@
 logs/
 *.png
 *.pth
-*.sh
+# *.sh
 *.slurm
 *.pkl
 

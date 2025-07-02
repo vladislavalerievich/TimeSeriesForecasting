@@ -128,16 +128,22 @@ class ForecastPFNGeneratorParams(GeneratorParams):
         1.0  # Probability of applying transition between two series
     )
     random_walk: bool = False
-    # Parameters for data augmentation
-    mixup_prob: float = 0.0  # Probability of applying mixup augmentation
+
+    # Multivariate augmentation parameters (applied in wrapper)
+    mixup_prob: float = 0.1  # Probability of applying mixup augmentation
     mixup_series: int = 4  # Maximum number of series to mix in mixup
-    damp_and_spike: bool = False  # Whether to apply damping and spike augmentations
-    damping_noise_ratio: float = 0.05  # Probability of applying damping noise
-    spike_noise_ratio: float = 0.05  # Probability of applying spike noise
-    spike_signal_ratio: float = (
-        0.05  # Probability of replacing series with spike-only signal
-    )
-    spike_batch_ratio: float = 0.05  # Fraction of batch to replace with spike-only signals if spike_signal_ratio is triggered
+
+    # Univariate augmentation parameters (applied in generator)
+    time_warp_prob: float = 0.1  # Probability of applying time warping
+    time_warp_strength: float = 0.05  # Strength of time warping effect
+    magnitude_scale_prob: float = 0.2  # Probability of applying magnitude scaling
+    magnitude_scale_range: Tuple[float, float] = (
+        0.9,
+        1.1,
+    )  # Range for magnitude scaling
+    damping_prob: float = 0.1  # Probability of applying damping augmentation
+    spike_prob: float = 0.15  # Probability of applying spike augmentation
+    pure_spike_prob: float = 0.02  # Probability of replacing with pure spike signal
 
 
 @dataclass
