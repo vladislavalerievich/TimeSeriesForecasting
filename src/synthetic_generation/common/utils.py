@@ -309,16 +309,14 @@ def select_safe_start_date(
 
     Parameters
     ----------
-    history_length : int
-        Length of the history window
-    future_length : int
-        Length of the future window
+    total_length : int
+        Total length of the time series (history + future)
     frequency : Frequency
         Time series frequency
     rng : np.random.Generator
         Random number generator instance
     max_retries : int, optional
-        Maximum number of retry attempts (default: 5)
+        Maximum number of retry attempts (default: 10)
 
     Returns
     -------

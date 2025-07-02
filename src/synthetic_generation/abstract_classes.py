@@ -154,9 +154,7 @@ class GeneratorWrapper:
         if self.params.start is not None:
             start = self.params.start
         else:
-            start = select_safe_start_date(
-                history_length, future_length, frequency, self.rng
-            )
+            start = select_safe_start_date(total_length, frequency, self.rng)
 
         return {
             "total_length": total_length,
