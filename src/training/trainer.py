@@ -77,9 +77,6 @@ class TrainingPipeline:
             logger.info(
                 f"Gradient accumulation enabled with {self.accumulation_steps} steps"
             )
-            logger.info(
-                f"Effective batch size: {self.config['batch_size'] * self.accumulation_steps}"
-            )
 
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
@@ -582,7 +579,7 @@ class TrainingPipeline:
                 datasets_to_eval=ALL_DATASETS,
                 term="short",
                 epoch=epoch,
-                plot=self.config["wandb"],  # Only plot if wandb is enabled
+                plot=False,  # Only plot if wandb is enabled
             )
             # Log GIFT eval metrics (always to logger, optionally to wandb)
             self._log_gift_eval_metrics(epoch, gift_eval_metrics)
@@ -657,11 +654,6 @@ class TrainingPipeline:
                 else:
                     running_loss += loss.item()
                     epoch_loss += loss.item()
-            else:
-                # If optimizer doesn't step, log a placeholder
-                logger.info(
-                    "  - Optimizer Step      : 0.0000s (Accumulating Gradients)"
-                )
 
             # --- Measure Metrics Update ---
             self._update_metrics(

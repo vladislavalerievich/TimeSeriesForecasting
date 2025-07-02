@@ -15,16 +15,16 @@ adaptive_loss_normalization: false
 gradient_clip_val: 10000
 
 gradient_accumulation_enabled: false
-accumulation_steps: 8  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
+accumulation_steps: 4  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
 # total_length: 2048 # history length + future length
 
-evaluate_on_gift_eval: false
+evaluate_on_gift_eval: true
 gift_eval_max_context_length: 2048  
 
 num_epochs: 60
-num_training_iterations_per_epoch: 512
-log_interval: 128
+num_training_iterations_per_epoch: 1
+log_interval: 1
 
 # TimeSeriesModel Configuration
 TimeSeriesModel:
