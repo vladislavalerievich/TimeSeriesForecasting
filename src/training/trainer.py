@@ -108,7 +108,7 @@ class TrainingPipeline:
         # Training data loader (load from disk)
         train_data_path = self.config.get(
             "train_data_path",
-            "data/synthetic_validation_dataset/train/dataset.pt",
+            "data/synthetic_validation_dataset_full_mix/train/dataset.pt",
         )
         logger.info(f"Training data path: {train_data_path}")
         self.train_loader = SyntheticTrainDataLoader(
@@ -122,7 +122,7 @@ class TrainingPipeline:
         # Validation data loader (load from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_validation_dataset/val/dataset.pt",
+            "data/synthetic_validation_dataset_full_mix/val/dataset.pt",
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
@@ -605,25 +605,14 @@ class TrainingPipeline:
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
 
-            logger.info(f"--- Batch {batch_idx} Timing Analysis ---")
-
             # --- Measure Data Loading and Preparation ---
             data_loading_end_time = time.time()
-            logger.info(
-                f"  - Data Loading & Prep : {data_loading_end_time - batch_start_time:.4f}s"
-            )
             batch.to_device(self.device)
-            logger.info(
-                f"  - History Shape: {batch.history_values.shape}, Future Shape: {batch.future_values.shape}"
-            )
 
             # --- Measure Forward Pass ---
             forward_start_time = time.time()
             output = self.model(batch)
             forward_end_time = time.time()
-            logger.info(
-                f"  - Forward Pass        : {forward_end_time - forward_start_time:.4f}s"
-            )
 
             # --- Measure Loss Computation ---
             loss_start_time = time.time()
@@ -631,9 +620,6 @@ class TrainingPipeline:
                 output, batch.future_values
             )
             loss_end_time = time.time()
-            logger.info(
-                f"  - Loss Computation    : {loss_end_time - loss_start_time:.4f}s"
-            )
 
             # Scale loss for gradient accumulation
             if self.gradient_accumulation_enabled:
@@ -643,9 +629,6 @@ class TrainingPipeline:
             backward_start_time = time.time()
             loss.backward()
             backward_end_time = time.time()
-            logger.info(
-                f"  - Backward Pass       : {backward_end_time - backward_start_time:.4f}s"
-            )
 
             accumulated_loss += loss.item()
 
@@ -696,9 +679,6 @@ class TrainingPipeline:
                 self.train_metrics, inv_scaled_output, batch.future_values
             )
             metrics_update_end_time = time.time()
-            logger.info(
-                f"  - Metrics Update      : {metrics_update_end_time - metrics_update_start_time:.4f}s"
-            )
 
             # Log progress based on effective updates
             effective_step = (

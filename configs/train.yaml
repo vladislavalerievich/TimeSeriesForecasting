@@ -22,16 +22,16 @@ accumulation_steps: 8  # Number of batches to accumulate before updating (effect
 evaluate_on_gift_eval: true
 gift_eval_max_context_length: 2048  
 
-num_epochs: 20
-num_training_iterations_per_epoch: 128
-log_interval: 5
+num_epochs: 60
+num_training_iterations_per_epoch: 512
+log_interval: 16
 
 # TimeSeriesModel Configuration
 TimeSeriesModel:
   # Core architecture
   embed_size: 128
   token_embed_dim: 256
-  num_encoder_layers: 6
+  num_encoder_layers: 5
   
   # Scaling and preprocessing
   scaler: custom_robust
@@ -69,4 +69,4 @@ TimeSeriesModel:
     conv_size: 4
     allow_neg_eigval: true
     use_forget_gate: true
-    num_householder: 1
+    num_householder: 2
