@@ -393,10 +393,10 @@ class TrainingPipeline:
         # Optionally log to wandb
         if self.config["wandb"]:
             wandb_dict = {f"{metric_type}/{k}": v for k, v in metrics_dict.items()}
-
-            if step is not None:
-                wandb_dict["train/step"] = step
-            wandb.log(wandb_dict)
+            if metric_type == "train" and step is not None:
+                wandb.log(wandb_dict, step=step)
+            else:
+                wandb.log({**wandb_dict, "epoch": epoch})
 
     def _log_training_metrics(
         self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
