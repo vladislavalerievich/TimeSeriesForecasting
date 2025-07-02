@@ -65,7 +65,8 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
             result = self._generate_univariate_time_series(
                 generator, start_date, channel_seed
             )
-            values.append(result)
+            # Extract the actual values from the result dictionary
+            values.append(result["values"])
 
         values = np.column_stack(values) if num_channels > 1 else np.array(values[0])
         return values

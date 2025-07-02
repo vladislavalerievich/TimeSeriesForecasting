@@ -183,7 +183,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
 
     def _apply_univariate_augmentations(self, values: np.ndarray) -> np.ndarray:
         """Apply univariate-specific augmentations to a single time series."""
-        augmented_values = values.copy()
+        augmented_values = np.asarray(values).copy()
 
         # Apply time warping with some probability
         if (
@@ -217,6 +217,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
             and self.rng.random() < self.params.spike_prob
         ):
             spikes = generate_spikes(len(augmented_values))
+            spikes = spikes.numpy()  # Convert torch tensor to numpy array
             if spikes.max() < 0:
                 augmented_values = augmented_values * spikes
             else:
@@ -228,7 +229,7 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
             and self.rng.random() < self.params.pure_spike_prob
         ):
             spikes = generate_spikes(len(augmented_values))
-            augmented_values = spikes
+            augmented_values = spikes.numpy()  # Convert torch tensor to numpy array
 
         return augmented_values
 
@@ -371,6 +372,8 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
 
         # Apply univariate augmentations if requested
         if apply_augmentations:
+            # Ensure values is a numpy array before augmentation
+            values = np.asarray(values)
             values = self._apply_univariate_augmentations(values)
 
         return {
