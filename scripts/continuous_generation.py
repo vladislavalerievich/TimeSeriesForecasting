@@ -111,7 +111,13 @@ class GeneratorWrapper:
             self.generator = ForecastPFNGenerator(params, length=length)
         elif generator_type.lower() == "sinewave":
             params = SineWaveGeneratorParams(total_length=length, **kwargs)
-            self.generator = SineWaveGenerator(params, length=length)
+            self.generator = SineWaveGenerator(
+                length=length,
+                period_range=params.period_range,
+                amplitude_range=params.amplitude_range,
+                phase_range=params.phase_range,
+                noise_level=params.noise_level,
+            )
         else:
             raise ValueError(f"Unsupported generator type: {generator_type}")
 
