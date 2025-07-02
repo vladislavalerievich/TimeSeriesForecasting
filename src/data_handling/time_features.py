@@ -43,10 +43,9 @@ from gluonts.time_feature.holiday import (
 from gluonts.time_feature.seasonality import get_seasonality
 
 from src.data_handling.data_containers import Frequency
-from src.synthetic_generation.common.constants import FREQUENCY_MAPPING
+from src.synthetic_generation.common.constants import BASE_START_DATE, FREQUENCY_MAPPING
 from src.synthetic_generation.common.utils import (
     check_start_date_safety,
-    select_safe_start_date,
 )
 from src.utils.utils import device
 
@@ -436,7 +435,7 @@ def compute_batch_time_features(
     time_feature_config: Optional[Dict[str, Any]] = None,
 ):
     """
-    Compute enhanced time features from start timestamp and frequency.
+    Compute enhanced time features from start timestamp and frequency with robust error handling.
 
     Since history_length, future_length, and start are the same across the batch,
     compute features once and return single tensors that can be expanded to batch size.
@@ -462,56 +461,308 @@ def compute_batch_time_features(
         (history_time_features, future_time_features) where each is a torch.Tensor
         of shape (length, K_max).
     """
+    # Store original parameters for logging
+    original_start = start
+    original_frequency = frequency
+    original_history_length = history_length
+    original_future_length = future_length
 
-    freq_str = _get_frequency_str(frequency, for_date_range=True)
-    period_freq_str = _get_period_frequency_str(frequency)
+    # Calculate safe fallback values based on available date range
+    def _calculate_safe_max_lengths(freq: Frequency) -> Tuple[int, int]:
+        """
+        Calculate safe maximum history and future lengths for a given frequency
+        based on the available date range (BASE_START_DATE to BASE_END_DATE).
+
+        Returns (max_history_length, max_future_length)
+        """
+        # Total available time span: 500 years (1700-2200)
+        total_available_years = 500
+
+        # Calculate periods that fit in the available range for each frequency
+        freq_periods = {
+            Frequency.A: total_available_years,  # 500 annual periods
+            Frequency.Q: total_available_years * 4,  # ~2,000 quarterly periods
+            Frequency.M: total_available_years * 12,  # ~6,000 monthly periods
+            Frequency.W: int(total_available_years * 52.18),  # ~26,090 weekly periods
+            Frequency.D: int(total_available_years * 365.25),  # ~182,625 daily periods
+            Frequency.H: int(
+                total_available_years * 365.25 * 24
+            ),  # ~4.38M hourly periods
+            Frequency.T1: int(
+                total_available_years * 365.25 * 24 * 60
+            ),  # ~262M minute periods
+            Frequency.T5: int(
+                total_available_years * 365.25 * 24 * 12
+            ),  # ~52.5M 5-min periods
+            Frequency.T10: int(
+                total_available_years * 365.25 * 24 * 6
+            ),  # ~26.3M 10-min periods
+            Frequency.T15: int(
+                total_available_years * 365.25 * 24 * 4
+            ),  # ~17.5M 15-min periods
+            Frequency.S: int(
+                total_available_years * 365.25 * 24 * 60 * 60
+            ),  # ~15.7B second periods
+        }
+
+        total_periods = freq_periods.get(freq, 100000)  # Default fallback
+
+        # Use 80% for history, 20% for future (reasonable split)
+        max_history = int(total_periods * 0.8)
+        max_future = int(total_periods * 0.2)
+
+        # Set reasonable minimums to avoid too small fallbacks
+        max_history = max(max_history, 50)  # At least 50 periods for history
+        max_future = max(max_future, 10)  # At least 10 periods for future
+
+        return max_history, max_future
+
+    # Define safe fallback values
+    SAFE_START_DATE = BASE_START_DATE  # 1700-01-01
+    SAFE_FREQUENCY = Frequency.D  # Daily frequency is most stable
+
+    # Calculate frequency-specific safe maximums
+    safe_max_history, safe_max_future = _calculate_safe_max_lengths(frequency)
+    SAFE_MAX_HISTORY_LENGTH = safe_max_history
+    SAFE_MAX_FUTURE_LENGTH = safe_max_future
+
+    logger.debug(
+        f"📊 Calculated safe limits for {frequency}: "
+        f"max_history={SAFE_MAX_HISTORY_LENGTH:,}, max_future={SAFE_MAX_FUTURE_LENGTH:,}"
+    )
+
+    def _try_generate_date_range_safely(
+        start_date: np.datetime64,
+        hist_len: int,
+        fut_len: int,
+        freq: Frequency,
+        attempt_num: int = 1,
+    ) -> Tuple[Optional[pd.DatetimeIndex], Optional[pd.DatetimeIndex], bool]:
+        """
+        Try to generate date ranges safely with multiple fallback strategies.
+
+        Returns:
+            (history_range, future_range, success_flag)
+        """
+        try:
+            freq_str = _get_frequency_str(freq, for_date_range=True)
+            period_freq_str = _get_period_frequency_str(freq)
+            total_length = hist_len + fut_len
+
+            # Enhanced safety check
+            if not check_start_date_safety(start_date, total_length, freq):
+                logger.warning(
+                    f"Attempt {attempt_num}: Start date {start_date} not safe for "
+                    f"total_length={total_length}, frequency={freq}. "
+                    f"Will try fallback strategies."
+                )
+                return None, None, False
+
+            # Try to generate the date ranges
+            start_pd = pd.Timestamp(start_date)
+
+            # Generate history range
+            history_range = pd.date_range(
+                start=start_pd, periods=hist_len, freq=freq_str
+            )
+
+            # Generate future range
+            future_start = history_range[-1] + pd.tseries.frequencies.to_offset(
+                freq_str
+            )
+            future_range = pd.date_range(
+                start=future_start, periods=fut_len, freq=freq_str
+            )
+
+            # Test period conversion (this can also fail)
+            _ = history_range.to_period(period_freq_str)
+            _ = future_range.to_period(period_freq_str)
+
+            logger.debug(
+                f"Attempt {attempt_num}: Successfully generated date ranges "
+                f"start={start_date}, hist_len={hist_len}, fut_len={fut_len}, freq={freq}"
+            )
+            return history_range, future_range, True
+
+        except (pd.errors.OutOfBoundsDatetime, OverflowError, ValueError) as e:
+            logger.warning(
+                f"Attempt {attempt_num}: Failed to generate date range with "
+                f"start={start_date}, hist_len={hist_len}, fut_len={fut_len}, freq={freq}. "
+                f"Error: {type(e).__name__}: {str(e)}"
+            )
+            return None, None, False
+        except Exception as e:
+            logger.error(
+                f"Attempt {attempt_num}: Unexpected error generating date range: "
+                f"{type(e).__name__}: {str(e)}"
+            )
+            return None, None, False
 
     # Initialize enhanced feature generator
     feature_config = time_feature_config or {}
     feature_generator = TimeFeatureGenerator(**feature_config)
 
+    freq_str = _get_frequency_str(frequency, for_date_range=True)
+
     # Auto-adjust K_max if enabled
     if feature_generator.auto_adjust_k_max:
-        K_max = feature_generator.get_optimal_k_max(freq_str)
+        try:
+            K_max = feature_generator.get_optimal_k_max(freq_str)
+        except Exception as e:
+            logger.warning(
+                f"Failed to auto-adjust K_max: {e}. Using default K_max={K_max}"
+            )
 
-    total_length = history_length + future_length
+    # Strategy 1: Try with original parameters
+    history_range, future_range, success = _try_generate_date_range_safely(
+        start, history_length, future_length, frequency, attempt_num=1
+    )
 
-    # Check if provided start is safe
-    if not check_start_date_safety(start, total_length, frequency):
-        logger.error(
-            f"Provided start date {start} is not safe for total_length {total_length} "
-            f"and frequency {frequency}. Selecting a safe start date."
+    if not success:
+        # Strategy 2: Try with safe start date but original lengths and frequency
+        logger.info(
+            f"Strategy 2: Trying with safe start date {SAFE_START_DATE} "
+            f"but original lengths and frequency"
         )
-        start = select_safe_start_date(history_length, future_length, frequency)
+        history_range, future_range, success = _try_generate_date_range_safely(
+            SAFE_START_DATE, history_length, future_length, frequency, attempt_num=2
+        )
 
-    # Generate date ranges with the (possibly adjusted) safe start
-    start_pd = pd.Timestamp(start)
-    history_range = pd.date_range(start=start_pd, periods=history_length, freq=freq_str)
-    future_start = history_range[-1] + pd.tseries.frequencies.to_offset(freq_str)
-    future_range = pd.date_range(
-        start=future_start, periods=future_length, freq=freq_str
-    )
+    if not success:
+        # Strategy 3: Try with safe start date and truncated lengths but original frequency
+        safe_history_len = min(history_length, SAFE_MAX_HISTORY_LENGTH)
+        safe_future_len = min(future_length, SAFE_MAX_FUTURE_LENGTH)
 
-    # Convert to period indices
-    history_period_idx = history_range.to_period(period_freq_str)
-    future_period_idx = future_range.to_period(period_freq_str)
+        logger.info(
+            f"Strategy 3: Trying with safe start date {SAFE_START_DATE} "
+            f"and truncated lengths hist={safe_history_len:,}, fut={safe_future_len:,} "
+            f"(limits for {frequency}: {SAFE_MAX_HISTORY_LENGTH:,}/{SAFE_MAX_FUTURE_LENGTH:,})"
+        )
+        history_range, future_range, success = _try_generate_date_range_safely(
+            SAFE_START_DATE, safe_history_len, safe_future_len, frequency, attempt_num=3
+        )
 
-    # Compute enhanced features
-    history_features = feature_generator.compute_features(
-        history_period_idx, history_range, freq_str
-    )
-    future_features = feature_generator.compute_features(
-        future_period_idx, future_range, freq_str
-    )
+        if success:
+            history_length, future_length = safe_history_len, safe_future_len
 
-    # Pad or truncate to K_max
-    history_features = _pad_or_truncate_features(history_features, K_max)
-    future_features = _pad_or_truncate_features(future_features, K_max)
+    if not success:
+        # Strategy 4: Try with all safe defaults (start, lengths, frequency)
+        # Use daily frequency's safe maximums since it's more stable
+        daily_max_history, daily_max_future = _calculate_safe_max_lengths(
+            SAFE_FREQUENCY
+        )
+        safe_history_len = min(history_length, daily_max_history)
+        safe_future_len = min(future_length, daily_max_future)
 
-    return (
-        torch.from_numpy(history_features).float().to(device),
-        torch.from_numpy(future_features).float().to(device),
-    )
+        logger.warning(
+            f"Strategy 4: Using all safe defaults - start={SAFE_START_DATE}, "
+            f"frequency={SAFE_FREQUENCY}, hist={safe_history_len:,}, fut={safe_future_len:,} "
+            f"(daily limits: {daily_max_history:,}/{daily_max_future:,})"
+        )
+        history_range, future_range, success = _try_generate_date_range_safely(
+            SAFE_START_DATE,
+            safe_history_len,
+            safe_future_len,
+            SAFE_FREQUENCY,
+            attempt_num=4,
+        )
+
+        if success:
+            frequency = SAFE_FREQUENCY
+            history_length, future_length = safe_history_len, safe_future_len
+
+    if not success:
+        # Final fallback: Create minimal safe features
+        # Use a very conservative subset of daily frequency limits
+        daily_max_history, daily_max_future = _calculate_safe_max_lengths(Frequency.D)
+        minimal_history = min(100, daily_max_history // 1000)  # Very conservative
+        minimal_future = min(30, daily_max_future // 1000)  # Very conservative
+
+        logger.error(
+            f"❌ ALL STRATEGIES FAILED! Creating minimal safe features with "
+            f"history_length={minimal_history}, future_length={minimal_future}, frequency=Daily"
+        )
+
+        # Log the problematic dataset details
+        logger.error("🚨 PROBLEMATIC DATASET DETAILS:")
+        logger.error(f"   📅 Original start: {original_start}")
+        logger.error(f"   📊 Original frequency: {original_frequency}")
+        logger.error(f"   📏 Original history_length: {original_history_length:,}")
+        logger.error(f"   📏 Original future_length: {original_future_length:,}")
+        logger.error(
+            f"   📐 Total original length: {original_history_length + original_future_length:,}"
+        )
+
+        # Use minimal safe configuration
+        history_length, future_length = minimal_history, minimal_future
+        frequency = Frequency.D
+
+        history_range, future_range, success = _try_generate_date_range_safely(
+            SAFE_START_DATE, history_length, future_length, frequency, attempt_num=5
+        )
+
+        if not success:
+            # Ultimate fallback: return zero features with the calculated minimal lengths
+            logger.critical(
+                f"Ultimate fallback: returning zero time features with "
+                f"history_length={history_length}, future_length={future_length}"
+            )
+            zero_history = torch.zeros(history_length, K_max).float().to(device)
+            zero_future = torch.zeros(future_length, K_max).float().to(device)
+            return zero_history, zero_future
+
+    # Log if we had to use fallbacks
+    if (
+        start != original_start
+        or frequency != original_frequency
+        or history_length != original_history_length
+        or future_length != original_future_length
+    ):
+        logger.info("⚠️  DATASET FALLBACK APPLIED:")
+        logger.info(f"   📅 Start: {original_start} → {start}")
+        logger.info(f"   📊 Frequency: {original_frequency} → {frequency}")
+        logger.info(
+            f"   📏 History length: {original_history_length} → {history_length}"
+        )
+        logger.info(f"   📏 Future length: {original_future_length} → {future_length}")
+
+    # Proceed with feature generation using the (possibly adjusted) parameters
+    try:
+        period_freq_str = _get_period_frequency_str(frequency)
+
+        # Convert to period indices
+        history_period_idx = history_range.to_period(period_freq_str)
+        future_period_idx = future_range.to_period(period_freq_str)
+
+        # Compute enhanced features
+        history_features = feature_generator.compute_features(
+            history_period_idx, history_range, freq_str
+        )
+        future_features = feature_generator.compute_features(
+            future_period_idx, future_range, freq_str
+        )
+
+        # Pad or truncate to K_max
+        history_features = _pad_or_truncate_features(history_features, K_max)
+        future_features = _pad_or_truncate_features(future_features, K_max)
+
+        return (
+            torch.from_numpy(history_features).float().to(device),
+            torch.from_numpy(future_features).float().to(device),
+        )
+
+    except Exception as e:
+        logger.error(
+            f"❌ Feature computation failed even with safe parameters: {type(e).__name__}: {str(e)}"
+        )
+        # Return zero features as ultimate fallback
+        logger.critical(
+            f"Ultimate fallback: returning zero time features due to feature computation failure "
+            f"(history_length={history_length}, future_length={future_length})"
+        )
+        zero_history = torch.zeros(history_length, K_max).float().to(device)
+        zero_future = torch.zeros(future_length, K_max).float().to(device)
+        return zero_history, zero_future
 
 
 def _pad_or_truncate_features(features: np.ndarray, K_max: int) -> np.ndarray:

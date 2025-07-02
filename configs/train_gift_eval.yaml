@@ -1,0 +1,86 @@
+data_dir: ./data
+model_path: ./models
+model_name: GiftEvalModel
+continue_training: false
+seed: 2025
+debugging: false
+wandb: true # whether to log to wandb
+
+# GIFT-eval specific settings (uses all datasets and terms automatically)
+to_univariate: true  
+max_context_length: 2048   # Total window length (context + forecast). Effective context = max_context_length - prediction_length
+evaluate_on_test: true  
+skip_datasets_with_nans: true
+
+# Datasets configuration - specify which datasets to use for training/validation
+# If null or empty, uses all available datasets. Otherwise, use only specified datasets.
+datasets_to_use: ["m4_yearly", "us_births/D","electricity/15T", "solar/10T"]
+
+
+# Window configuration for training vs evaluation
+max_training_windows: 100   
+evaluation_windows: 1  # Number of windows to use for validation and testing (1 for single window, 20 for multiple)
+
+num_epochs: 100
+batch_size: 256
+num_training_iterations_per_epoch: 100  
+log_interval: 1
+
+# Training configuration
+lr_scheduler: cosine
+initial_lr: 0.0001 # 1e-4
+learning_rate: 0.0000001 # 1e-7
+scaler: custom_robust
+adaptive_loss_normalization: false 
+gradient_clip_val: 1000
+
+gradient_accumulation_enabled: true
+accumulation_steps: 8 # Number of batches to accumulate before updating
+
+# Metrics configuration
+reset_metrics_at_log_interval: true  # Reset metrics at each log interval for consistent scope with loss
+
+# TimeSeriesModel Configuration
+TimeSeriesModel:
+  # Core architecture
+  embed_size: 128
+  token_embed_dim: 256
+  num_encoder_layers: 5
+  
+  # Scaling and preprocessing
+  scaler: custom_robust
+  epsilon: 0.001
+  scaler_clamp_value: null
+  handle_constants: false
+  
+  # Time features
+  K_max: 6
+  time_feature_config:
+    use_enhanced_features: true
+    use_holiday_features: false
+    use_index_features: true
+    include_seasonality_info: true
+
+  # Positional encoding
+  sin_pos_enc: false
+  sin_pos_const: 100
+  
+  drop_enc_allow: false
+  encoding_dropout: 0.0
+  
+  # Model architecture
+  use_dilated_conv: false
+  dilated_conv_kernel_size: 5
+  dilated_conv_max_dilation: 3
+  
+  # Encoder configuration
+  encoder_config:
+    attn_mode: chunk
+    num_heads: 4
+    expand_v: 1.0
+    use_gate: false
+    use_short_conv: true
+    conv_size: 4
+    allow_neg_eigval: true
+    use_forget_gate: true
+    num_householder: 2

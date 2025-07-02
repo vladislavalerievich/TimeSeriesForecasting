@@ -21,7 +21,7 @@ from gluonts.ev.metrics import (
 )
 
 from src.gift_eval.evaluator import GiftEvaluator
-from src.models.models import MultiStepModel
+from src.models.unified_model import TimeSeriesModel
 from src.utils.utils import device
 
 # Set up environment
@@ -99,11 +99,11 @@ logger = logging.getLogger(__name__)
 
 def load_model(model_path: str):
     """Load the MultiStepModel from checkpoint"""
-    model = MultiStepModel(
+    model = TimeSeriesModel(
         base_model_config=config["BaseModelConfig"],
         encoder_config=config["EncoderConfig"],
         scaler=config["scaler"],
-        **config["MultiStepModel"],
+        **config["TimeSeriesModel"],
     ).to(device)
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])

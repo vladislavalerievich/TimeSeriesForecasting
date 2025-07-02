@@ -19,6 +19,7 @@ from collections.abc import Iterable, Iterator
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from typing import Optional
 
 import datasets
 import pyarrow.compute as pc
@@ -117,6 +118,7 @@ class Dataset:
         term: Term | str = Term.SHORT,
         to_univariate: bool = False,
         storage_env_var: str = "GIFT_EVAL",
+        max_windows: Optional[int] = None,
     ):
         storage_path = Path(os.getenv(storage_env_var, "data/gift_eval"))
         self.hf_dataset = datasets.load_from_disk(str(storage_path / name)).with_format(
@@ -135,6 +137,7 @@ class Dataset:
 
         self.term = Term(term)
         self.name = name
+        self.max_windows = max_windows if max_windows is not None else MAX_WINDOW
 
     @cached_property
     def prediction_length(self) -> int:
@@ -181,7 +184,7 @@ class Dataset:
         if "m4" in self.name:
             return 1
         w = math.ceil(TEST_SPLIT * self._min_series_length / self.prediction_length)
-        return min(max(1, w), MAX_WINDOW)
+        return min(max(1, w), self.max_windows)
 
     @cached_property
     def _min_series_length(self) -> int:
