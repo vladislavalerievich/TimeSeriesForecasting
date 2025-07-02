@@ -1,6 +1,6 @@
 data_dir: ./data
 model_path: ./models
-model_name: Univariate_SineWave
+model_name: Univariate
 continue_training: false
 seed: 2025
 debugging: false
@@ -15,15 +15,15 @@ adaptive_loss_normalization: false
 gradient_clip_val: 10000
 
 gradient_accumulation_enabled: false
-accumulation_steps: 8  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
+accumulation_steps: 4  # Number of batches to accumulate before updating (effective batch size = batch_size * accumulation_steps)
 
 # total_length: 2048 # history length + future length
 
 evaluate_on_gift_eval: true
 gift_eval_max_context_length: 2048  
 
-num_epochs: 10
-num_training_iterations_per_epoch: 30
+num_epochs: 60
+num_training_iterations_per_epoch: 1
 log_interval: 1
 
 # TimeSeriesModel Configuration
@@ -31,7 +31,7 @@ TimeSeriesModel:
   # Core architecture
   embed_size: 128
   token_embed_dim: 256
-  num_encoder_layers: 6
+  num_encoder_layers: 5
   
   # Scaling and preprocessing
   scaler: custom_robust
@@ -69,4 +69,7 @@ TimeSeriesModel:
     conv_size: 4
     allow_neg_eigval: true
     use_forget_gate: true
-    num_householder: 1
+    num_householder: 2
+
+  loss_type: 'quantile'
+  quantiles: [ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 ]

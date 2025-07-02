@@ -34,29 +34,32 @@ class TimeSeriesModel(nn.Module):
     """Time series forecasting model combining embedding, encoding, and prediction."""
 
     def __init__(
-        self,
-        # Core architecture
-        embed_size: int = 128,
-        token_embed_dim: int = 1024,
-        num_encoder_layers: int = 2,
-        # Scaling and preprocessing
-        scaler: str = "custom_robust",
-        epsilon: float = 1e-3,
-        scaler_clamp_value: float = None,
-        handle_constants: bool = False,
-        # Time features
-        K_max: int = 6,
-        time_feature_config: dict = None,
-        sin_pos_enc: bool = False,
-        sin_pos_const: float = 10000.0,
-        encoding_dropout: float = 0.0,
-        # Model architecture
-        use_dilated_conv: bool = True,
-        dilated_conv_kernel_size: int = 3,
-        dilated_conv_max_dilation: int = 3,
-        # Encoder configuration
-        encoder_config: dict = None,
-        **kwargs,
+            self,
+            # Core architecture
+            embed_size: int = 128,
+            token_embed_dim: int = 1024,
+            num_encoder_layers: int = 2,
+            # Scaling and preprocessing
+            scaler: str = "custom_robust",
+            epsilon: float = 1e-3,
+            scaler_clamp_value: float = None,
+            handle_constants: bool = False,
+            # Time features
+            K_max: int = 6,
+            time_feature_config: dict = None,
+            sin_pos_enc: bool = False,
+            sin_pos_const: float = 10000.0,
+            encoding_dropout: float = 0.0,
+            # Model architecture
+            use_dilated_conv: bool = True,
+            dilated_conv_kernel_size: int = 3,
+            dilated_conv_max_dilation: int = 3,
+            # Encoder configuration
+            encoder_config: dict = None,
+            # Loss configuration
+            loss_type: str = "huber",
+            quantiles: list[float] = None,
+            **kwargs,
     ):
         super().__init__()
 
@@ -73,6 +76,14 @@ class TimeSeriesModel(nn.Module):
 
         # Architecture flags
         self.sin_pos_flag = sin_pos_enc
+
+        # Store loss parameters
+        self.loss_type = loss_type
+        self.quantiles = quantiles
+        if self.loss_type == "quantile" and self.quantiles is None:
+            raise ValueError("Quantiles must be provided for quantile loss.")
+        if self.quantiles:
+            self.register_buffer('qt', torch.tensor(self.quantiles, device=device).view(1, 1, 1, -1))
 
         # Validate configuration before initialization
         self._validate_configuration()
@@ -118,7 +129,7 @@ class TimeSeriesModel(nn.Module):
         )
 
     def _init_projection_layers(
-        self, use_dilated_conv: bool, kernel_size: int, max_dilation: int
+            self, use_dilated_conv: bool, kernel_size: int, max_dilation: int
     ):
         """Initialize input and output projection layers."""
         if use_dilated_conv:
@@ -134,7 +145,13 @@ class TimeSeriesModel(nn.Module):
                 self.embed_size, self.token_embed_dim
             )
         self.target_projection = nn.Linear(self.embed_size, self.token_embed_dim)
-        self.final_output_layer = nn.Linear(self.token_embed_dim, 1)
+
+        if self.loss_type == "quantile":
+            output_dim = len(self.quantiles)
+        else:
+            output_dim = 1
+        self.final_output_layer = nn.Linear(self.token_embed_dim, output_dim)
+
         self.mlp = GatedMLP(
             hidden_size=self.token_embed_dim,
             hidden_ratio=4,
@@ -187,14 +204,14 @@ class TimeSeriesModel(nn.Module):
         }
 
     def _compute_scaling(
-        self, history_values: torch.Tensor, history_mask: torch.Tensor = None
+            self, history_values: torch.Tensor, history_mask: torch.Tensor = None
     ):
         """Compute scaling statistics and apply scaling."""
         scale_statistics = self.scaler.compute_statistics(history_values, history_mask)
         return scale_statistics
 
     def _apply_scaling_and_masking(
-        self, values: torch.Tensor, scale_statistics: dict, mask: torch.Tensor = None
+            self, values: torch.Tensor, scale_statistics: dict, mask: torch.Tensor = None
     ):
         """Apply scaling and optional masking to values."""
         scaled_values = self.scaler.scale(values, scale_statistics)
@@ -210,11 +227,11 @@ class TimeSeriesModel(nn.Module):
         return scaled_values
 
     def _get_positional_embeddings(
-        self,
-        time_features: torch.Tensor,
-        num_channels: int,
-        batch_size: int,
-        drop_enc_allow: bool = False,
+            self,
+            time_features: torch.Tensor,
+            num_channels: int,
+            batch_size: int,
+            drop_enc_allow: bool = False,
     ):
         """Generate positional embeddings from time features."""
         seq_len, _ = time_features.shape
@@ -236,7 +253,7 @@ class TimeSeriesModel(nn.Module):
         return pos_embed.unsqueeze(2).expand(-1, -1, num_channels, -1)
 
     def _compute_embeddings(
-        self, scaled_history: torch.Tensor, history_pos_embed: torch.Tensor
+            self, scaled_history: torch.Tensor, history_pos_embed: torch.Tensor
     ):
         """Compute value embeddings and combine with positional embeddings."""
         history_scaled = scaled_history.unsqueeze(-1)
@@ -249,12 +266,12 @@ class TimeSeriesModel(nn.Module):
         return all_channels_embedded
 
     def _generate_predictions(
-        self,
-        embedded: torch.Tensor,
-        target_pos_embed: torch.Tensor,
-        prediction_length: int,
-        num_channels: int,
-        history_mask: torch.Tensor = None,
+            self,
+            embedded: torch.Tensor,
+            target_pos_embed: torch.Tensor,
+            prediction_length: int,
+            num_channels: int,
+            history_mask: torch.Tensor = None,
     ):
         """
         Generate predictions for all channels using vectorized operations.
@@ -280,7 +297,7 @@ class TimeSeriesModel(nn.Module):
         x = self.input_projection_layer(channel_embedded)
         target_repr = self.target_projection(target_pos_embed)
         x = torch.concatenate([x, target_repr], dim=1)
-        hidden_state = self.initial_hidden_state.repeat(batch_size, 1, 1, 1)
+        hidden_state = self.initial_hidden_state.repeat(batch_size * num_channels, 1, 1, 1)
         for encoder_layer in self.encoder_layers:
             x, hidden_state = encoder_layer(x, hidden_state)
 
@@ -288,14 +305,21 @@ class TimeSeriesModel(nn.Module):
         prediction_embeddings = x[:, -prediction_length:, :]
 
         predictions = self.final_output_layer(self.mlp(prediction_embeddings))
-        # Reshape the output back to [B, P, N]
-        predictions = predictions.view(batch_size, num_channels, prediction_length)
-        predictions = predictions.permute(0, 2, 1)
+
+        # Reshape output to handle quantiles
+        # Original shape: [B*N, P, Q] where Q is num_quantiles or 1
+        # Reshape the output back to [B, P, N, Q]
+        output_dim = len(self.quantiles) if self.loss_type == "quantile" else 1
+        predictions = predictions.view(batch_size, num_channels, prediction_length, output_dim)
+        predictions = predictions.permute(0, 2, 1, 3)  # [B, P, N, Q]
+        # Squeeze the last dimension if not in quantile mode for backward compatibility
+        if self.loss_type != "quantile":
+            predictions = predictions.squeeze(-1)  # [B, P, N]
 
         return predictions
 
     def forward(
-        self, data_container: BatchTimeSeriesContainer, drop_enc_allow: bool = False
+            self, data_container: BatchTimeSeriesContainer, drop_enc_allow: bool = False
     ):
         """Main forward pass."""
         # Preprocess data
@@ -366,6 +390,25 @@ class TimeSeriesModel(nn.Module):
             "future_length": preprocessed["future_length"],
         }
 
+    def _quantile_loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
+        """
+        Compute the quantile loss.
+        y_true: [B, P, N]
+        y_pred: [B, P, N, Q]
+        """
+        # Add a dimension to y_true to match y_pred: [B, P, N] -> [B, P, N, 1]
+        y_true = y_true.unsqueeze(-1)
+
+        # Calculate errors
+        errors = y_true - y_pred
+
+        # Calculate quantile loss
+        # The max operator implements the two cases of the quantile loss formula
+        loss = torch.max((self.qt - 1) * errors, self.qt * errors)
+
+        # Average the loss across all dimensions
+        return loss.mean()
+
     def compute_loss(self, y_true: torch.Tensor, y_pred: dict):
         """Compute loss between predictions and scaled ground truth."""
         predictions = y_pred["result"]
@@ -376,9 +419,13 @@ class TimeSeriesModel(nn.Module):
 
         future_scaled = self.scaler.scale(y_true, scale_statistics)
 
-        if predictions.shape != future_scaled.shape:
-            raise ValueError(
-                f"Shape mismatch: predictions {predictions.shape} vs future_scaled {future_scaled.shape}"
-            )
-
-        return nn.functional.huber_loss(predictions, future_scaled)
+        if self.loss_type == "huber":
+            if predictions.shape != future_scaled.shape:
+                raise ValueError(
+                    f"Shape mismatch for Huber loss: predictions {predictions.shape} vs future_scaled {future_scaled.shape}"
+                )
+            return nn.functional.huber_loss(predictions, future_scaled)
+        elif self.loss_type == "quantile":
+            return self._quantile_loss(future_scaled, predictions)
+        else:
+            raise ValueError(f"Unknown loss type: {self.loss_type}")

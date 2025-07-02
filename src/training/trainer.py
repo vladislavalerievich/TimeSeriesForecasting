@@ -77,9 +77,6 @@ class TrainingPipeline:
             logger.info(
                 f"Gradient accumulation enabled with {self.accumulation_steps} steps"
             )
-            logger.info(
-                f"Effective batch size: {self.config['batch_size'] * self.accumulation_steps}"
-            )
 
         logger.info("Initializing training pipeline...")
         logger.info(f"Using device: {self.device}")
@@ -108,7 +105,7 @@ class TrainingPipeline:
         # Training data loader (load from disk)
         train_data_path = self.config.get(
             "train_data_path",
-            "data/synthetic_validation_dataset/train/dataset.pt",
+            "data/synthetic_validation_dataset_full_mix/train/dataset.pt",
         )
         logger.info(f"Training data path: {train_data_path}")
         self.train_loader = SyntheticTrainDataLoader(
@@ -122,11 +119,11 @@ class TrainingPipeline:
         # Validation data loader (load from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_validation_dataset/val/dataset.pt",
+            "data/synthetic_validation_dataset_full_mix/val/dataset.pt",
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(
-            data_path=train_data_path,  # TODO: change back to val_data_path
+            data_path=val_data_path,  # TODO: change back to val_data_path
             device=self.device,
             single_file=True,
         )
@@ -267,16 +264,12 @@ class TrainingPipeline:
     ) -> None:
         """
         Plot validation examples and log to WandB.
-
-        Args:
-            epoch: Current epoch number
-            avg_val_loss: Average validation loss
-            plot_indices: List of specific indices to plot. If None, uses default [0, 63]
-            plot_all: If True, plots all samples in each batch (ignores plot_indices)
         """
-
+        self.model.eval()
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
+                if batch_idx > 0:
+                    break
                 batch.to_device(self.device)
                 with torch.autocast(
                     device_type="cuda", dtype=torch.bfloat16, enabled=True
@@ -285,6 +278,8 @@ class TrainingPipeline:
                     inv_scaled_output = self._inverse_scale(
                         output["result"], output["scale_statistics"]
                     )
+
+                # Convert the full prediction tensor to numpy
                 pred_future = inv_scaled_output.cpu().numpy()
 
                 # Determine which indices to plot
@@ -292,21 +287,20 @@ class TrainingPipeline:
                 if plot_all:
                     indices_to_plot = list(range(batch_size))
                 else:
-                    # Only plot indices that exist in the current batch
                     indices_to_plot = [i for i in plot_indices if i < batch_size]
 
-                # Plot each selected index and log to wandb
                 for i in indices_to_plot:
+                    # The plotting function will now handle extracting the quantiles
                     fig = plot_from_container(
                         batch=batch,
                         sample_idx=i,
-                        predicted_values=pred_future,  # Pass full batch predictions
+                        predicted_values=pred_future,  # Pass the full (batched) prediction tensor
+                        model_quantiles=self.model.quantiles if self.model.loss_type == 'quantile' else None,
                         title=f"Epoch {epoch} - Val Batch {batch_idx + 1}, Sample {i} (Val Loss: {avg_val_loss:.4f})",
                         output_file=None,
                         show=False,
                     )
 
-                    # Log each plot individually with unique names (synthetic validation prefix)
                     wandb.log(
                         {
                             f"synthetic_val_plots/batch{batch_idx + 1}_sample{i}": wandb.Image(
@@ -316,10 +310,22 @@ class TrainingPipeline:
                     )
                     plt.close(fig)
 
+
     def _update_metrics(
-        self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
+            self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
     ) -> None:
         """Update metric calculations for multivariate data."""
+        # Handle quantile predictions for point metrics
+        if self.model.loss_type == 'quantile':
+            # Select the median prediction for point-based metrics like MAPE, MSE
+            try:
+                # Find the index of the 0.5 quantile
+                median_idx = self.model.quantiles.index(0.5)
+                # Slice the predictions to get the median forecast
+                predictions = predictions[..., median_idx]
+            except (ValueError, AttributeError):
+                raise ValueError("Could not find median (0.5) in model's quantiles list for metric calculation.")
+
         predictions = predictions.contiguous()
         targets = targets.contiguous()
 
@@ -361,22 +367,15 @@ class TrainingPipeline:
         return {name: metric.compute().item() for name, metric in metrics_dict.items()}
 
     def _log_metrics(
-        self,
-        metrics_dict: Dict,
-        metric_type: str,
-        epoch: int,
-        step: int = None,
-        extra_info: str = "",
+            self,
+            metrics_dict: Dict,
+            metric_type: str,
+            epoch: int,
+            step: int = None,
+            extra_info: str = "",
     ) -> None:
         """
         Generic method to log metrics to both logger and wandb.
-
-        Args:
-            metrics_dict: Dictionary of metrics to log
-            metric_type: Type of metrics (e.g., 'train', 'val', 'gift_eval')
-            epoch: Current epoch
-            step: Optional step number
-            extra_info: Additional info to include in log message
         """
         # Format metrics for logging
         metrics_str = ", ".join([f"{k}: {v:.4f}" for k, v in metrics_dict.items()])
@@ -395,12 +394,12 @@ class TrainingPipeline:
             wandb_dict = {f"{metric_type}/{k}": v for k, v in metrics_dict.items()}
 
             if metric_type == "train" and step is not None:
-                wandb.log(wandb_dict, step=step)
+                wandb.log(wandb_dict)
             else:
                 wandb.log({**wandb_dict, "epoch": epoch})
 
     def _log_training_metrics(
-        self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
+            self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
     ) -> None:
         """Log training metrics during training."""
         avg_loss = running_loss / self.log_interval
@@ -429,17 +428,17 @@ class TrainingPipeline:
         # Calculate global step
         if self.gradient_accumulation_enabled:
             global_step = (
-                epoch
-                * (
-                    self.config["num_training_iterations_per_epoch"]
-                    // self.accumulation_steps
-                )
-                + step_idx
+                    epoch
+                    * (
+                            self.config["num_training_iterations_per_epoch"]
+                            // self.accumulation_steps
+                    )
+                    + step_idx
             )
             extra_info = f"Effective Step: {step_idx + 1}"
         else:
             global_step = (
-                epoch * self.config["num_training_iterations_per_epoch"] + step_idx
+                    epoch * self.config["num_training_iterations_per_epoch"] + step_idx
             )
             extra_info = f"Batch: {step_idx + 1}"
 
@@ -496,7 +495,7 @@ class TrainingPipeline:
         self._log_gift_eval_to_console(epoch, gift_eval_metrics)
 
     def _log_epoch_summary(
-        self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
+            self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
     ) -> None:
         """Log comprehensive epoch summary."""
         # Prepare computed metrics
@@ -571,7 +570,7 @@ class TrainingPipeline:
 
         # Plot examples if wandb is enabled
         if self.config["wandb"]:
-            self._plot_validation_examples(epoch, avg_val_loss)
+            self._plot_validation_examples(epoch, avg_val_loss, plot_all=False)
 
         # --- GIFT-eval validation ---
         if self.config["evaluate_on_gift_eval"]:
@@ -580,7 +579,7 @@ class TrainingPipeline:
                 datasets_to_eval=ALL_DATASETS,
                 term="short",
                 epoch=epoch,
-                plot=self.config["wandb"],  # Only plot if wandb is enabled
+                plot=False,  # Only plot if wandb is enabled
             )
             # Log GIFT eval metrics (always to logger, optionally to wandb)
             self._log_gift_eval_metrics(epoch, gift_eval_metrics)
@@ -605,35 +604,15 @@ class TrainingPipeline:
         for batch_idx, batch in enumerate(self.train_loader):
             if batch_idx >= self.config["num_training_iterations_per_epoch"]:
                 break
-
-            logger.info(f"--- Batch {batch_idx} Timing Analysis ---")
-
             # --- Measure Data Loading and Preparation ---
-            data_loading_end_time = time.time()
-            logger.info(
-                f"  - Data Loading & Prep : {data_loading_end_time - batch_start_time:.4f}s"
-            )
             batch.to_device(self.device)
-            logger.info(
-                f"  - History Shape: {batch.history_values.shape}, Future Shape: {batch.future_values.shape}"
-            )
 
             # --- Measure Forward Pass ---
-            forward_start_time = time.time()
             output = self.model(batch)
-            forward_end_time = time.time()
-            logger.info(
-                f"  - Forward Pass        : {forward_end_time - forward_start_time:.4f}s"
-            )
 
             # --- Measure Loss Computation ---
-            loss_start_time = time.time()
             loss, inv_scaled_output = self._compute_normalized_loss(
                 output, batch.future_values
-            )
-            loss_end_time = time.time()
-            logger.info(
-                f"  - Loss Computation    : {loss_end_time - loss_start_time:.4f}s"
             )
 
             # Scale loss for gradient accumulation
@@ -641,28 +620,21 @@ class TrainingPipeline:
                 loss = loss / self.accumulation_steps
 
             # --- Measure Backward Pass ---
-            backward_start_time = time.time()
             loss.backward()
-            backward_end_time = time.time()
-            logger.info(
-                f"  - Backward Pass       : {backward_end_time - backward_start_time:.4f}s"
-            )
-
             accumulated_loss += loss.item()
 
             # Check if we should update weights
             is_accumulation_step = (batch_idx + 1) % self.accumulation_steps == 0
             is_last_batch = (
-                batch_idx + 1 >= self.config["num_training_iterations_per_epoch"]
+                    batch_idx + 1 >= self.config["num_training_iterations_per_epoch"]
             )
 
             if (
-                not self.gradient_accumulation_enabled
-                or is_accumulation_step
-                or is_last_batch
+                    not self.gradient_accumulation_enabled
+                    or is_accumulation_step
+                    or is_last_batch
             ):
                 # --- Measure Optimizer Step (includes grad clipping) ---
-                optimizer_step_start_time = time.time()
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     max_norm=self.config.get("gradient_clip_val", 1.0),
@@ -671,10 +643,7 @@ class TrainingPipeline:
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                optimizer_step_end_time = time.time()
-                logger.info(
-                    f"  - Optimizer Step      : {optimizer_step_end_time - optimizer_step_start_time:.4f}s"
-                )
+
                 # --- End Measure Optimizer Step ---
 
                 # Log accumulated loss
@@ -685,20 +654,10 @@ class TrainingPipeline:
                 else:
                     running_loss += loss.item()
                     epoch_loss += loss.item()
-            else:
-                # If optimizer doesn't step, log a placeholder
-                logger.info(
-                    "  - Optimizer Step      : 0.0000s (Accumulating Gradients)"
-                )
 
             # --- Measure Metrics Update ---
-            metrics_update_start_time = time.time()
             self._update_metrics(
                 self.train_metrics, inv_scaled_output, batch.future_values
-            )
-            metrics_update_end_time = time.time()
-            logger.info(
-                f"  - Metrics Update      : {metrics_update_end_time - metrics_update_start_time:.4f}s"
             )
 
             # Log progress based on effective updates
@@ -709,24 +668,22 @@ class TrainingPipeline:
             )
             if self.gradient_accumulation_enabled:
                 if (
-                    is_accumulation_step
-                    and (effective_step + 1) % self.log_interval == 0
+                        is_accumulation_step
+                        and (effective_step + 1) % self.log_interval == 0
                 ):
-                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
+                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval:])
                     self._log_training_metrics(
                         epoch, effective_step, running_loss, avg_grad_norm
                     )
                     running_loss = 0.0
             else:
                 if (batch_idx + 1) % self.log_interval == 0:
-                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
+                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval:])
                     self._log_training_metrics(
                         epoch, batch_idx, running_loss, avg_grad_norm
                     )
                     running_loss = 0.0
 
-            # --- Reset batch timer for the next iteration's data loading ---
-            batch_start_time = time.time()
 
         # The end-of-epoch summary is removed in this version.
 
@@ -736,8 +693,8 @@ class TrainingPipeline:
         )
         if self.gradient_accumulation_enabled:
             effective_updates = (
-                total_batches + self.accumulation_steps - 1
-            ) // self.accumulation_steps
+                                        total_batches + self.accumulation_steps - 1
+                                ) // self.accumulation_steps
             return epoch_loss / max(1, effective_updates)
         else:
             return epoch_loss / max(1, total_batches)
