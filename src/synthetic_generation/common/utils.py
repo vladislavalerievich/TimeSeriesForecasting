@@ -214,11 +214,11 @@ def check_start_date_safety(
     start_date: np.datetime64, total_length: int, frequency: Frequency
 ) -> bool:
     """
-    Check whether a start date is safe for generating a time series of given length and frequency.
+    Enhanced check for start date safety with comprehensive bounds validation.
 
     This function verifies that pd.date_range(start=start_date, periods=total_length, freq=freq_str)
     will not raise an OutOfBoundsDatetime error, accounting for pandas' datetime bounds
-    (1677-09-21 to 2262-04-11).
+    (1677-09-21 to 2262-04-11) and realistic frequency limitations.
 
     Parameters
     ----------
@@ -259,7 +259,24 @@ def check_start_date_safety(
 
         # Calculate the approximate end date to check if it exceeds bounds
         _, _, days_per_period = FREQUENCY_MAPPING[frequency]
+
+        # For very long series or low frequencies, be extra conservative
+        if frequency in [Frequency.A, Frequency.Q, Frequency.M]:
+            # For low frequencies, check more strictly
+            if frequency == Frequency.A and total_length > 500:  # Max ~500 years
+                return False
+            elif frequency == Frequency.Q and total_length > 2000:  # Max ~500 years
+                return False
+            elif frequency == Frequency.M and total_length > 6000:  # Max ~500 years
+                return False
+
+        # Calculate approximate end date
         approx_days = total_length * days_per_period
+
+        # For annual/quarterly frequencies, add extra safety margin
+        if frequency in [Frequency.A, Frequency.Q]:
+            approx_days *= 1.1  # 10% safety margin
+
         end_date = start_pd + pd.Timedelta(days=approx_days)
 
         # Check if end date is within pandas' valid datetime range

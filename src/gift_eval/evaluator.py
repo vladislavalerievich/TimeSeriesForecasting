@@ -192,11 +192,11 @@ class TimeSeriesModelWrapper:
 
 class GiftEvaluator:
     def __init__(
-        self, model, device, max_context_length: int, evaluation_windows: int = 20
+        self, model, device, max_context_length: int, max_evaluation_windows: int = 20
     ):
         self.model = model
         self.device = device
-        self.evaluation_windows = evaluation_windows
+        self.evaluation_windows = max_evaluation_windows
         self.predictor = TimeSeriesModelWrapper(model, device, max_context_length)
 
         with open(DATASET_PROPERTIES_PATH, "r") as f:

@@ -145,7 +145,7 @@ def evaluate_on_gift_eval(model_path: str):
 
             result_entry = {
                 "dataset": f"{ds_name}/{term}",
-                "model": "TimeSeriesModel",
+                "model": "MultiStepModel",
                 "eval_metrics/MSE[mean]": metrics["MSE[mean]"],
                 "eval_metrics/MSE[0.5]": metrics["MSE[0.5]"],
                 "eval_metrics/MAE[0.5]": metrics["MAE[0.5]"],
@@ -184,7 +184,7 @@ def evaluate_on_gift_eval(model_path: str):
     df = pd.DataFrame(results, columns=output_columns)
     output_dir = Path("outputs")
     output_dir.mkdir(parents=True, exist_ok=True)
-    filename = output_dir / "gift_eval_results_timeseriesmodel.csv"
+    filename = output_dir / "gift_eval_results_multistepmodel.csv"
     df.to_csv(filename, index=False)
 
     logger.info(f"Results saved to {filename}")
@@ -195,7 +195,7 @@ def evaluate_on_gift_eval(model_path: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Evaluate a TimeSeriesModel on GIFT-Eval."
+        description="Evaluate a MultiStepModel on GIFT-Eval."
     )
     parser.add_argument(
         "--model-path",

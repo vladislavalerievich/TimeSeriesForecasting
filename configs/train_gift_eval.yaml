@@ -12,8 +12,13 @@ max_context_length: 2048   # Total window length (context + forecast). Effective
 evaluate_on_test: true  
 skip_datasets_with_nans: true
 
+# Datasets configuration - specify which datasets to use for training/validation
+# If null or empty, uses all available datasets. Otherwise, use only specified datasets.
+datasets_to_use: ["m4_yearly", "us_births/D","electricity/15T", "solar/10T"]
+
+
 # Window configuration for training vs evaluation
-training_windows: -1    # -1 means use all available windows, positive number limits windows
+max_training_windows: 100   
 evaluation_windows: 1  # Number of windows to use for validation and testing (1 for single window, 20 for multiple)
 
 num_epochs: 100

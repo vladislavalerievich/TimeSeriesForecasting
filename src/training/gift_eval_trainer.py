@@ -15,7 +15,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 import wandb
-from src.data_handling.data_loaders import GiftEvalDataLoader
+from src.data_handling.data_loaders import CyclicGiftEvalDataLoader, GiftEvalDataLoader
 from src.gift_eval.evaluator import GiftEvaluator
 from src.models.unified_model import TimeSeriesModel
 from src.utils.utils import (
@@ -115,28 +115,45 @@ class GiftEvalTrainingPipeline:
         max_context_length = self.config.get("max_context_length", 2048)
 
         # Window configuration
-        training_windows = self.config.get("training_windows", -1)
-        evaluation_windows = self.config.get("evaluation_windows", 20)
+        max_training_windows = self.config.get("max_training_windows", 20)
+        max_evaluation_windows = self.config.get("max_evaluation_windows", 1)
 
         logger.info(
-            f"🔧 Window configuration: training_windows={training_windows}, evaluation_windows={evaluation_windows}"
+            f"🔧 Window configuration: max_training_windows={max_training_windows}, max_evaluation_windows={max_evaluation_windows}"
         )
 
-        # Training data loader (uses all datasets and terms automatically)
+        # Get datasets to use (if specified in config, otherwise use all)
+        datasets_to_use = self.config.get("datasets_to_use", None)
+
+        # Training data loader (uses specified datasets or all datasets by default)
         self.train_loader = GiftEvalDataLoader(
             mode="train",
             batch_size=self.config["batch_size"],
             device=self.device,
             shuffle=True,
             to_univariate=self.config.get("to_univariate", False),
-            num_batches_per_epoch=self.config.get("num_training_iterations_per_epoch"),
             max_context_length=max_context_length,
-            training_windows=training_windows,
-            evaluation_windows=evaluation_windows,
+            max_windows=max_training_windows,
             skip_datasets_with_nans=self.config.get("skip_datasets_with_nans", True),
+            datasets_to_use=datasets_to_use,
         )
 
-        # Validation data loader (uses all datasets and terms automatically)
+        # Validate that we have data
+        if len(self.train_loader) == 0:
+            raise RuntimeError(
+                "No training data available! Check your dataset configuration."
+            )
+
+        # Wrap train loader with CyclicGiftEvalDataLoader for fixed iterations per epoch
+        num_training_iterations = self.config.get(
+            "num_training_iterations_per_epoch", 100
+        )
+        self.train_loader = CyclicGiftEvalDataLoader(
+            self.train_loader, num_training_iterations
+        )
+        logger.info(f"🔧 Training iterations per epoch: {num_training_iterations}")
+
+        # Validation data loader (uses specified datasets or all datasets by default)
         self.val_loader = GiftEvalDataLoader(
             mode="validation",
             batch_size=self.config["batch_size"],
@@ -144,16 +161,23 @@ class GiftEvalTrainingPipeline:
             shuffle=False,
             to_univariate=self.config.get("to_univariate", False),
             max_context_length=max_context_length,
-            training_windows=training_windows,
-            evaluation_windows=evaluation_windows,
+            max_windows=max_evaluation_windows,
+            skip_datasets_with_nans=self.config.get("skip_datasets_with_nans", True),
+            datasets_to_use=datasets_to_use,
         )
+
+        # Validate that we have validation data
+        if len(self.val_loader) == 0:
+            logger.warning(
+                "No validation data available! Training will continue without validation."
+            )
 
         # --- Setup GIFT evaluator for test evaluation ---
         self.gift_evaluator = GiftEvaluator(
             model=self.model,
             device=self.device,
             max_context_length=max_context_length,
-            evaluation_windows=evaluation_windows,
+            max_evaluation_windows=max_evaluation_windows,
         )
 
         # Setup loss function, metrics, wandb
@@ -651,7 +675,7 @@ class GiftEvalTrainingPipeline:
                 term_start_time = time.time()
                 gift_eval_pbar.set_description(f"📊 GIFT Eval [{term}]")
                 gift_eval_metrics = self.gift_evaluator.evaluate_datasets(
-                    datasets_to_eval=GiftEvalDataLoader.ALL_DATASETS,
+                    datasets_to_eval=self.train_loader.base_loader.dataset_names,
                     term=term,
                     epoch=epoch,
                     plot=self.config["wandb"],
@@ -831,16 +855,18 @@ class GiftEvalTrainingPipeline:
             f"🔹 WandB:           {'Enabled ✅' if self.config['wandb'] else 'Disabled ❌'}"
         )
         logger.info(
-            f"🔹 Training Windows: {self.config.get('training_windows', -1)} ({'All available' if self.config.get('training_windows', -1) == -1 else 'Limited'})"
+            f"🔹 Training Windows: {self.config.get('max_training_windows', 30)} ({'All available' if self.config.get('max_training_windows', 30) == -1 else 'Limited'})"
         )
-        logger.info(f"🔹 Eval Windows:    {self.config.get('evaluation_windows', 20)}")
+        logger.info(
+            f"🔹 Eval Windows:    {self.config.get('max_evaluation_windows', 1)}"
+        )
 
         model_params = sum(
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
         logger.info(f"🔹 Model Params:    {model_params:,}")
         logger.info(
-            f"🔹 Datasets:        {len(GiftEvalDataLoader.ALL_DATASETS)} datasets"
+            f"🔹 Datasets:        {len(self.train_loader.base_loader.dataset_names)} datasets"
         )
         logger.info(f"🔹 Terms:           {GiftEvalDataLoader.TERMS}")
         logger.info("=" * 100)
