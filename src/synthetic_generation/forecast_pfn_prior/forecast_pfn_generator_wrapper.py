@@ -4,7 +4,6 @@ import numpy as np
 
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.synthetic_generation.abstract_classes import GeneratorWrapper
-from src.synthetic_generation.common.utils import generate_spikes
 from src.synthetic_generation.forecast_pfn_prior.forecast_pfn_generator import (
     ForecastPFNGenerator,
 )
@@ -30,6 +29,14 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
                 "trend_additional": self.params.trend_additional,
                 "transition_ratio": self.params.transition_ratio,
                 "random_walk": self.params.random_walk,
+                # Univariate augmentation parameters
+                "time_warp_prob": self.params.time_warp_prob,
+                "time_warp_strength": self.params.time_warp_strength,
+                "magnitude_scale_prob": self.params.magnitude_scale_prob,
+                "magnitude_scale_range": self.params.magnitude_scale_range,
+                "damping_prob": self.params.damping_prob,
+                "spike_prob": self.params.spike_prob,
+                "pure_spike_prob": self.params.pure_spike_prob,
             }
         )
         return params
@@ -63,68 +70,10 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
         values = np.column_stack(values) if num_channels > 1 else np.array(values[0])
         return values
 
-    def _generate_damping(
-        self, input_size: int, p: list = [0.4, 0.5, 0.1]
-    ) -> np.ndarray:
-        """Generate damping effect for a time series."""
-        spacing = self.rng.choice(["equal", "regular", "random"], p=p)
-        t = np.arange(0, input_size, 1).astype(float)
-
-        if spacing == "random":
-            num_steps = self.rng.integers(1, 3)
-            damping_intervals = np.sort(
-                self.rng.choice(t[: -int(input_size * 0.1)], num_steps, replace=False)
-            )
-            damping_factors = self.rng.uniform(0.1, 2, num_steps + 1)
-        elif spacing == "equal":
-            num_steps = self.rng.integers(3, 7)
-            damping_intervals = np.linspace(0, input_size, num_steps + 2)[1:-1]
-            damping_factors = np.array(
-                [
-                    self.rng.uniform(0.4, 0.8)
-                    if (i % 2) == 0
-                    else self.rng.uniform(1, 2)
-                    for i in range(num_steps + 1)
-                ]
-            )
-        else:
-            custom_lengths = self.rng.integers(1, input_size // 2, 2)
-            damping_intervals = []
-            current_time = 0
-            while current_time < input_size:
-                for length in custom_lengths:
-                    current_time += length
-                    if current_time <= input_size:
-                        damping_intervals.append(current_time)
-                    else:
-                        break
-            damping_intervals = np.array(damping_intervals)
-            num_steps = len(damping_intervals)
-            damping_factors = np.array(
-                [
-                    self.rng.uniform(0.4, 0.8)
-                    if (i % 2) == 0
-                    else self.rng.uniform(1, 2)
-                    for i in range(num_steps + 1)
-                ]
-            )
-
-        damping = np.piecewise(
-            t,
-            [t < damping_intervals[0]]
-            + [
-                (t >= damping_intervals[i]) & (t < damping_intervals[i + 1])
-                for i in range(num_steps - 1)
-            ]
-            + [t >= damping_intervals[-1]],
-            damping_factors.tolist(),
-        )
-        return damping
-
     def _apply_augmentations(
         self, batch_values: np.ndarray, params: Dict[str, Any]
     ) -> np.ndarray:
-        """Apply mixup, damping, and spike augmentations to the batch."""
+        """Apply multivariate augmentations to the batch."""
         batch_size = batch_values.shape[0]
 
         # Apply mixup augmentation if enabled
@@ -138,47 +87,6 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
                 batch_values[idx, :, :] = np.sum(
                     original_vals * mixup_weights[:, np.newaxis, np.newaxis], axis=0
                 )
-
-        # Apply damping and spike augmentations if enabled
-        if params.get("damp_and_spike", False):
-            damping_ratio = self.rng.uniform(0, params.get("damping_noise_ratio", 0.05))
-            spike_ratio = self.rng.uniform(0, params.get("spike_noise_ratio", 0.05))
-            damping_indices = self.rng.choice(
-                batch_size, int(np.ceil(batch_size * damping_ratio)), replace=False
-            )
-            spike_indices = self.rng.choice(
-                batch_size, int(np.ceil(batch_size * spike_ratio)), replace=False
-            )
-
-            for idx in damping_indices:
-                damping = self._generate_damping(batch_values.shape[1])
-                batch_values[idx, :, :] = (
-                    batch_values[idx, :, :] * damping[:, np.newaxis]
-                )
-
-            for idx in spike_indices:
-                spikes = generate_spikes(batch_values.shape[1])
-                if spikes.max() < 0:
-                    batch_values[idx, :, :] = (
-                        batch_values[idx, :, :] * spikes[:, np.newaxis]
-                    )
-                else:
-                    batch_values[idx, :, :] = (
-                        batch_values[idx, :, :] + spikes[:, np.newaxis] + 1
-                    )
-
-            if self.rng.random() < params.get("spike_signal_ratio", 0.05):
-                spikey_series_ratio = self.rng.uniform(
-                    0, params.get("spike_batch_ratio", 0.05)
-                )
-                spike_replace_indices = self.rng.choice(
-                    batch_size,
-                    int(np.ceil(batch_size * spikey_series_ratio)),
-                    replace=False,
-                )
-                for idx in spike_replace_indices:
-                    spikes = generate_spikes(batch_values.shape[1])
-                    batch_values[idx, :, :] = spikes[:, np.newaxis]
 
         return batch_values
 
@@ -222,17 +130,12 @@ class ForecastPFNGeneratorWrapper(GeneratorWrapper):
             batch_values.append(values)
         batch_values = np.array(batch_values)
 
-        # Apply augmentations if parameters are provided
+        # Apply multivariate augmentations
         batch_values = self._apply_augmentations(
             batch_values,
             {
                 "mixup_prob": self.params.mixup_prob,
                 "mixup_series": self.params.mixup_series,
-                "damp_and_spike": self.params.damp_and_spike,
-                "damping_noise_ratio": self.params.damping_noise_ratio,
-                "spike_noise_ratio": self.params.spike_noise_ratio,
-                "spike_signal_ratio": self.params.spike_signal_ratio,
-                "spike_batch_ratio": self.params.spike_batch_ratio,
             },
         )
 

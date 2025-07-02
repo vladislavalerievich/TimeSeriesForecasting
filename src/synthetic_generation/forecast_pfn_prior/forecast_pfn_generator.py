@@ -6,6 +6,7 @@ from pandas.tseries.frequencies import to_offset
 
 from src.synthetic_generation.abstract_classes import AbstractTimeSeriesGenerator
 from src.synthetic_generation.common.constants import FREQUENCY_MAPPING, Frequency
+from src.synthetic_generation.common.utils import generate_spikes
 from src.synthetic_generation.forecast_pfn_prior.series_config import (
     ComponentNoise,
     ComponentScale,
@@ -82,8 +83,160 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         # Apply the original bounds as a final safety check
         return max(0.0001, min(1.01, scaled_base))
 
+    def _generate_damping(
+        self, input_size: int, p: list = [0.4, 0.5, 0.1]
+    ) -> np.ndarray:
+        """Generate damping effect for a univariate time series."""
+        spacing = self.rng.choice(["equal", "regular", "random"], p=p)
+        t = np.arange(0, input_size, 1).astype(float)
+
+        if spacing == "random":
+            num_steps = self.rng.integers(1, 3)
+            damping_intervals = np.sort(
+                self.rng.choice(t[: -int(input_size * 0.1)], num_steps, replace=False)
+            )
+            damping_factors = self.rng.uniform(0.1, 2, num_steps + 1)
+        elif spacing == "equal":
+            num_steps = self.rng.integers(3, 7)
+            damping_intervals = np.linspace(0, input_size, num_steps + 2)[1:-1]
+            damping_factors = np.array(
+                [
+                    self.rng.uniform(0.4, 0.8)
+                    if (i % 2) == 0
+                    else self.rng.uniform(1, 2)
+                    for i in range(num_steps + 1)
+                ]
+            )
+        else:
+            custom_lengths = self.rng.integers(1, input_size // 2, 2)
+            damping_intervals = []
+            current_time = 0
+            while current_time < input_size:
+                for length in custom_lengths:
+                    current_time += length
+                    if current_time <= input_size:
+                        damping_intervals.append(current_time)
+                    else:
+                        break
+            damping_intervals = np.array(damping_intervals)
+            num_steps = len(damping_intervals)
+            damping_factors = np.array(
+                [
+                    self.rng.uniform(0.4, 0.8)
+                    if (i % 2) == 0
+                    else self.rng.uniform(1, 2)
+                    for i in range(num_steps + 1)
+                ]
+            )
+
+        damping = np.piecewise(
+            t,
+            [t < damping_intervals[0]]
+            + [
+                (t >= damping_intervals[i]) & (t < damping_intervals[i + 1])
+                for i in range(num_steps - 1)
+            ]
+            + [t >= damping_intervals[-1]],
+            damping_factors.tolist(),
+        )
+        return damping
+
+    def _apply_time_warping(
+        self, values: np.ndarray, warp_strength: float = 0.1
+    ) -> np.ndarray:
+        """Apply time warping augmentation to univariate series."""
+        length = len(values)
+        # Create smooth random warping function
+        n_knots = max(3, length // 20)  # Adaptive number of knots
+        knot_positions = np.linspace(0, length - 1, n_knots)
+        warp_offsets = self.rng.normal(0, warp_strength * length, n_knots)
+        warp_offsets[0] = warp_offsets[-1] = 0  # Keep endpoints fixed
+
+        # Interpolate to get smooth warping
+        original_indices = np.arange(length)
+        warped_indices = np.interp(
+            original_indices, knot_positions, knot_positions + warp_offsets
+        )
+        warped_indices = np.clip(warped_indices, 0, length - 1)
+
+        # Interpolate values at warped positions
+        return np.interp(warped_indices, original_indices, values)
+
+    def _apply_magnitude_scaling(
+        self, values: np.ndarray, scale_range: tuple = (0.8, 1.2)
+    ) -> np.ndarray:
+        """Apply random magnitude scaling to different segments of the series."""
+        length = len(values)
+        num_segments = self.rng.integers(1, 4)
+        segment_boundaries = np.sort(
+            self.rng.choice(length, num_segments - 1, replace=False)
+        )
+        segment_boundaries = np.concatenate([[0], segment_boundaries, [length]])
+
+        scaled_values = values.copy()
+        for i in range(len(segment_boundaries) - 1):
+            start, end = segment_boundaries[i], segment_boundaries[i + 1]
+            scale_factor = self.rng.uniform(scale_range[0], scale_range[1])
+            scaled_values[start:end] *= scale_factor
+
+        return scaled_values
+
+    def _apply_univariate_augmentations(self, values: np.ndarray) -> np.ndarray:
+        """Apply univariate-specific augmentations to a single time series."""
+        augmented_values = values.copy()
+
+        # Apply time warping with some probability
+        if (
+            hasattr(self.params, "time_warp_prob")
+            and self.rng.random() < self.params.time_warp_prob
+        ):
+            warp_strength = getattr(self.params, "time_warp_strength", 0.05)
+            augmented_values = self._apply_time_warping(augmented_values, warp_strength)
+
+        # Apply magnitude scaling with some probability
+        if (
+            hasattr(self.params, "magnitude_scale_prob")
+            and self.rng.random() < self.params.magnitude_scale_prob
+        ):
+            scale_range = getattr(self.params, "magnitude_scale_range", (0.9, 1.1))
+            augmented_values = self._apply_magnitude_scaling(
+                augmented_values, scale_range
+            )
+
+        # Apply damping augmentation
+        if (
+            hasattr(self.params, "damping_prob")
+            and self.rng.random() < self.params.damping_prob
+        ):
+            damping = self._generate_damping(len(augmented_values))
+            augmented_values = augmented_values * damping
+
+        # Apply spike augmentation
+        if (
+            hasattr(self.params, "spike_prob")
+            and self.rng.random() < self.params.spike_prob
+        ):
+            spikes = generate_spikes(len(augmented_values))
+            if spikes.max() < 0:
+                augmented_values = augmented_values * spikes
+            else:
+                augmented_values = augmented_values + spikes + 1
+
+        # Replace with pure spike signal (rare event)
+        if (
+            hasattr(self.params, "pure_spike_prob")
+            and self.rng.random() < self.params.pure_spike_prob
+        ):
+            spikes = generate_spikes(len(augmented_values))
+            augmented_values = spikes
+
+        return augmented_values
+
     def _generate_series(
-        self, start: np.datetime64, random_seed: Optional[int] = None
+        self,
+        start: np.datetime64,
+        random_seed: Optional[int] = None,
+        apply_augmentations: bool = True,
     ) -> Dict[str, np.ndarray]:
         if random_seed is not None:
             self.rng = np.random.default_rng(random_seed)
@@ -216,7 +369,16 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         else:
             values = series1["values"]
 
-        return values
+        # Apply univariate augmentations if requested
+        if apply_augmentations:
+            values = self._apply_univariate_augmentations(values)
+
+        return {
+            "values": values,
+            "noise": series1.get("noise", np.ones_like(values)),
+            "dates": series1["dates"],
+            "seasonal": series1.get("seasonal", np.ones_like(values)),
+        }
 
     def _make_series(
         self,
@@ -363,7 +525,12 @@ class ForecastPFNGenerator(AbstractTimeSeriesGenerator):
         start: np.datetime64,
         random_seed: Optional[int] = None,
         periodicity: Frequency = None,
+        apply_augmentations: bool = True,
     ) -> Dict[str, np.ndarray]:
         if periodicity is not None:
             self.frequency = periodicity
-        return self._generate_series(start=start, random_seed=random_seed)
+        return self._generate_series(
+            start=start,
+            random_seed=random_seed,
+            apply_augmentations=apply_augmentations,
+        )
