@@ -181,7 +181,7 @@ class GeneratorWrapper:
                 )
 
                 return {
-                    "values": result,
+                    "values": result["values"],  # Extract just the values array
                     "start": pd.Timestamp(start),
                     "frequency": frequency.value,  # Convert enum to string
                 }
