@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the partition on which the job shall run.
-#SBATCH --partition mlhiwidlc_gpu-rtx2080    # testdlc_gpu-rtx2080
+#SBATCH --partition mlhiwidlc_gpu-rtx2080
 
 # Define a name for your job
 #SBATCH --job-name ForecastPFN_Dataset          # short: -J <job name>
@@ -14,7 +14,7 @@
 #SBATCH --error outputs/logs/generate_forecastpfn_dataset_%x-%A.err    # STDERR  short: -e logs/%x-%A-job_name.out
 
 # Define the amount of memory required per node
-#SBATCH --mem 8GB
+#SBATCH --mem 32GB
 
 echo "Workingdir: $PWD";
 echo "Started at $(date)";
