@@ -111,6 +111,10 @@ class TimeSeriesModel(nn.Module):
     def _init_embedding_layers(self):
         """Initialize value and time feature embedding layers."""
         self.expand_values = nn.Linear(1, self.embed_size, bias=True)
+        self.nan_embedding = nn.Parameter(
+            torch.randn(1, 1, 1, self.embed_size) / self.embed_size,
+            requires_grad=True,
+        )
         self.time_feature_projection = nn.Linear(self.K_max, self.embed_size)
 
     def _init_encoder_layers(self, encoder_config: dict, num_encoder_layers: int):
@@ -256,8 +260,11 @@ class TimeSeriesModel(nn.Module):
             self, scaled_history: torch.Tensor, history_pos_embed: torch.Tensor
     ):
         """Compute value embeddings and combine with positional embeddings."""
-        history_scaled = scaled_history.unsqueeze(-1)
-        channel_embeddings = self.expand_values(history_scaled)
+
+        nan_mask = torch.isnan(scaled_history)
+        history_for_embedding = torch.nan_to_num(scaled_history, nan=0.0)
+        channel_embeddings = self.expand_values(history_for_embedding.unsqueeze(-1))
+        channel_embeddings[nan_mask] = self.nan_embedding.to(channel_embeddings.dtype)
         channel_embeddings = channel_embeddings + history_pos_embed
 
         batch_size, seq_len = scaled_history.shape[:2]
@@ -315,7 +322,6 @@ class TimeSeriesModel(nn.Module):
         # Squeeze the last dimension if not in quantile mode for backward compatibility
         if self.loss_type != "quantile":
             predictions = predictions.squeeze(-1)  # [B, P, N]
-
         return predictions
 
     def forward(

@@ -2,6 +2,8 @@ import logging
 import os
 import random
 from typing import Iterator, List, Optional
+from collections import Counter  # <<< NEW IMPORT
+import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
@@ -16,31 +18,106 @@ from src.synthetic_generation.dataset_composer import OnTheFlyDatasetGenerator
 logger = logging.getLogger(__name__)
 
 
+class NanAugmenter:
+    """
+    Applies realistic NaN augmentation by sampling from the empirical distribution of NaN ratios.
+    """
+
+    def __init__(self, p_series_has_nan: float, nan_ratio_distribution: List[float], nan_length_distribution: Counter):
+        """
+        Initializes the augmenter with statistics from a dataset analysis.
+        """
+        self.p_series_has_nan = p_series_has_nan
+        # <<< MODIFIED: Store the NaN ratio distribution >>>
+        self.nan_ratio_distribution = nan_ratio_distribution
+
+        if not nan_length_distribution or sum(nan_length_distribution.values()) == 0:
+            self._has_block_distribution = False
+            logger.warning("NaN length distribution is empty. Augmenter cannot create NaN blocks.")
+        else:
+            self._has_block_distribution = True
+            total_blocks = sum(nan_length_distribution.values())
+            self.dist_lengths = list(nan_length_distribution.keys())
+            self.dist_probs = [count / total_blocks for count in nan_length_distribution.values()]
+
+        if not self.nan_ratio_distribution:
+            logger.warning("NaN ratio distribution is empty. Augmenter will not add NaNs.")
+
+    def _augment_single_series(self, single_series_np: np.ndarray) -> np.ndarray:
+        """Applies augmentation logic to a single numpy time series."""
+        # <<< MODIFIED: Sample a ratio from the empirical distribution >>>
+        if not self.nan_ratio_distribution:
+            return single_series_np
+
+        sampled_ratio = np.random.choice(self.nan_ratio_distribution)
+        n_nans_to_add = int(round(single_series_np.size * sampled_ratio))
+
+        if n_nans_to_add == 0:
+            return single_series_np
+
+        nans_added = 0
+        max_attempts = 200
+        attempts = 0
+        augmented_series_np = single_series_np.copy()
+        series_flat = augmented_series_np.flatten()
+
+        while nans_added < n_nans_to_add and attempts < max_attempts and self._has_block_distribution:
+            attempts += 1
+            block_length = np.random.choice(self.dist_lengths, p=self.dist_probs)
+
+            if nans_added + block_length > n_nans_to_add:
+                block_length = n_nans_to_add - nans_added
+
+            if block_length <= 0: break
+
+            valid_starts = [i for i in range(len(series_flat) - block_length + 1) if
+                            not np.isnan(series_flat[i:i + block_length]).any()]
+
+            if not valid_starts: continue
+
+            start_pos_flat = np.random.choice(valid_starts)
+            series_flat[start_pos_flat: start_pos_flat + block_length] = np.nan
+            nans_added += block_length
+
+        return series_flat.reshape(augmented_series_np.shape)
+
+    def transform(self, time_series_batch: torch.Tensor) -> torch.Tensor:
+        """
+        Applies NaN augmentation independently to each series in a batch.
+        """
+        if not self.nan_ratio_distribution:
+            return time_series_batch
+
+        processed_series_list = []
+        for i in range(time_series_batch.shape[0]):
+            single_series_tensor = time_series_batch[i]
+            if np.random.rand() > self.p_series_has_nan:
+                processed_series_list.append(single_series_tensor)
+                continue
+            single_series_np = single_series_tensor.cpu().numpy()
+            augmented_np = self._augment_single_series(single_series_np)
+            processed_series_list.append(
+                torch.from_numpy(augmented_np).to(device=single_series_tensor.device, dtype=single_series_tensor.dtype)
+            )
+
+        return torch.stack(processed_series_list, dim=0)
+
+
 class SyntheticDataset(Dataset):
     """
     Dataset class for loading pre-generated synthetic time series data from disk.
     """
 
     def __init__(
-        self,
-        data_path: str,
-        device: Optional[torch.device] = None,
-        single_file: bool = True,
+            self,
+            data_path: str,
+            device: Optional[torch.device] = None,
+            single_file: bool = True,
     ):
-        """
-        Initialize the synthetic dataset.
-
-        Args:
-            data_path: Path to the dataset file or directory
-            device: Device to load data to
-            single_file: If True, expect a single .pt file containing all batches.
-                        If False, expect a directory with individual batch files.
-        """
         self.data_path = data_path
         self.device = device
         self.single_file = single_file
         self.data = []
-
         self._load_data()
 
     def _load_data(self):
@@ -48,30 +125,18 @@ class SyntheticDataset(Dataset):
         if self.single_file:
             if not os.path.exists(self.data_path):
                 raise FileNotFoundError(f"Dataset file not found: {self.data_path}")
-
             logger.info(f"Loading dataset from {self.data_path}")
-            self.data = torch.load(
-                self.data_path, map_location=self.device, weights_only=False
-            )
+            self.data = torch.load(self.data_path, map_location=self.device, weights_only=False)
             logger.info(f"Loaded {len(self.data)} batches from disk")
-
         else:
-            # Load from directory of individual batch files
             if not os.path.isdir(self.data_path):
-                raise FileNotFoundError(
-                    f"Dataset directory not found: {self.data_path}"
-                )
-
-            batch_files = sorted(
-                [f for f in os.listdir(self.data_path) if f.endswith(".pt")]
-            )
+                raise FileNotFoundError(f"Dataset directory not found: {self.data_path}")
+            batch_files = sorted([f for f in os.listdir(self.data_path) if f.endswith(".pt")])
             logger.info(f"Loading {len(batch_files)} batch files from {self.data_path}")
-
             for batch_file in batch_files:
                 batch_path = os.path.join(self.data_path, batch_file)
                 batch = torch.load(batch_path, map_location="cpu")
                 self.data.append(batch)
-
             logger.info(f"Loaded {len(self.data)} batches from disk")
 
     def __len__(self) -> int:
@@ -92,28 +157,27 @@ class SyntheticTrainDataLoader:
     """
 
     def __init__(
-        self,
-        data_path: str,
-        num_batches_per_epoch: int,
-        device: Optional[torch.device] = None,
-        single_file: bool = True,
-        shuffle: bool = True,
+            self,
+            data_path: str,
+            num_batches_per_epoch: int,
+            device: Optional[torch.device] = None,
+            single_file: bool = True,
+            shuffle: bool = True,
+            augmenter: Optional['NanAugmenter'] = None,  # <<< NEW: Add augmenter argument
     ):
         """
         Initialize the training data loader.
-
         Args:
-            data_path: Path to the training dataset
-            batch_size: Batch size (note: pre-generated batches already have their size)
-            num_batches_per_epoch: Number of batches to use per epoch
-            device: Device to load data to
-            single_file: If True, expect a single .pt file containing all batches
-            shuffle: Whether to shuffle batches between epochs
+            augmenter: Optional data augmenter to apply to history values.
         """
         self.dataset = SyntheticDataset(data_path, device, single_file)
         self.num_batches_per_epoch = num_batches_per_epoch
         self.shuffle = shuffle
         self.device = device
+        self.augmenter = augmenter  # <<< NEW: Store the augmenter
+
+        if self.augmenter:
+            logger.info("Data augmentation is enabled for the training data loader.")
 
         if len(self.dataset) < num_batches_per_epoch:
             logger.warning(
@@ -128,13 +192,22 @@ class SyntheticTrainDataLoader:
         if self.shuffle:
             random.shuffle(indices)
 
-        # Cycle through indices if we need more batches than available
         batch_count = 0
         while batch_count < self.num_batches_per_epoch:
             for idx in indices:
                 if batch_count >= self.num_batches_per_epoch:
                     break
-                yield self.dataset[idx]
+
+                batch = self.dataset[idx]  # <<< MODIFIED: Get batch first
+
+                # <<< NEW: Apply augmentation if an augmenter is provided >>>
+                if self.augmenter:
+                    # Augmentation is applied only to the history values.
+                    # It returns a new tensor, so we update the batch container.
+                    augmented_history = self.augmenter.transform(batch.history_values)
+                    batch.history_values = augmented_history
+
+                yield batch  # <<< MODIFIED: Yield the (potentially augmented) batch
                 batch_count += 1
 
     def __len__(self) -> int:

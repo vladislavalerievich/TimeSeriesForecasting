@@ -3,6 +3,8 @@ import logging
 import os
 import time
 import warnings
+from collections import Counter
+from pathlib import Path
 from typing import Dict, List
 
 import matplotlib.pyplot as plt
@@ -10,15 +12,16 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torchmetrics
+import wandb
 import yaml
 from linear_operator.utils.cholesky import NumericalWarning
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-import wandb
 from src.data_handling.data_loaders import (
     SyntheticTrainDataLoader,
-    SyntheticValidationDataLoader,
+    SyntheticValidationDataLoader, NanAugmenter,
 )
+from src.gift_eval.data import Dataset
 from src.gift_eval.evaluator import GiftEvaluator
 from src.models.unified_model import TimeSeriesModel
 from src.plotting.plot_multivariate_timeseries import plot_from_container
@@ -52,6 +55,81 @@ SHORT_DATASETS = [
 ]
 MED_LONG_DATASETS = ["bizitobs_l2c/H"]
 ALL_DATASETS = list(set(SHORT_DATASETS + MED_LONG_DATASETS))
+
+
+def find_consecutive_nan_lengths(series: np.ndarray) -> list[int]:
+    """Finds the lengths of all consecutive NaN blocks in a 1D array."""
+    if series.ndim > 1:
+        # For multivariate series, flatten to treat it as one long sequence
+        series = series.flatten()
+
+    is_nan = np.isnan(series)
+    padded_is_nan = np.concatenate(([False], is_nan, [False]))
+    diffs = np.diff(padded_is_nan.astype(int))
+
+    start_indices = np.where(diffs == 1)[0]
+    end_indices = np.where(diffs == -1)[0]
+
+    return (end_indices - start_indices).tolist()
+
+
+def analyze_datasets_for_augmentation(gift_eval_path_str: str) -> dict:
+    """
+    Analyzes all datasets to derive statistics needed for NaN augmentation.
+    This version collects the full distribution of NaN ratios.
+    """
+    logger.info("--- Starting Dataset Analysis for Augmentation (Full Distribution) ---")
+    path = Path(gift_eval_path_str)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Provided raw data path for augmentation analysis does not exist: {gift_eval_path_str}")
+
+    dataset_names = []
+    for dataset_dir in path.iterdir():
+        if dataset_dir.name.startswith(".") or not dataset_dir.is_dir():
+            continue
+        freq_dirs = [d for d in dataset_dir.iterdir() if d.is_dir()]
+        if freq_dirs:
+            for freq_dir in freq_dirs:
+                dataset_names.append(f"{dataset_dir.name}/{freq_dir.name}")
+        else:
+            dataset_names.append(dataset_dir.name)
+
+    total_series_count = 0
+    series_with_nans_count = 0
+    nan_ratio_distribution = []
+    all_consecutive_nan_lengths = Counter()
+
+    for ds_name in sorted(dataset_names):
+        try:
+            ds = Dataset(name=ds_name, term="short", to_univariate=False)
+            for series_data in ds.training_dataset:
+                total_series_count += 1
+                target = np.atleast_1d(series_data['target'])
+                num_nans = np.isnan(target).sum()
+
+                if num_nans > 0:
+                    series_with_nans_count += 1
+                    # <<< MODIFIED: Collect the ratio for the distribution >>>
+                    nan_ratio = num_nans / target.size
+                    nan_ratio_distribution.append(float(nan_ratio))
+
+                    nan_lengths = find_consecutive_nan_lengths(target)
+                    all_consecutive_nan_lengths.update(nan_lengths)
+        except Exception as e:
+            logger.warning(f"Could not process {ds_name} for augmentation analysis: {e}")
+
+    if total_series_count == 0:
+        raise ValueError("No series were found during augmentation analysis. Check dataset path.")
+
+    p_series_has_nan = series_with_nans_count / total_series_count if total_series_count > 0 else 0
+
+    logger.info("--- Augmentation Analysis Complete ---")
+    return {
+        "p_series_has_nan": p_series_has_nan,
+        "nan_ratio_distribution": nan_ratio_distribution,
+        "nan_length_distribution": all_consecutive_nan_lengths,
+    }
 
 
 class TrainingPipeline:
@@ -99,6 +177,19 @@ class TrainingPipeline:
         self.config["model_name"] = generate_descriptive_model_name(self.config)
         self._load_checkpoint()
 
+        self.augmenter = None
+        aug_config = self.config.get("data_augmentation", {}).get("nan_augmentation", {})
+        if aug_config.get("enabled", False):
+            logger.info("Initializing NaN data augmentation...")
+            raw_data_path = aug_config.get("raw_data_path")
+            if not raw_data_path:
+                raise ValueError("`raw_data_path` must be provided in config for nan_augmentation.")
+
+            # We need to import analyze_datasets_for_augmentation and NanAugmenter in trainer.py as well
+            stats = analyze_datasets_for_augmentation(raw_data_path)
+            self.augmenter = NanAugmenter(**stats)
+            logger.info("NaN data augmentation enabled and configured.")
+
         # --- Load pre-generated synthetic datasets from disk ---
         logger.info("Loading pre-generated synthetic datasets from disk...")
 
@@ -114,6 +205,7 @@ class TrainingPipeline:
             device=self.device,
             single_file=True,
             shuffle=False,
+            augmenter=self.augmenter,  # <<< MODIFIED: Pass the initialized augmenter here
         )
 
         # Validation data loader (load from disk)
@@ -220,7 +312,7 @@ class TrainingPipeline:
         logger.info(f"Checkpoint saved at epoch {epoch}")
 
     def _inverse_scale(
-        self, scaled_data: torch.Tensor, scale_statistics: dict
+            self, scaled_data: torch.Tensor, scale_statistics: dict
     ) -> torch.Tensor:
         """
         Apply inverse scaling to convert predictions back to original scale.
@@ -256,11 +348,11 @@ class TrainingPipeline:
         return loss, inv_scaled_output
 
     def _plot_validation_examples(
-        self,
-        epoch: int,
-        avg_val_loss: float,
-        plot_indices: List[int] = [0, 1, 2, 3, 4],
-        plot_all: bool = True,
+            self,
+            epoch: int,
+            avg_val_loss: float,
+            plot_indices: List[int] = [0, 1, 2, 3, 4],
+            plot_all: bool = True,
     ) -> None:
         """
         Plot validation examples and log to WandB.
@@ -272,7 +364,7 @@ class TrainingPipeline:
                     break
                 batch.to_device(self.device)
                 with torch.autocast(
-                    device_type="cuda", dtype=torch.bfloat16, enabled=True
+                        device_type="cuda", dtype=torch.bfloat16, enabled=True
                 ):
                     output = self.model(batch)
                     inv_scaled_output = self._inverse_scale(

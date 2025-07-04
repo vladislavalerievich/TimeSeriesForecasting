@@ -23,8 +23,15 @@ evaluate_on_gift_eval: true
 gift_eval_max_context_length: 2048  
 
 num_epochs: 60
-num_training_iterations_per_epoch: 1
+num_training_iterations_per_epoch: 128
 log_interval: 1
+
+data_augmentation:
+  nan_augmentation:
+    enabled: true
+    # Path to the root of the raw GIFT-eval datasets (e.g., 'data/gift_eval')
+    # This is required to analyze the NaN distributions.
+    raw_data_path: "data/gift_eval"
 
 # TimeSeriesModel Configuration
 TimeSeriesModel:
