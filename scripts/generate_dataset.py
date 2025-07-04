@@ -35,14 +35,14 @@ def parse_args():
     parser.add_argument(
         "--val_batches",
         type=int,
-        default=1,
+        default=32,
         help="Number of batches for the validation dataset",
     )
 
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=16,
+        default=256,
         help="Number of time series per batch",
     )
 
@@ -92,11 +92,11 @@ def main():
         generator_proportions = json.loads(args.generator_proportions)
     else:
         generator_proportions = {
-            "forecast_pfn": 0.00,
-            "gp": 0.00,
-            "kernel": 0.00,
+            "forecast_pfn": 0.25,
+            "gp": 0.25,
+            "kernel": 0.25,
             "lmc": 0.00,
-            "sine_wave": 1.00,
+            "sine_wave": 0.25,
         }
 
     # Create dataset composer

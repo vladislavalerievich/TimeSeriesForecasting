@@ -1,13 +1,14 @@
 import logging
 import os
 import random
-from typing import Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, IterableDataset
 
+from src.data_handling.arrow_data_loaders import create_synthetic_arrow_data_loader
 from src.data_handling.data_containers import BatchTimeSeriesContainer
 from src.data_handling.frequency_utils import get_frequency_enum
 from src.gift_eval.data import Dataset as GiftEvalDataset
@@ -610,3 +611,103 @@ class CyclicGiftEvalDataLoader:
     def __len__(self) -> int:
         """Return the configured number of iterations per epoch."""
         return self.num_iterations_per_epoch
+
+
+class SyntheticArrowTrainDataLoader:
+    """
+    Training data loader for pre-generated synthetic data stored in Arrow format.
+    Provides infinite batch generation with buffering for training.
+    """
+
+    def __init__(
+        self,
+        data_root_dir: str,
+        generator_proportions: Dict[str, float],
+        batch_size: int = 256,
+        future_length_range: Tuple[int, int] = (48, 900),
+        device: Optional[torch.device] = None,
+        global_seed: int = 42,
+        buffer_size: int = 3,
+    ):
+        """
+        Initialize the Arrow-based synthetic training data loader.
+
+        Args:
+            data_root_dir: Root directory containing generator subdirectories with dataset.arrow files
+            generator_proportions: Dict mapping generator names to their sampling proportions
+            batch_size: Number of time series per batch
+            future_length_range: Tuple of (min, max) future length to sample
+            device: Device to load tensors to
+            global_seed: Global random seed for reproducibility
+            buffer_size: Number of batches to pre-generate and keep in buffer
+        """
+        self.buffer_size = buffer_size
+        self.batch_counter = 0
+
+        # Create the underlying Arrow data loader
+        self.arrow_loader = create_synthetic_arrow_data_loader(
+            data_root_dir=data_root_dir,
+            generator_proportions=generator_proportions,
+            batch_size=batch_size,
+            future_length_range=future_length_range,
+            device=device,
+            global_seed=global_seed,
+        )
+
+        # Initialize batch buffer
+        self.buffer = []
+        self._arrow_iter = iter(self.arrow_loader)
+
+        # Fill the buffer initially
+        self._fill_buffer()
+
+        logger.info(
+            f"Created SyntheticArrowTrainDataLoader with buffer size {buffer_size} (infinite batches)"
+        )
+
+    def _fill_buffer(self) -> None:
+        """Fill the batch buffer with pre-generated batches."""
+        while len(self.buffer) < self.buffer_size:
+            try:
+                batch = next(self._arrow_iter)
+                self.buffer.append(batch)
+            except StopIteration:
+                # This shouldn't happen with the Arrow loader as it generates indefinitely
+                logger.warning(
+                    "Arrow loader stopped iteration unexpectedly during buffer fill"
+                )
+                break
+
+    def get_batch(self) -> BatchTimeSeriesContainer:
+        """
+        Get a batch from the buffer and refill as needed.
+
+        Returns:
+            BatchTimeSeriesContainer: A batch of time series data.
+        """
+        if not self.buffer:
+            # Buffer is empty, try to fill it
+            self._fill_buffer()
+            if not self.buffer:
+                raise RuntimeError("Unable to generate batches - buffer remains empty")
+
+        # Get a batch from the buffer
+        batch = self.buffer.pop(0)
+        self.batch_counter += 1
+
+        # Generate a new batch to refill the buffer
+        try:
+            new_batch = next(self._arrow_iter)
+            self.buffer.append(new_batch)
+        except StopIteration:
+            logger.warning("Arrow loader stopped iteration unexpectedly during refill")
+
+        return batch
+
+    def __iter__(self) -> Iterator[BatchTimeSeriesContainer]:
+        """Return an iterator that generates batches infinitely."""
+        return self
+
+    def __next__(self) -> BatchTimeSeriesContainer:
+        """Get the next batch."""
+        return self.get_batch()

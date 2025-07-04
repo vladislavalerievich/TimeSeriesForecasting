@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import wandb
 from src.data_handling.data_loaders import (
-    SyntheticTrainDataLoader,
+    SyntheticArrowTrainDataLoader,
     SyntheticValidationDataLoader,
 )
 from src.gift_eval.evaluator import GiftEvaluator
@@ -102,24 +102,40 @@ class TrainingPipeline:
         # --- Load pre-generated synthetic datasets from disk ---
         logger.info("Loading pre-generated synthetic datasets from disk...")
 
-        # Training data loader (load from disk)
-        train_data_path = self.config.get(
-            "train_data_path",
-            "data/synthetic_validation_dataset_full_mix/train/dataset.pt",
+        # Training data loader (Arrow infinite loader)
+        train_data_root = self.config.get(
+            "train_data_root_dir",
+            "/work/dlclarge2/moroshav-GiftEvalPretrain/SynthDatasets2048/",
         )
-        logger.info(f"Training data path: {train_data_path}")
-        self.train_loader = SyntheticTrainDataLoader(
-            data_path=train_data_path,
-            num_batches_per_epoch=self.config["num_training_iterations_per_epoch"],
+        generator_proportions = self.config.get(
+            "generator_proportions",
+            {"forecastpfn": 0.25, "gp": 0.25, "kernel": 0.25, "sinewave": 0.25},
+        )
+        batch_size = self.config.get("batch_size", 256)
+        future_length_range = self.config.get("future_length_range", (48, 900))
+        buffer_size = self.config.get("buffer_size", 3)
+        global_seed = self.config.get("seed", 42)
+
+        logger.info(f"Training data root: {train_data_root}")
+        logger.info(f"Generator proportions: {generator_proportions}")
+        logger.info(f"Batch size: {batch_size}")
+        logger.info(f"Future length range: {future_length_range}")
+        logger.info(f"Buffer size: {buffer_size}")
+
+        self.train_loader = SyntheticArrowTrainDataLoader(
+            data_root_dir=train_data_root,
+            generator_proportions=generator_proportions,
+            batch_size=batch_size,
+            future_length_range=future_length_range,
             device=self.device,
-            single_file=True,
-            shuffle=False,
+            global_seed=global_seed,
+            buffer_size=buffer_size,
         )
 
         # Validation data loader (load from disk)
         val_data_path = self.config.get(
             "val_data_path",
-            "data/synthetic_validation_dataset_full_mix/val/dataset.pt",
+            "data/synthetic_validation_dataset/val/dataset.pt",
         )
         logger.info(f"Validation data path: {val_data_path}")
         self.val_loader = SyntheticValidationDataLoader(

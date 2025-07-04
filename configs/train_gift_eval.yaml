@@ -21,14 +21,14 @@ datasets_to_use: ["m4_yearly", "us_births/D","electricity/15T", "solar/10T"]
 max_training_windows: 100   
 evaluation_windows: 1  # Number of windows to use for validation and testing (1 for single window, 20 for multiple)
 
-num_epochs: 100
+num_epochs: 5
 batch_size: 256
 num_training_iterations_per_epoch: 100  
 log_interval: 1
 
 # Training configuration
 lr_scheduler: cosine
-initial_lr: 0.0001 # 1e-4
+initial_lr: 0.00001 # 1e-5
 learning_rate: 0.0000001 # 1e-7
 scaler: custom_robust
 adaptive_loss_normalization: false 
@@ -84,3 +84,6 @@ TimeSeriesModel:
     allow_neg_eigval: true
     use_forget_gate: true
     num_householder: 2
+
+  loss_type: 'quantile'
+  quantiles: [ 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 ]
