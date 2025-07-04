@@ -295,7 +295,9 @@ class TrainingPipeline:
                         batch=batch,
                         sample_idx=i,
                         predicted_values=pred_future,  # Pass the full (batched) prediction tensor
-                        model_quantiles=self.model.quantiles if self.model.loss_type == 'quantile' else None,
+                        model_quantiles=self.model.quantiles
+                        if self.model.loss_type == "quantile"
+                        else None,
                         title=f"Epoch {epoch} - Val Batch {batch_idx + 1}, Sample {i} (Val Loss: {avg_val_loss:.4f})",
                         output_file=None,
                         show=False,
@@ -310,13 +312,12 @@ class TrainingPipeline:
                     )
                     plt.close(fig)
 
-
     def _update_metrics(
-            self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
+        self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
     ) -> None:
         """Update metric calculations for multivariate data."""
         # Handle quantile predictions for point metrics
-        if self.model.loss_type == 'quantile':
+        if self.model.loss_type == "quantile":
             # Select the median prediction for point-based metrics like MAPE, MSE
             try:
                 # Find the index of the 0.5 quantile
@@ -324,7 +325,9 @@ class TrainingPipeline:
                 # Slice the predictions to get the median forecast
                 predictions = predictions[..., median_idx]
             except (ValueError, AttributeError):
-                raise ValueError("Could not find median (0.5) in model's quantiles list for metric calculation.")
+                raise ValueError(
+                    "Could not find median (0.5) in model's quantiles list for metric calculation."
+                )
 
         predictions = predictions.contiguous()
         targets = targets.contiguous()
@@ -367,12 +370,12 @@ class TrainingPipeline:
         return {name: metric.compute().item() for name, metric in metrics_dict.items()}
 
     def _log_metrics(
-            self,
-            metrics_dict: Dict,
-            metric_type: str,
-            epoch: int,
-            step: int = None,
-            extra_info: str = "",
+        self,
+        metrics_dict: Dict,
+        metric_type: str,
+        epoch: int,
+        step: int = None,
+        extra_info: str = "",
     ) -> None:
         """
         Generic method to log metrics to both logger and wandb.
@@ -399,7 +402,7 @@ class TrainingPipeline:
                 wandb.log({**wandb_dict, "epoch": epoch})
 
     def _log_training_metrics(
-            self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
+        self, epoch: int, step_idx: int, running_loss: float, avg_grad_norm: float
     ) -> None:
         """Log training metrics during training."""
         avg_loss = running_loss / self.log_interval
@@ -428,17 +431,17 @@ class TrainingPipeline:
         # Calculate global step
         if self.gradient_accumulation_enabled:
             global_step = (
-                    epoch
-                    * (
-                            self.config["num_training_iterations_per_epoch"]
-                            // self.accumulation_steps
-                    )
-                    + step_idx
+                epoch
+                * (
+                    self.config["num_training_iterations_per_epoch"]
+                    // self.accumulation_steps
+                )
+                + step_idx
             )
             extra_info = f"Effective Step: {step_idx + 1}"
         else:
             global_step = (
-                    epoch * self.config["num_training_iterations_per_epoch"] + step_idx
+                epoch * self.config["num_training_iterations_per_epoch"] + step_idx
             )
             extra_info = f"Batch: {step_idx + 1}"
 
@@ -495,7 +498,7 @@ class TrainingPipeline:
         self._log_gift_eval_to_console(epoch, gift_eval_metrics)
 
     def _log_epoch_summary(
-            self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
+        self, epoch: int, train_loss: float, val_loss: float, epoch_time: float
     ) -> None:
         """Log comprehensive epoch summary."""
         # Prepare computed metrics
@@ -626,13 +629,13 @@ class TrainingPipeline:
             # Check if we should update weights
             is_accumulation_step = (batch_idx + 1) % self.accumulation_steps == 0
             is_last_batch = (
-                    batch_idx + 1 >= self.config["num_training_iterations_per_epoch"]
+                batch_idx + 1 >= self.config["num_training_iterations_per_epoch"]
             )
 
             if (
-                    not self.gradient_accumulation_enabled
-                    or is_accumulation_step
-                    or is_last_batch
+                not self.gradient_accumulation_enabled
+                or is_accumulation_step
+                or is_last_batch
             ):
                 # --- Measure Optimizer Step (includes grad clipping) ---
                 grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -668,22 +671,21 @@ class TrainingPipeline:
             )
             if self.gradient_accumulation_enabled:
                 if (
-                        is_accumulation_step
-                        and (effective_step + 1) % self.log_interval == 0
+                    is_accumulation_step
+                    and (effective_step + 1) % self.log_interval == 0
                 ):
-                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval:])
+                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
                     self._log_training_metrics(
                         epoch, effective_step, running_loss, avg_grad_norm
                     )
                     running_loss = 0.0
             else:
                 if (batch_idx + 1) % self.log_interval == 0:
-                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval:])
+                    avg_grad_norm = np.mean(gradient_norms[-self.log_interval :])
                     self._log_training_metrics(
                         epoch, batch_idx, running_loss, avg_grad_norm
                     )
                     running_loss = 0.0
-
 
         # The end-of-epoch summary is removed in this version.
 
@@ -693,8 +695,8 @@ class TrainingPipeline:
         )
         if self.gradient_accumulation_enabled:
             effective_updates = (
-                                        total_batches + self.accumulation_steps - 1
-                                ) // self.accumulation_steps
+                total_batches + self.accumulation_steps - 1
+            ) // self.accumulation_steps
             return epoch_loss / max(1, effective_updates)
         else:
             return epoch_loss / max(1, total_batches)
@@ -749,7 +751,8 @@ class TrainingPipeline:
                 self.scheduler.step()
 
             # Save checkpoint
-            if epoch % 5 == 4 or epoch == self.config["num_epochs"] - 1:
+            if epoch % 10 == 0 or epoch == self.config["num_epochs"] - 1:
+                logger.info(f"Saving checkpoint at epoch {epoch}")
                 self._save_checkpoint(epoch)
 
         logger.info("=" * 80)

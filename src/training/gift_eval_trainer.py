@@ -224,7 +224,7 @@ class GiftEvalTrainingPipeline:
                 self.run = wandb.init(
                     project="TimeSeriesForecasting",
                     config=self.config,
-                    name=f"{self.config['model_name']}_gift_eval",
+                    name=f"{self.config['model_name']}",
                     resume="allow",
                     tags=["gift-eval", "training"],
                 )
@@ -237,22 +237,12 @@ class GiftEvalTrainingPipeline:
 
     def _load_checkpoint(self) -> None:
         """Load model checkpoint if available and continuing training."""
-        checkpoint_path = (
-            f"{self.config['model_path']}/{self.config['model_name']}_gift_eval.pth"
-        )
+        checkpoint_path = f"models/checkpoint.pth"
         if self.config["continue_training"] and os.path.exists(checkpoint_path):
             logger.info(f"📁 Loading checkpoint from: {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location=self.device)
             self.model.load_state_dict(ckpt["model_state_dict"])
-            self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-            if self.config["lr_scheduler"] == "cosine":
-                self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-            self.initial_epoch = ckpt["epoch"]
-            self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
-            self.global_step = ckpt.get("global_step", 0)
-            logger.info(
-                f"✅ Resumed from epoch {self.initial_epoch + 1}, global step {self.global_step}"
-            )
+            logger.info(f"Loaded model from checkpoint: {checkpoint_path}")
         else:
             logger.info("🆕 Starting fresh training (no checkpoint found)")
 
@@ -315,6 +305,19 @@ class GiftEvalTrainingPipeline:
         self, metrics: Dict, predictions: torch.Tensor, targets: torch.Tensor
     ) -> None:
         """Update metric calculations for multivariate data."""
+        # Handle quantile predictions for point metrics
+        if self.model.loss_type == "quantile":
+            # Select the median prediction for point-based metrics like MAPE, MSE
+            try:
+                # Find the index of the 0.5 quantile
+                median_idx = self.model.quantiles.index(0.5)
+                # Slice the predictions to get the median forecast
+                predictions = predictions[..., median_idx]
+            except (ValueError, AttributeError):
+                raise ValueError(
+                    "Could not find median (0.5) in model's quantiles list for metric calculation."
+                )
+
         predictions = predictions.contiguous()
         targets = targets.contiguous()
 
