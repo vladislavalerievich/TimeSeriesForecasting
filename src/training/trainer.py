@@ -125,6 +125,12 @@ def analyze_datasets_for_augmentation(gift_eval_path_str: str) -> dict:
     p_series_has_nan = series_with_nans_count / total_series_count if total_series_count > 0 else 0
 
     logger.info("--- Augmentation Analysis Complete ---")
+    # Print summary statistics
+    logger.info(f"Total series analyzed: {total_series_count}")
+    logger.info(f"Series with NaNs: {series_with_nans_count} ({p_series_has_nan:.4f})")
+    logger.info(f"NaN ratio distribution: {Counter(nan_ratio_distribution)}")
+    logger.info(f"Consecutive NaN lengths distribution: {all_consecutive_nan_lengths}")
+    logger.info("--- End of Dataset Analysis for Augmentation ---")
     return {
         "p_series_has_nan": p_series_has_nan,
         "nan_ratio_distribution": nan_ratio_distribution,
