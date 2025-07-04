@@ -1,4 +1,5 @@
 import argparse
+import functools
 import json
 import logging
 import sys
@@ -396,6 +397,26 @@ class GeneratorWrapper:
         return values.astype(np.float64)
 
 
+def generate_one_for_batch(series_id, generator_type, length, global_seed):
+    # Re-create the generator wrapper in each process
+    generator_wrapper = GeneratorWrapper(
+        generator_type=generator_type,
+        length=length,
+        global_seed=global_seed,
+    )
+    series_data = generator_wrapper.generate_series(random_seed=series_id)
+    values = generator_wrapper._ensure_proper_format(series_data["values"])
+    return {
+        "series_id": series_id,
+        "values": values.tolist(),
+        "length": len(values),
+        "generator_type": generator_type,
+        "start": series_data["start"],
+        "frequency": series_data["frequency"],
+        "generation_timestamp": pd.Timestamp.now(),
+    }
+
+
 class ContinuousGenerator:
     """Main class for continuous time series generation."""
 
@@ -404,42 +425,61 @@ class ContinuousGenerator:
         generator_wrapper: GeneratorWrapper,
         dataset_manager: TimeSeriesDatasetManager,
         batch_size: int = 100,
-        log_interval: int = 1000,
+        log_interval: int = 100,
+        num_workers: int = 16,
     ):
         self.generator_wrapper = generator_wrapper
         self.dataset_manager = dataset_manager
         self.batch_size = batch_size
         self.log_interval = log_interval
+        self.num_workers = num_workers
 
         # Initialize counter from existing dataset
         self.current_count = dataset_manager.get_current_count()
         logging.info(f"Starting from series count: {self.current_count}")
 
     def generate_batch(self, start_id: int) -> List[Dict[str, Any]]:
-        """Generate a batch of time series."""
+        """Generate a batch of time series, using multiprocessing if num_workers > 1."""
         batch_data = []
+        series_ids = [start_id + i for i in range(self.batch_size)]
 
-        for i in range(self.batch_size):
-            series_id = start_id + i
+        if self.num_workers > 1:
+            import concurrent.futures
 
-            # Use series_id as seed for reproducibility
-            series_data = self.generator_wrapper.generate_series(random_seed=series_id)
-
-            # Ensure values are in proper format
-            values = self.generator_wrapper._ensure_proper_format(series_data["values"])
-
-            batch_data.append(
-                {
-                    "series_id": series_id,
-                    "values": values.tolist(),  # Convert to list for Arrow
-                    "length": len(values),
-                    "generator_type": self.generator_wrapper.generator_type,
-                    "start": series_data["start"],
-                    "frequency": series_data["frequency"],
-                    "generation_timestamp": pd.Timestamp.now(),
-                }
-            )
-
+            # Use top-level function for multiprocessing
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=self.num_workers
+            ) as executor:
+                func = functools.partial(
+                    generate_one_for_batch,
+                    generator_type=self.generator_wrapper.generator_type,
+                    length=self.generator_wrapper.length,
+                    global_seed=getattr(
+                        self.generator_wrapper, "rng", 42
+                    ).bit_generator._seed_seq.entropy
+                    if hasattr(self.generator_wrapper, "rng")
+                    else 42,
+                )
+                batch_data = list(executor.map(func, series_ids))
+        else:
+            for series_id in series_ids:
+                series_data = self.generator_wrapper.generate_series(
+                    random_seed=series_id
+                )
+                values = self.generator_wrapper._ensure_proper_format(
+                    series_data["values"]
+                )
+                batch_data.append(
+                    {
+                        "series_id": series_id,
+                        "values": values.tolist(),  # Convert to list for Arrow
+                        "length": len(values),
+                        "generator_type": self.generator_wrapper.generator_type,
+                        "start": series_data["start"],
+                        "frequency": series_data["frequency"],
+                        "generation_timestamp": pd.Timestamp.now(),
+                    }
+                )
         return batch_data
 
     def run_continuous(self, max_series: Optional[int] = None) -> None:
@@ -585,6 +625,13 @@ def main():
         "--global-seed", type=int, default=42, help="Global random seed"
     )
 
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of worker processes for parallel generation (default: 1)",
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -614,6 +661,7 @@ def main():
             dataset_manager=dataset_manager,
             batch_size=args.batch_size,
             log_interval=args.log_interval,
+            num_workers=args.num_workers,
         )
 
         # Run continuous generation
