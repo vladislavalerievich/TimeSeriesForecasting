@@ -40,7 +40,7 @@ PRETTY_NAMES = {
 }
 
 
-class MultiStepModelWrapper:
+class ModelWrapper:
     """
     Wrapper class following standard GIFT eval interface patterns.
     """
@@ -65,7 +65,7 @@ class MultiStepModelWrapper:
 
     @property
     def model_id(self):
-        return "MultiStepModel"
+        return "TimeSeriesModel"
 
     def predict(self, dataset) -> List[SampleForecast]:
         assert self.prediction_length is not None, "Prediction length must be set"
@@ -157,10 +157,11 @@ class MultiStepModelWrapper:
 
 
 class GiftEvaluator:
-    def __init__(self, model, device, max_context_length: int):
+    def __init__(self, model, device, max_context_length: int, max_windows: int = 1):
         self.model = model
         self.device = device
-        self.predictor = MultiStepModelWrapper(model, device, max_context_length)
+        self.predictor = ModelWrapper(model, device, max_context_length)
+        self.max_windows = max_windows
 
         with open(DATASET_PROPERTIES_PATH, "r") as f:
             self.dataset_properties_map = json.load(f)
@@ -217,7 +218,10 @@ class GiftEvaluator:
             GiftEvalDataset(name=ds_name, term=term, to_univariate=False).target_dim > 1
         )
         dataset = GiftEvalDataset(
-            name=ds_name, term=term, to_univariate=is_multivariate
+            name=ds_name,
+            term=term,
+            to_univariate=is_multivariate,
+            max_windows=self.max_windows,
         )
 
         self.predictor.set_prediction_len(dataset.prediction_length)
@@ -245,7 +249,7 @@ class GiftEvaluator:
         # Add quantile-specific metrics if model uses quantile loss
         if self.model.loss_type == "quantile" and self.model.quantiles:
             metrics_to_run.append(
-                MeanWeightedSumQuantileLoss(quantile_levels=self.model.quantiles)
+                MeanWeightedSumQuantileLoss(quantiles=self.model.quantiles)
             )
 
         res = evaluate_model(

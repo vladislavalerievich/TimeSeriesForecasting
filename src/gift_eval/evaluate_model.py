@@ -18,6 +18,7 @@ from gluonts.ev.metrics import (
     NRMSE,
     RMSE,
     SMAPE,
+    MeanWeightedSumQuantileLoss,
 )
 
 from src.gift_eval.evaluator import GiftEvaluator
@@ -67,6 +68,9 @@ METRICS = [
     RMSE(forecast_type="mean"),
     NRMSE(forecast_type=0.5),
     ND(forecast_type=0.5),
+    MeanWeightedSumQuantileLoss(
+        quantiles=[0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
+    ),
 ]
 
 # Load dataset properties

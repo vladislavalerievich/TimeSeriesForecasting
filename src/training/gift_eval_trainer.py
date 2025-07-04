@@ -177,7 +177,7 @@ class GiftEvalTrainingPipeline:
             model=self.model,
             device=self.device,
             max_context_length=max_context_length,
-            max_evaluation_windows=max_evaluation_windows,
+            max_windows=max_evaluation_windows,
         )
 
         # Setup loss function, metrics, wandb
